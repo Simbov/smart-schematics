@@ -1,0 +1,1103 @@
+import React, { useRef, useCallback, useEffect, useState, useMemo, memo } from 'react'
+import useSchematicStore from '../store/schematicStore'
+import useSimulationStore from '../store/simulationStore'
+import { TOGGLE_TYPES } from '../lib/simulation/electricalSim'
+import { MANUAL_DCV_TYPES, defaultDCVPosition } from '../lib/simulation/hydraulicSim'
+import { genId } from '../store/schematicStore'
+import GridOverlay from './GridOverlay'
+import PlacedComponent from './PlacedComponent'
+import WireLayer from './WireLayer'
+import WireInProgress from './WireInProgress'
+import HydraulicFlowLayer from './HydraulicFlowLayer'
+import MeasurementOverlay from './MeasurementOverlay'
+import InteractiveControl, { isControllable } from './InteractiveControl'
+import AnnotationLayer from './AnnotationLayer'
+import TitleBlock from './TitleBlock'
+import InlineEditor from './InlineEditor'
+import { ELECTRICAL_SYMBOL_MAP } from '../lib/symbols/electrical'
+import { HYDRAULIC_SYMBOL_MAP } from '../lib/symbols/HydraulicSymbols'
+import { getElectricalDef } from '../lib/components/electrical'
+import { getHydraulicDef } from '../lib/components/hydraulic'
+import { getCustomDef } from '../lib/components/custom'
+import { chooseLabelSide } from '../lib/labelPlacement'
+import CustomSymbol from '../lib/symbols/CustomSymbol'
+
+const SYMBOL_MAP_ALL = { ...ELECTRICAL_SYMBOL_MAP, ...HYDRAULIC_SYMBOL_MAP }
+function getAnyDef(type) { return getElectricalDef(type) || getHydraulicDef(type) || getCustomDef(type) }
+
+// Minimum pointer travel (screen px) before a background drag is treated as a
+// rubber-band box-select. Below this, the gesture is a plain click — important
+// on trackpads where ordinary clicks jitter several pixels.
+const RUBBER_BAND_MIN_PX = 8
+import { snapToGrid, screenToWorld } from '../lib/utils'
+import {
+  routeWire,
+  dedupPoints,
+  getBestSnap,
+  isPointOnWireMiddle,
+} from '../lib/wireUtils'
+
+const GhostComponent = memo(function GhostComponent({ type, x, y }) {
+  const isCustom = type.startsWith('custom_')
+  const SymbolComponent = isCustom ? null : SYMBOL_MAP_ALL[type]
+  const customDef = isCustom ? getCustomDef(type) : null
+  if (!isCustom && !SymbolComponent) return null
+  if (isCustom && !customDef) return null
+  return (
+    <g transform={`translate(${x},${y})`} opacity="0.5" style={{ pointerEvents: 'none' }}>
+      <g style={{ color: 'var(--component-color)' }}>
+        {isCustom
+          ? <CustomSymbol svgPathData={customDef.svgPathData} />
+          : <SymbolComponent />
+        }
+      </g>
+    </g>
+  )
+})
+
+export default function Canvas({ onCursorMove }) {
+  const svgRef = useRef(null)
+
+  // Pan tracking
+  const isPanning = useRef(false)
+  const panStart = useRef({ x: 0, y: 0 })
+  const lastPan = useRef({ x: 0, y: 0 })
+  const spaceHeld = useRef(false)
+  const mouseDownPos = useRef(null)
+  const didDrag = useRef(false)
+
+  // Wire tool state
+  const wirePointsRef = useRef([])
+  const [wirePoints, setWirePoints] = useState([])
+  const [ghostPoint, setGhostPoint] = useState(null)
+  const [snapTarget, setSnapTarget] = useState(null)
+  const snapTargetRef = useRef(null)
+
+  // Drag-to-move state
+  const dragRef = useRef(null) // { compIds, wireIds, startWorld }
+  const [dragDelta, setDragDelta] = useState({ dx: 0, dy: 0 })
+  const isDraggingItems = useRef(false)
+
+  // Rubber-band selection state
+  const [rubberBand, setRubberBand] = useState(null) // { startWorld, endWorld }
+  const rubberBandRef = useRef(null)
+  const isRubberBanding = useRef(false)
+
+  // Callout drag state
+  const calloutDragRef = useRef(null)
+  const [calloutDraft, setCalloutDraft] = useState(null)
+
+  // Inline editor state
+  const [inlineEdit, setInlineEdit] = useState(null)
+  // { annotationId?, titleBlockField?, worldX, worldY, value, multiline, isNew? }
+
+  const setWirePts = useCallback((updater) => {
+    const next = typeof updater === 'function' ? updater(wirePointsRef.current) : updater
+    wirePointsRef.current = next
+    setWirePoints(next)
+  }, [])
+
+  // Simulation store
+  const isRunning = useSimulationStore(s => s.isRunning)
+  const componentStates = useSimulationStore(s => s.componentStates)
+  const interactiveStates = useSimulationStore(s => s.interactiveStates)
+  const toggleSwitch = useSimulationStore(s => s.toggleSwitch)
+  const pressButton = useSimulationStore(s => s.pressButton)
+  const releaseButton = useSimulationStore(s => s.releaseButton)
+  const shiftDCV = useSimulationStore(s => s.shiftDCV)
+  const dcvPositions = useSimulationStore(s => s.dcvPositions)
+  const hydComponentStates = useSimulationStore(s => s.hydComponentStates)
+  const cylinderPositions = useSimulationStore(s => s.cylinderPositions)
+
+  // Store selectors
+  const activeDrawingId = useSchematicStore(s => s.activeDrawingId)
+  const drawings = useSchematicStore(s => s.drawings)
+  const settings = useSchematicStore(s => s.settings)
+  const setViewState = useSchematicStore(s => s.setViewState)
+  const activeTool = useSchematicStore(s => s.activeTool)
+  const placingComponentType = useSchematicStore(s => s.placingComponentType)
+  const selectedIds = useSchematicStore(s => s.selectedIds)
+  const setSelectedIds = useSchematicStore(s => s.setSelectedIds)
+  const addToSelection = useSchematicStore(s => s.addToSelection)
+  const clearSelection = useSchematicStore(s => s.clearSelection)
+  const setActiveTool = useSchematicStore(s => s.setActiveTool)
+  const addComponent = useSchematicStore(s => s.addComponent)
+  const addWire = useSchematicStore(s => s.addWire)
+  const addJunction = useSchematicStore(s => s.addJunction)
+  const addAnnotation = useSchematicStore(s => s.addAnnotation)
+  const updateAnnotation = useSchematicStore(s => s.updateAnnotation)
+  const updateTitleBlock = useSchematicStore(s => s.updateTitleBlock)
+  const pushUndo = useSchematicStore(s => s.pushUndo)
+  const undo = useSchematicStore(s => s.undo)
+  const redo = useSchematicStore(s => s.redo)
+  const moveItems = useSchematicStore(s => s.moveItems)
+  const rotateComponent = useSchematicStore(s => s.rotateComponent)
+  const flipComponent = useSchematicStore(s => s.flipComponent)
+  const deleteIds = useSchematicStore(s => s.deleteIds)
+  const copyToClipboard = useSchematicStore(s => s.copyToClipboard)
+  const pasteFromClipboard = useSchematicStore(s => s.pasteFromClipboard)
+
+  const drawing = drawings.find(d => d.id === activeDrawingId)
+  const { panX, panY, zoom } = drawing?.viewState || { panX: 0, panY: 0, zoom: 1 }
+
+  // Clear wire-in-progress when tool changes away from wire
+  useEffect(() => {
+    if (activeTool !== 'wire') {
+      setWirePts([])
+      setSnapTarget(null)
+      snapTargetRef.current = null
+    }
+  }, [activeTool])
+
+  const wrapperRef = useRef(null)
+
+  const zoomToSelection = useCallback(() => {
+    const { drawings, activeDrawingId: did, selectedIds: ids } = useSchematicStore.getState()
+    const dr = drawings.find(d => d.id === did)
+    if (!dr || ids.length === 0) return
+    const xs = [], ys = []
+    for (const c of dr.components.filter(c => ids.includes(c.id))) {
+      xs.push(c.x - 40, c.x + 40); ys.push(c.y - 40, c.y + 40)
+    }
+    for (const w of dr.wires.filter(w => ids.includes(w.id))) {
+      for (const p of w.points) { xs.push(p.x); ys.push(p.y) }
+    }
+    for (const a of (dr.annotations || []).filter(a => ids.includes(a.id))) {
+      xs.push(a.x); ys.push(a.y)
+      if (a.type === 'callout') { xs.push(a.x + (a.width || 120)); ys.push(a.y + (a.height || 60)) }
+    }
+    if (!xs.length) return
+    const PAD = 40
+    const minX = Math.min(...xs) - PAD, maxX = Math.max(...xs) + PAD
+    const minY = Math.min(...ys) - PAD, maxY = Math.max(...ys) + PAD
+    const contentW = maxX - minX, contentH = maxY - minY
+    const vw = wrapperRef.current?.clientWidth || 800
+    const vh = wrapperRef.current?.clientHeight || 600
+    const newZoom = Math.min(8, Math.max(0.1, Math.min(vw / contentW, vh / contentH)))
+    setViewState(did, {
+      zoom: newZoom,
+      panX: (vw - contentW * newZoom) / 2 - minX * newZoom,
+      panY: (vh - contentH * newZoom) / 2 - minY * newZoom,
+    })
+  }, [setViewState])
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const onKeyDown = e => {
+      if (e.target.matches('input,textarea')) return
+
+      if (e.code === 'Space') { e.preventDefault(); spaceHeld.current = true; return }
+
+      // Undo / Redo
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); return }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && e.key === 'z'))) {
+        e.preventDefault(); redo(); return
+      }
+
+      // Copy / Paste
+      if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+        e.preventDefault()
+        const { selectedIds: ids, activeDrawingId: did } = useSchematicStore.getState()
+        if (ids.length > 0 && did) copyToClipboard(did, ids)
+        return
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+        e.preventDefault()
+        const { activeDrawingId: did } = useSchematicStore.getState()
+        if (did) pasteFromClipboard(did)
+        return
+      }
+
+      // Delete
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault()
+        const { selectedIds: ids, activeDrawingId: did } = useSchematicStore.getState()
+        if (ids.length > 0 && did) deleteIds(did, ids)
+        return
+      }
+
+      // Select tool shortcuts for single selected component
+      const { selectedIds: ids, activeDrawingId: did, drawings: drws } = useSchematicStore.getState()
+      const dr = drws.find(d => d.id === did)
+      const selComps = dr?.components.filter(c => ids.includes(c.id)) || []
+
+      if (e.key === 'r' || e.key === 'R') {
+        if (selComps.length === 1) rotateComponent(did, selComps[0].id, 90)
+        return
+      }
+      if (e.key === 'x' || e.key === 'X') {
+        if (selComps.length === 1 && !e.ctrlKey && !e.metaKey) flipComponent(did, selComps[0].id, 'H')
+        return
+      }
+      if (e.key === 'y' || e.key === 'Y') {
+        if (selComps.length === 1 && !e.ctrlKey && !e.metaKey) flipComponent(did, selComps[0].id, 'V')
+        return
+      }
+
+      if (e.key === 'Escape') {
+        if (wirePointsRef.current.length > 0) { setWirePts([]); return }
+        clearSelection(); setActiveTool('select')
+        return
+      }
+      if (e.key === 'Enter') {
+        if (activeTool === 'wire' && wirePointsRef.current.length >= 2) {
+          finishWire(wirePointsRef.current)
+        }
+        return
+      }
+      if (e.key === 'v' || e.key === 'V') { setActiveTool('select'); return }
+      if (e.key === 'w' || e.key === 'W') { setActiveTool('wire'); return }
+      if (e.key === 't' || e.key === 'T') { setActiveTool('text'); return }
+      if (e.key === 'b' || e.key === 'B') { setActiveTool('callout'); return }
+      if (e.key === '+' || e.key === '=') {
+        const w = wrapperRef.current?.clientWidth || window.innerWidth
+        const h = wrapperRef.current?.clientHeight || window.innerHeight
+        zoomAt(1.15, w / 2, h / 2); return
+      }
+      if (e.key === '-') {
+        const w = wrapperRef.current?.clientWidth || window.innerWidth
+        const h = wrapperRef.current?.clientHeight || window.innerHeight
+        zoomAt(1 / 1.15, w / 2, h / 2); return
+      }
+      if (e.key === '0') { resetView(); return }
+
+      // Toggle grid snap
+      if (e.key === 'g' || e.key === 'G') {
+        const st = useSchematicStore.getState()
+        st.updateSettings({ snapToGrid: !st.settings.snapToGrid })
+        return
+      }
+      // Select all
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+        e.preventDefault()
+        const { drawings, activeDrawingId: did } = useSchematicStore.getState()
+        const dr = drawings.find(d => d.id === did)
+        if (dr) {
+          useSchematicStore.getState().setSelectedIds([
+            ...(dr.components || []).map(c => c.id),
+            ...(dr.wires || []).map(w => w.id),
+            ...(dr.annotations || []).map(a => a.id),
+          ])
+        }
+        return
+      }
+      // Duplicate selection in-place
+      if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
+        e.preventDefault()
+        const { selectedIds: ids, activeDrawingId: did } = useSchematicStore.getState()
+        if (ids.length > 0 && did) { copyToClipboard(did, ids); pasteFromClipboard(did) }
+        return
+      }
+      // Zoom to selection
+      if (e.key === 'z' || e.key === 'Z') { zoomToSelection(); return }
+    }
+    const onKeyUp = e => { if (e.code === 'Space') spaceHeld.current = false }
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+    }
+  }, [activeTool, wirePoints, undo, redo, deleteIds, copyToClipboard, pasteFromClipboard, rotateComponent, flipComponent, zoomToSelection])
+
+  const zoomAt = useCallback((factor, cx, cy) => {
+    if (!activeDrawingId) return
+    const vs = useSchematicStore.getState().drawings.find(d => d.id === activeDrawingId)?.viewState || { panX: 0, panY: 0, zoom: 1 }
+    const newZoom = Math.min(8, Math.max(0.1, vs.zoom * factor))
+    setViewState(activeDrawingId, {
+      zoom: newZoom,
+      panX: cx - (cx - vs.panX) * (newZoom / vs.zoom),
+      panY: cy - (cy - vs.panY) * (newZoom / vs.zoom),
+    })
+  }, [activeDrawingId, setViewState])
+
+  const resetView = useCallback(() => {
+    if (activeDrawingId) setViewState(activeDrawingId, { panX: 0, panY: 0, zoom: 1 })
+  }, [activeDrawingId, setViewState])
+
+  const getSVGPos = useCallback(e => {
+    const rect = svgRef.current.getBoundingClientRect()
+    return { sx: e.clientX - rect.left, sy: e.clientY - rect.top }
+  }, [])
+
+  const toWorld = useCallback((sx, sy, snapped = false) => {
+    const vs = useSchematicStore.getState().drawings.find(d => d.id === activeDrawingId)?.viewState || { panX: 0, panY: 0, zoom: 1 }
+    const world = screenToWorld(sx, sy, vs.panX, vs.panY, vs.zoom)
+    if (!snapped) return world
+    const g = useSchematicStore.getState().settings.gridSize
+    return { x: snapToGrid(world.x, g), y: snapToGrid(world.y, g) }
+  }, [activeDrawingId])
+
+  const finishWire = useCallback((pts) => {
+    const clean = dedupPoints(pts)
+    if (clean.length < 2) { setWirePts([]); return }
+
+    const state = useSchematicStore.getState()
+    const comps = state.drawings.find(d => d.id === activeDrawingId)?.components || []
+    const existingWires = state.drawings.find(d => d.id === activeDrawingId)?.wires || []
+    const existingJunctions = state.drawings.find(d => d.id === activeDrawingId)?.junctions || []
+
+    const startPt = clean[0]
+    const endPt = clean[clean.length - 1]
+
+    const snap = (pt) => getBestSnap(pt.x, pt.y, comps, [], 3, 0, 0)
+    const snapA = snap(startPt)
+    const snapB = snap(endPt)
+
+    const wire = {
+      id: genId(),
+      netName: '',
+      points: clean,
+      style: 'solid',
+      weight: 1,
+      pinA: snapA.type === 'pin' ? { componentId: snapA.componentId, pinId: snapA.pinId } : null,
+      pinB: snapB.type === 'pin' ? { componentId: snapB.componentId, pinId: snapB.pinId } : null,
+    }
+    addWire(activeDrawingId, wire)
+
+    const needsJunction = (pt) => {
+      const alreadyHas = existingJunctions.some(
+        j => Math.abs(j.x - pt.x) < 0.5 && Math.abs(j.y - pt.y) < 0.5
+      )
+      if (alreadyHas) return false
+      if (existingWires.some(w => isPointOnWireMiddle(pt.x, pt.y, w))) return true
+      const sharedCount = existingWires.filter(w => {
+        const ep = [w.points[0], w.points[w.points.length - 1]]
+        return ep.some(e => Math.abs(e.x - pt.x) < 0.5 && Math.abs(e.y - pt.y) < 0.5)
+      }).length
+      return sharedCount >= 2
+    }
+
+    for (const pt of [startPt, endPt]) {
+      if (needsJunction(pt)) {
+        addJunction(activeDrawingId, { id: genId(), x: pt.x, y: pt.y })
+      }
+    }
+
+    setWirePts([])
+  }, [activeDrawingId, addWire, addJunction, setWirePts])
+
+  // --- Event handlers ---
+
+  const onWheel = useCallback(e => {
+    e.preventDefault()
+    const rect = svgRef.current.getBoundingClientRect()
+    zoomAt(e.deltaY < 0 ? 1.1 : 1 / 1.1, e.clientX - rect.left, e.clientY - rect.top)
+  }, [zoomAt])
+
+  const onMouseDown = useCallback(e => {
+    mouseDownPos.current = { x: e.clientX, y: e.clientY }
+    didDrag.current = false
+
+    if (e.button === 1 || (e.button === 0 && spaceHeld.current)) {
+      e.preventDefault()
+      isPanning.current = true
+      panStart.current = { x: e.clientX, y: e.clientY }
+      const vs = useSchematicStore.getState().drawings.find(d => d.id === activeDrawingId)?.viewState || {}
+      lastPan.current = { x: vs.panX || 0, y: vs.panY || 0 }
+      svgRef.current.style.cursor = 'grabbing'
+    }
+  }, [activeDrawingId])
+
+  const onMouseMove = useCallback(e => {
+    const { sx, sy } = getSVGPos(e)
+
+    if (mouseDownPos.current) {
+      const moved = Math.abs(e.clientX - mouseDownPos.current.x) > 4 ||
+                    Math.abs(e.clientY - mouseDownPos.current.y) > 4
+      if (moved) didDrag.current = true
+    }
+
+    if (isPanning.current) {
+      setViewState(activeDrawingId, {
+        panX: lastPan.current.x + (e.clientX - panStart.current.x),
+        panY: lastPan.current.y + (e.clientY - panStart.current.y),
+      })
+      return
+    }
+
+    // Drag-to-move items
+    if (isDraggingItems.current && dragRef.current && didDrag.current) {
+      const worldNow = toWorld(sx, sy, true)
+      const g = useSchematicStore.getState().settings.gridSize
+      const rawDx = worldNow.x - dragRef.current.startWorld.x
+      const rawDy = worldNow.y - dragRef.current.startWorld.y
+      setDragDelta({
+        dx: Math.round(rawDx / g) * g,
+        dy: Math.round(rawDy / g) * g,
+      })
+      return
+    }
+
+    // Rubber-band selection — keep the ref updated continuously, but only show
+    // (and later commit) the box once the pointer has travelled a deliberate
+    // distance. This prevents trackpad click jitter from box-selecting items.
+    if (isRubberBanding.current && rubberBandRef.current) {
+      const worldNow = toWorld(sx, sy, false)
+      rubberBandRef.current = { ...rubberBandRef.current, endWorld: worldNow }
+      const start = mouseDownPos.current
+      const movedPx = start
+        ? Math.hypot(e.clientX - start.x, e.clientY - start.y)
+        : 0
+      if (movedPx > RUBBER_BAND_MIN_PX) setRubberBand({ ...rubberBandRef.current })
+      return
+    }
+
+    // Callout drag preview
+    if (calloutDragRef.current) {
+      const worldNow = toWorld(sx, sy, true)
+      calloutDragRef.current.endWorld = worldNow
+      setCalloutDraft({ startWorld: calloutDragRef.current.startWorld, endWorld: worldNow })
+    }
+
+    const snapped = toWorld(sx, sy, true)
+    setGhostPoint(snapped)
+    onCursorMove?.(snapped)
+
+    const tool = useSchematicStore.getState().activeTool
+    if (tool === 'wire') {
+      const drawingState = useSchematicStore.getState().drawings.find(d => d.id === activeDrawingId)
+      const comps = drawingState?.components || []
+      const wires = drawingState?.wires || []
+      const snap = getBestSnap(snapped.x, snapped.y, comps, wires)
+      setSnapTarget(snap)
+      snapTargetRef.current = snap
+    } else {
+      setSnapTarget(null)
+      snapTargetRef.current = null
+    }
+  }, [activeDrawingId, getSVGPos, toWorld, setViewState, onCursorMove])
+
+  const onMouseUp = useCallback(e => {
+    const wasPanning = isPanning.current
+    if (isPanning.current) {
+      isPanning.current = false
+      svgRef.current.style.cursor = getCursor(useSchematicStore.getState().activeTool)
+    }
+
+    // Finish callout drag — create annotation
+    if (calloutDragRef.current) {
+      const { startWorld, endWorld } = calloutDragRef.current
+      calloutDragRef.current = null
+      setCalloutDraft(null)
+      const rawW = Math.abs(endWorld.x - startWorld.x)
+      const rawH = Math.abs(endWorld.y - startWorld.y)
+      const x = Math.min(startWorld.x, endWorld.x)
+      const y = Math.min(startWorld.y, endWorld.y)
+      const W = rawW < 10 ? 120 : rawW
+      const H = rawH < 10 ? 60 : rawH
+      const ann = { id: genId(), type: 'callout', x, y, width: W, height: H, text: '', fontSize: 12 }
+      pushUndo()
+      addAnnotation(activeDrawingId, ann)
+      setSelectedIds([ann.id])
+      setInlineEdit({ annotationId: ann.id, worldX: x, worldY: y, value: '', multiline: true, isNew: true })
+      setActiveTool('select')
+      mouseDownPos.current = null
+      // Leave didDrag.current as-is so onClick bails if a drag occurred
+      return
+    }
+
+    // Commit drag-to-move
+    if (isDraggingItems.current) {
+      isDraggingItems.current = false
+      if (didDrag.current && dragRef.current) {
+        const { dx, dy } = dragDelta
+        if ((dx !== 0 || dy !== 0) && activeDrawingId) {
+          moveItems(
+            activeDrawingId,
+            dragRef.current.compIds,
+            dragRef.current.wireIds,
+            dragRef.current.annotationIds || [],
+            dx, dy
+          )
+        }
+      }
+      dragRef.current = null
+      setDragDelta({ dx: 0, dy: 0 })
+      mouseDownPos.current = null
+      // Leave didDrag.current as-is so onClick bails if a drag occurred
+      return
+    }
+
+    // Commit rubber-band selection
+    if (isRubberBanding.current) {
+      isRubberBanding.current = false
+      const rb = rubberBandRef.current
+      const start = mouseDownPos.current
+      const movedPx = start
+        ? Math.hypot(e.clientX - start.x, e.clientY - start.y)
+        : 0
+      // Only box-select if the pointer travelled a deliberate distance. A small
+      // jitter during a click (common on trackpads) is treated as a plain click
+      // that clears the selection — not an accidental multi-select.
+      if (rb && movedPx > RUBBER_BAND_MIN_PX) {
+        const minX = Math.min(rb.startWorld.x, rb.endWorld.x)
+        const maxX = Math.max(rb.startWorld.x, rb.endWorld.x)
+        const minY = Math.min(rb.startWorld.y, rb.endWorld.y)
+        const maxY = Math.max(rb.startWorld.y, rb.endWorld.y)
+        const dr = useSchematicStore.getState().drawings.find(d => d.id === activeDrawingId)
+        const inside = []
+        for (const c of (dr?.components || [])) {
+          if (c.x >= minX && c.x <= maxX && c.y >= minY && c.y <= maxY) inside.push(c.id)
+        }
+        for (const w of (dr?.wires || [])) {
+          if (w.points.every(p => p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY))
+            inside.push(w.id)
+        }
+        for (const a of (dr?.annotations || [])) {
+          if (a.type === 'text') {
+            if (a.x >= minX && a.x <= maxX && a.y >= minY && a.y <= maxY) inside.push(a.id)
+          } else if (a.type === 'callout') {
+            const aw = a.width || 120, ah = a.height || 60
+            if (a.x >= minX && a.x + aw <= maxX && a.y >= minY && a.y + ah <= maxY) inside.push(a.id)
+          }
+        }
+        if (inside.length > 0) setSelectedIds(inside)
+        else clearSelection()
+        // Real drag occurred: keep didDrag true so onClick bails and doesn't
+        // clobber the rubber-band result.
+      } else {
+        // Treat as a plain click on empty canvas → clear selection.
+        clearSelection()
+        didDrag.current = false
+      }
+      rubberBandRef.current = null
+      setRubberBand(null)
+      mouseDownPos.current = null
+      return
+    }
+
+    if (wasPanning || didDrag.current) {
+      mouseDownPos.current = null
+      return
+    }
+    mouseDownPos.current = null
+  }, [activeDrawingId, dragDelta, moveItems, setSelectedIds, clearSelection, pushUndo, addAnnotation])
+
+  const onMouseLeave = useCallback(() => {
+    if (isPanning.current) isPanning.current = false
+    setGhostPoint(null)
+    setSnapTarget(null)
+    snapTargetRef.current = null
+  }, [])
+
+  // Main click handler
+  const onClick = useCallback(e => {
+    if (didDrag.current) return
+    const { sx, sy } = getSVGPos(e)
+    const snapped = toWorld(sx, sy, true)
+    const state = useSchematicStore.getState()
+    const tool = state.activeTool
+
+    if (tool === 'place' && state.placingComponentType) {
+      if (e.detail === 1) {
+        const def = getAnyDef(state.placingComponentType)
+        if (def && state.activeDrawingId) {
+          addComponent(state.activeDrawingId, state.placingComponentType, snapped.x, snapped.y, def)
+        }
+      }
+      return
+    }
+
+    if (tool === 'wire') {
+      const snap = snapTargetRef.current || { type: 'grid', x: snapped.x, y: snapped.y }
+      const target = { x: snap.x, y: snap.y }
+      const isHardSnap = snap.type === 'pin' || snap.type === 'wire'
+
+      if (e.detail >= 2) {
+        const clean = dedupPoints(wirePointsRef.current)
+        finishWire(clean)
+        return
+      }
+
+      const prev = wirePointsRef.current
+      if (prev.length === 0) {
+        setWirePts([target])
+        return
+      }
+      const last = prev[prev.length - 1]
+      const routed = routeWire(last, target)
+      const newPts = routed.slice(1)
+      const next = [...prev, ...newPts]
+      if (isHardSnap && next.length >= 2) {
+        finishWire(next)
+        return
+      }
+      setWirePts(next)
+      return
+    }
+
+    if (tool === 'text') {
+      const ann = {
+        id: genId(),
+        type: 'text',
+        x: snapped.x,
+        y: snapped.y,
+        text: '',
+        fontSize: 14,
+        fontWeight: 'normal',
+        fontStyle: 'normal',
+      }
+      pushUndo()
+      addAnnotation(state.activeDrawingId, ann)
+      setSelectedIds([ann.id])
+      const { sx: sx2, sy: sy2 } = getSVGPos(e)
+      const vs = useSchematicStore.getState().drawings.find(d => d.id === state.activeDrawingId)?.viewState || { panX: 0, panY: 0, zoom: 1 }
+      setInlineEdit({
+        annotationId: ann.id,
+        worldX: snapped.x,
+        worldY: snapped.y - 14,
+        value: '',
+        multiline: false,
+        isNew: true,
+      })
+      return
+    }
+
+    if (tool === 'callout') {
+      // handled by onMouseUp for drag; this handles click-without-drag
+      return
+    }
+
+    if (tool === 'select') {
+      // Click on empty canvas — clear selection
+      clearSelection()
+    }
+  }, [activeDrawingId, getSVGPos, toWorld, addComponent, finishWire, clearSelection, pushUndo, addAnnotation])
+
+  // Unified drag starter for components, wires, and annotations
+  const startDrag = useCallback((id, e, isAnnotation = false) => {
+    const tool = useSchematicStore.getState().activeTool
+    // Components/wires only drag in select mode; annotations are always draggable
+    if (!isAnnotation && tool !== 'select') return
+    e.stopPropagation()
+    const { sx, sy } = getSVGPos(e)
+    const worldStart = toWorld(sx, sy, true)
+    const state = useSchematicStore.getState()
+    const currentSelected = state.selectedIds
+
+    let dragIds
+    if (currentSelected.includes(id)) {
+      dragIds = currentSelected
+    } else {
+      if (e.shiftKey) {
+        useSchematicStore.getState().addToSelection(id)
+        dragIds = [...currentSelected, id]
+      } else {
+        useSchematicStore.getState().setSelectedIds([id])
+        dragIds = [id]
+      }
+    }
+
+    const dr = state.drawings.find(d => d.id === activeDrawingId)
+    const compIds = (dr?.components || []).filter(c => dragIds.includes(c.id)).map(c => c.id)
+    const wireIds = (dr?.wires || []).filter(w => dragIds.includes(w.id)).map(w => w.id)
+    const annotationIds = (dr?.annotations || []).filter(a => dragIds.includes(a.id)).map(a => a.id)
+
+    dragRef.current = { compIds, wireIds, annotationIds, startWorld: worldStart }
+    isDraggingItems.current = true
+    mouseDownPos.current = { x: e.clientX, y: e.clientY }
+    didDrag.current = false
+  }, [activeDrawingId, getSVGPos, toWorld])
+
+  // Interactive components no longer change state when clicked directly — clicking
+  // just selects them, and a floating control (InteractiveControl) appears above
+  // the selected component for actually changing state. This keeps select/drag and
+  // state-change as distinct gestures.
+  const handleComponentMouseDown = useCallback((id, e) => {
+    startDrag(id, e, false)
+  }, [startDrag])
+  const handleAnnotationMouseDown = useCallback((id, e) => startDrag(id, e, true), [startDrag])
+
+  const handleComponentClick = useCallback((id, e) => {
+    if (isDraggingItems.current) return
+    if (activeTool !== 'select') return
+    if (e?.shiftKey) {
+      addToSelection(id)
+    } else {
+      setSelectedIds([id])
+    }
+  }, [activeTool, setSelectedIds, addToSelection])
+
+  // ── Floating-control state-change handlers ────────────────────────────────
+  // Toggle switches / cycle DCVs — works whether or not the sim is running.
+  const handleControlToggle = useCallback((id) => {
+    const { drawings, activeDrawingId: adId } = useSchematicStore.getState()
+    const dr = drawings.find(d => d.id === adId)
+    const comp = dr?.components.find(c => c.id === id)
+    if (!comp) return
+    if (TOGGLE_TYPES.has(comp.type)) {
+      toggleSwitch(id, comp.type, comp.simParams?.position)
+    } else if (MANUAL_DCV_TYPES.has(comp.type)) {
+      // Phase 12: while running, skip if DCV is solenoid-linked (the electrical
+      // solenoid controls it instead).
+      const isSolenoidLinked = isRunning && comp.simParams?.actuation === 'solenoid'
+        && comp.simParams?.linkedDesignator
+      if (!isSolenoidLinked) shiftDCV(id, comp.type)
+    }
+  }, [isRunning, toggleSwitch, shiftDCV])
+
+  // Press-and-hold a momentary button; release on global mouseup.
+  const handleControlPress = useCallback((id) => {
+    pressButton(id)
+    const onUp = () => { releaseButton(id); window.removeEventListener('mouseup', onUp) }
+    window.addEventListener('mouseup', onUp)
+  }, [pressButton, releaseButton])
+
+  const handleAnnotationClick = useCallback((id, e) => {
+    // Annotations are always clickable — switch to select and pick it
+    setActiveTool('select')
+    if (e?.shiftKey) {
+      addToSelection(id)
+    } else {
+      setSelectedIds([id])
+    }
+  }, [setActiveTool, setSelectedIds, addToSelection])
+
+  const handleAnnotationDoubleClick = useCallback((id, e) => {
+    const state = useSchematicStore.getState()
+    const dr = state.drawings.find(d => d.id === activeDrawingId)
+    const ann = (dr?.annotations || []).find(a => a.id === id)
+    if (!ann) return
+    const vs = dr.viewState
+    const screenX = ann.x * vs.zoom + vs.panX
+    const screenY = (ann.y - (ann.fontSize || 14)) * vs.zoom + vs.panY
+    setInlineEdit({
+      annotationId: id,
+      worldX: ann.x,
+      worldY: ann.type === 'callout' ? ann.y : ann.y - (ann.fontSize || 14),
+      value: ann.text || '',
+      multiline: ann.type === 'callout',
+      isNew: false,
+    })
+  }, [activeTool, activeDrawingId])
+
+  const handleWireClick = useCallback((id, e) => {
+    if (activeTool !== 'select') return
+    if (e?.shiftKey) {
+      addToSelection(id)
+    } else {
+      setSelectedIds([id])
+    }
+  }, [activeTool, setSelectedIds, addToSelection])
+
+  // Inline editor commit / cancel
+  const commitInlineEdit = useCallback((newValue) => {
+    if (!inlineEdit) return
+    if (inlineEdit.annotationId) {
+      updateAnnotation(activeDrawingId, inlineEdit.annotationId, { text: newValue })
+      // Always return to select after placing/editing an annotation
+      setActiveTool('select')
+    } else if (inlineEdit.titleBlockField) {
+      updateTitleBlock(activeDrawingId, { [inlineEdit.titleBlockField]: newValue })
+    }
+    setInlineEdit(null)
+  }, [inlineEdit, activeDrawingId, updateAnnotation, updateTitleBlock, setActiveTool])
+
+  const cancelInlineEdit = useCallback(() => {
+    if (!inlineEdit) return
+    if (inlineEdit.isNew && inlineEdit.annotationId) {
+      deleteIds(activeDrawingId, [inlineEdit.annotationId])
+    }
+    // Return to select tool so user doesn't accidentally keep placing
+    if (inlineEdit.annotationId) setActiveTool('select')
+    setInlineEdit(null)
+  }, [inlineEdit, activeDrawingId, deleteIds, setActiveTool])
+
+  const handleTitleBlockEdit = useCallback((field, worldX, worldY, value) => {
+    setInlineEdit({ titleBlockField: field, worldX, worldY, value, multiline: false, isNew: false })
+  }, [])
+
+  // Start rubber-band on canvas background mousedown (select tool, no pan)
+  const onCanvasMouseDown = useCallback(e => {
+    onMouseDown(e)
+    if (e.button !== 0) return
+    if (spaceHeld.current) return
+    const tool = useSchematicStore.getState().activeTool
+
+    if (tool === 'callout') {
+      const { sx, sy } = getSVGPos(e)
+      const worldStart = toWorld(sx, sy, true)
+      calloutDragRef.current = { startWorld: worldStart, endWorld: worldStart }
+      setCalloutDraft({ startWorld: worldStart, endWorld: worldStart })
+      return
+    }
+
+    if (tool !== 'select') return
+    // Only start rubber band if clicking on background (not on a component)
+    // Components fire stopPropagation on their mousedown, so this fires for background
+    const { sx, sy } = getSVGPos(e)
+    const worldStart = toWorld(sx, sy, false)
+    isRubberBanding.current = true
+    rubberBandRef.current = { startWorld: worldStart, endWorld: worldStart }
+    setRubberBand({ startWorld: worldStart, endWorld: worldStart })
+  }, [onMouseDown, getSVGPos, toWorld])
+
+  // Cursor style
+  useEffect(() => {
+    if (svgRef.current) svgRef.current.style.cursor = getCursor(activeTool)
+  }, [activeTool])
+
+  // Compute effective components (with drag offset applied)
+  const isDraggingNow = isDraggingItems.current && didDrag.current
+  const effectiveComponents = (drawing?.components || []).map(c => {
+    if (isDraggingNow && dragRef.current?.compIds.includes(c.id)) {
+      return { ...c, x: c.x + dragDelta.dx, y: c.y + dragDelta.dy }
+    }
+    return c
+  })
+  const effectiveWires = (drawing?.wires || []).map(w => {
+    if (isDraggingNow && dragRef.current?.wireIds.includes(w.id)) {
+      return { ...w, points: w.points.map(p => ({ x: p.x + dragDelta.dx, y: p.y + dragDelta.dy })) }
+    }
+    return w
+  })
+  const effectiveAnnotations = (drawing?.annotations || []).map(a => {
+    if (isDraggingNow && dragRef.current?.annotationIds?.includes(a.id)) {
+      return { ...a, x: a.x + dragDelta.dx, y: a.y + dragDelta.dy }
+    }
+    return a
+  })
+
+  // Resolve each component's designator side so labels dodge wires. Recomputes
+  // only when components or wires actually change (not on every render), and we
+  // pass the result down as a primitive string to keep PlacedComponent memoized.
+  const comps = drawing?.components
+  const wiresForLabels = drawing?.wires
+  const labelSides = useMemo(() => {
+    const map = {}
+    ;(comps || []).forEach(c => {
+      map[c.id] = chooseLabelSide(c, getAnyDef(c.type), wiresForLabels || [])
+    })
+    return map
+  }, [comps, wiresForLabels])
+
+  if (!drawing) {
+    return (
+      <div className="flex-1 flex items-center justify-center text-gray-400">
+        No drawing open
+      </div>
+    )
+  }
+
+  // Virtual rendering: compute visible world rect, cull off-screen elements
+  const _vw = wrapperRef.current?.clientWidth || 2000
+  const _vh = wrapperRef.current?.clientHeight || 2000
+  const visX = -panX / zoom, visY = -panY / zoom
+  const visW = _vw / zoom, visH = _vh / zoom
+  const COMP_MARGIN = 60
+
+  const visibleComponents = effectiveComponents.filter(comp =>
+    (isDraggingNow && dragRef.current?.compIds.includes(comp.id)) ||
+    (comp.x + COMP_MARGIN >= visX && comp.x - COMP_MARGIN <= visX + visW &&
+     comp.y + COMP_MARGIN >= visY && comp.y - COMP_MARGIN <= visY + visH)
+  )
+  const visibleAnnotations = effectiveAnnotations.filter(ann =>
+    (isDraggingNow && dragRef.current?.annotationIds?.includes(ann.id)) ||
+    (ann.x + Math.max(ann.width || 0, 120) >= visX && ann.x - 20 <= visX + visW &&
+     ann.y + Math.max(ann.height || 0, 60) >= visY && ann.y - 20 <= visY + visH)
+  )
+
+  // Rubber band rect in world coords
+  const rb = rubberBand
+  const rbRect = rb ? {
+    x: Math.min(rb.startWorld.x, rb.endWorld.x),
+    y: Math.min(rb.startWorld.y, rb.endWorld.y),
+    w: Math.abs(rb.endWorld.x - rb.startWorld.x),
+    h: Math.abs(rb.endWorld.y - rb.startWorld.y),
+  } : null
+
+  // Callout draft rect
+  const cd = calloutDraft
+  const cdRect = cd ? {
+    x: Math.min(cd.startWorld.x, cd.endWorld.x),
+    y: Math.min(cd.startWorld.y, cd.endWorld.y),
+    w: Math.max(10, Math.abs(cd.endWorld.x - cd.startWorld.x)),
+    h: Math.max(10, Math.abs(cd.endWorld.y - cd.startWorld.y)),
+  } : null
+
+  // Inline editor screen position
+  const ieScreenX = inlineEdit ? inlineEdit.worldX * zoom + panX : 0
+  const ieScreenY = inlineEdit ? inlineEdit.worldY * zoom + panY : 0
+
+  return (
+    <div ref={wrapperRef} style={{ flex: 1, position: 'relative', overflow: 'hidden', minHeight: 0 }}>
+      <svg
+        ref={svgRef}
+        data-schematic
+        style={{
+          position: 'absolute',
+          inset: 0,
+          width: '100%',
+          height: '100%',
+          background: 'var(--canvas-bg)',
+          display: 'block',
+        }}
+        onWheel={onWheel}
+        onMouseDown={onCanvasMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={onMouseUp}
+        onMouseLeave={onMouseLeave}
+        onClick={onClick}
+      >
+        {settings.showGrid && (
+          <GridOverlay
+            panX={panX} panY={panY} zoom={zoom}
+            gridSize={settings.gridSize}
+          />
+        )}
+
+        <g transform={`translate(${panX},${panY}) scale(${zoom})`}>
+          <TitleBlock
+            titleBlock={drawing.titleBlock}
+            onEditField={handleTitleBlockEdit}
+            zoom={zoom}
+          />
+
+          <WireLayer
+            wires={effectiveWires}
+            junctions={drawing.junctions}
+            selectedIds={selectedIds}
+            onWireClick={handleWireClick}
+            isRunning={isRunning}
+          />
+
+          <HydraulicFlowLayer wires={effectiveWires} isRunning={isRunning} />
+
+          <MeasurementOverlay
+            wires={effectiveWires}
+            components={effectiveComponents}
+            zoom={zoom}
+          />
+
+          {visibleComponents.map(comp => (
+            <PlacedComponent
+              key={comp.id}
+              component={comp}
+              selected={selectedIds.includes(comp.id)}
+              showPins={activeTool === 'wire'}
+              labelSide={labelSides[comp.id]}
+              simState={componentStates[comp.id]}
+              interactiveState={interactiveStates[comp.id]}
+              hydSimState={hydComponentStates[comp.id]
+                ? { ...hydComponentStates[comp.id], position: dcvPositions[comp.id] ?? defaultDCVPosition(comp.type) }
+                : MANUAL_DCV_TYPES.has(comp.type)
+                  ? { position: dcvPositions[comp.id] ?? defaultDCVPosition(comp.type) }
+                  : undefined}
+              isRunning={isRunning}
+              onMouseDown={(e) => handleComponentMouseDown(comp.id, e)}
+              onClick={(e) => handleComponentClick(comp.id, e)}
+            />
+          ))}
+
+          {/* Floating state-change controls above selected interactive components */}
+          {activeTool === 'select' && visibleComponents
+            .filter(comp => selectedIds.includes(comp.id) && isControllable(comp.type))
+            .map(comp => (
+              <InteractiveControl
+                key={`ctrl-${comp.id}`}
+                component={comp}
+                zoom={zoom}
+                interactiveState={interactiveStates[comp.id]}
+                dcvPosition={dcvPositions[comp.id] ?? defaultDCVPosition(comp.type)}
+                onToggle={() => handleControlToggle(comp.id)}
+                onPress={() => handleControlPress(comp.id)}
+              />
+            ))}
+
+          <AnnotationLayer
+            annotations={visibleAnnotations}
+            selectedIds={selectedIds}
+            zoom={zoom}
+            onAnnotationClick={handleAnnotationClick}
+            onAnnotationMouseDown={handleAnnotationMouseDown}
+            onAnnotationDoubleClick={handleAnnotationDoubleClick}
+          />
+
+          {activeTool === 'place' && placingComponentType && ghostPoint && (
+            <GhostComponent type={placingComponentType} x={ghostPoint.x} y={ghostPoint.y} />
+          )}
+
+          {activeTool === 'wire' && (
+            <WireInProgress
+              wirePoints={wirePoints}
+              ghostPoint={ghostPoint}
+              snapTarget={snapTarget}
+            />
+          )}
+
+          {activeTool === 'wire' && drawing.components.map(comp =>
+            (comp.pins || []).map(pin => {
+              const isSnapped = snapTarget?.type === 'pin' &&
+                snapTarget.componentId === comp.id && snapTarget.pinId === pin.id
+              return (
+                <circle
+                  key={`${comp.id}-${pin.id}`}
+                  cx={comp.x + pin.relX}
+                  cy={comp.y + pin.relY}
+                  r={isSnapped ? 4 : 3}
+                  fill={isSnapped ? '#2563eb' : 'rgba(37,99,235,0.4)'}
+                  stroke="#2563eb"
+                  strokeWidth="0.5"
+                  style={{ pointerEvents: 'none' }}
+                />
+              )
+            })
+          )}
+
+          {/* Rubber-band selection rectangle */}
+          {rbRect && rbRect.w > 2 && rbRect.h > 2 && (
+            <rect
+              x={rbRect.x}
+              y={rbRect.y}
+              width={rbRect.w}
+              height={rbRect.h}
+              fill="rgba(37,99,235,0.06)"
+              stroke="#2563eb"
+              strokeWidth={1 / zoom}
+              strokeDasharray={`${4 / zoom},${2 / zoom}`}
+              style={{ pointerEvents: 'none' }}
+            />
+          )}
+
+          {/* Callout box draft ghost */}
+          {cdRect && (
+            <rect
+              x={cdRect.x}
+              y={cdRect.y}
+              width={cdRect.w}
+              height={cdRect.h}
+              fill="rgba(37,99,235,0.06)"
+              stroke="#2563eb"
+              strokeWidth={1 / zoom}
+              strokeDasharray={`${4 / zoom},${2 / zoom}`}
+              rx={3 / zoom}
+              style={{ pointerEvents: 'none' }}
+            />
+          )}
+        </g>
+      </svg>
+
+      {/* Floating inline editor overlay */}
+      {inlineEdit && (
+        <InlineEditor
+          x={ieScreenX}
+          y={ieScreenY}
+          value={inlineEdit.value}
+          fontSize={(inlineEdit.multiline ? 12 : 14) * zoom}
+          multiline={inlineEdit.multiline}
+          onCommit={commitInlineEdit}
+          onCancel={cancelInlineEdit}
+        />
+      )}
+    </div>
+  )
+}
+
+function getCursor(tool) {
+  if (tool === 'wire') return 'crosshair'
+  if (tool === 'place') return 'crosshair'
+  if (tool === 'text') return 'text'
+  if (tool === 'callout') return 'crosshair'
+  return 'default'
+}

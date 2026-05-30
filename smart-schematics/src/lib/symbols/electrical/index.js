@@ -1,0 +1,248 @@
+export {
+  ResistorSymbol,
+  CapacitorSymbol,
+  ElectrolyticCapacitorSymbol,
+  VariableResistorSymbol,
+  PotentiometerSymbol,
+  InductorSymbol,
+  TransformerSymbol,
+  DiodeSymbol,
+  ZenerDiodeSymbol,
+  PhotodiodeSymbol,
+  FuseSymbol,
+} from './PassiveSymbols'
+
+export {
+  BatterySymbol,
+  GroundSymbol,
+  DCCurrentSourceSymbol,
+  ACVoltageSourceSymbol,
+  VCCRailSymbol,
+  VSSRailSymbol,
+} from './PowerSymbols'
+
+export {
+  SwitchNOSymbol,
+  SwitchNCSymbol,
+  SwitchSPDTSymbol,
+  PushButtonNOSymbol,
+  PushButtonNCSymbol,
+  LimitSwitchSymbol,
+  ProximitySwitchSymbol,
+  PressureSwitchSymbol,
+  TemperatureSwitchSymbol,
+  CircuitBreakerSymbol,
+} from './SwitchSymbols'
+
+export {
+  GateAndSymbol,
+  GateOrSymbol,
+  GateNandSymbol,
+  GateNorSymbol,
+  GateXorSymbol,
+  GateXnorSymbol,
+  GateNotSymbol,
+  GateBufferSymbol,
+  SchmittTriggerSymbol,
+} from './LogicSymbols'
+
+export {
+  LEDSymbol,
+  NPNTransistorSymbol,
+  PNPTransistorSymbol,
+  NMOSSymbol,
+  PMOSSymbol,
+  NJFETSymbol,
+  SCRSymbol,
+  TRIACSymbol,
+  OpAmpSymbol,
+  ComparatorSymbol,
+} from './SemiconductorSymbols'
+
+export {
+  RelayCoilSymbol,
+  RelayContactNOSymbol,
+  RelayContactNCSymbol,
+  RelaySPDTSymbol,
+  ContactorCoilSymbol,
+  ContactorNOSymbol,
+  ContactorNCSymbol,
+  SolenoidSymbol,
+  MotorSymbol,
+  GeneratorSymbol,
+} from './ElectromechanicalSymbols'
+
+export {
+  LampSymbol,
+  BuzzerSymbol,
+  SpeakerSymbol,
+  VoltmeterSymbol,
+  AmmeterSymbol,
+  WattmeterSymbol,
+} from './OutputSymbols'
+
+export {
+  PLCDigitalOutputSymbol,
+  PLCPWMOutputSymbol,
+  PLCDigitalInputSymbol,
+  PLCAnalogInputSymbol,
+} from './PLCSymbols'
+
+import {
+  ResistorSymbol,
+  CapacitorSymbol,
+  ElectrolyticCapacitorSymbol,
+  VariableResistorSymbol,
+  PotentiometerSymbol,
+  InductorSymbol,
+  TransformerSymbol,
+  DiodeSymbol,
+  ZenerDiodeSymbol,
+  PhotodiodeSymbol,
+  FuseSymbol,
+} from './PassiveSymbols'
+
+import {
+  BatterySymbol,
+  GroundSymbol,
+  DCCurrentSourceSymbol,
+  ACVoltageSourceSymbol,
+  VCCRailSymbol,
+  VSSRailSymbol,
+} from './PowerSymbols'
+
+import {
+  SwitchNOSymbol,
+  SwitchNCSymbol,
+  SwitchSPDTSymbol,
+  PushButtonNOSymbol,
+  PushButtonNCSymbol,
+  LimitSwitchSymbol,
+  ProximitySwitchSymbol,
+  PressureSwitchSymbol,
+  TemperatureSwitchSymbol,
+  CircuitBreakerSymbol,
+} from './SwitchSymbols'
+
+import {
+  GateAndSymbol,
+  GateOrSymbol,
+  GateNandSymbol,
+  GateNorSymbol,
+  GateXorSymbol,
+  GateXnorSymbol,
+  GateNotSymbol,
+  GateBufferSymbol,
+  SchmittTriggerSymbol,
+} from './LogicSymbols'
+
+import {
+  LEDSymbol,
+  NPNTransistorSymbol,
+  PNPTransistorSymbol,
+  NMOSSymbol,
+  PMOSSymbol,
+  NJFETSymbol,
+  SCRSymbol,
+  TRIACSymbol,
+  OpAmpSymbol,
+  ComparatorSymbol,
+} from './SemiconductorSymbols'
+
+import {
+  RelayCoilSymbol,
+  RelayContactNOSymbol,
+  RelayContactNCSymbol,
+  RelaySPDTSymbol,
+  ContactorCoilSymbol,
+  ContactorNOSymbol,
+  ContactorNCSymbol,
+  SolenoidSymbol,
+  MotorSymbol,
+  GeneratorSymbol,
+} from './ElectromechanicalSymbols'
+
+import {
+  LampSymbol,
+  BuzzerSymbol,
+  SpeakerSymbol,
+  VoltmeterSymbol,
+  AmmeterSymbol,
+  WattmeterSymbol,
+} from './OutputSymbols'
+
+import {
+  PLCDigitalOutputSymbol,
+  PLCPWMOutputSymbol,
+  PLCDigitalInputSymbol,
+  PLCAnalogInputSymbol,
+} from './PLCSymbols'
+
+export const ELECTRICAL_SYMBOL_MAP = {
+  resistor: ResistorSymbol,
+  capacitor: CapacitorSymbol,
+  switch_no: SwitchNOSymbol,
+  pushbutton_no: PushButtonNOSymbol,
+  led: LEDSymbol,
+  battery: BatterySymbol,
+  ground: GroundSymbol,
+  relay_coil: RelayCoilSymbol,
+  relay_contact_no: RelayContactNOSymbol,
+  lamp: LampSymbol,
+  dc_current_source: DCCurrentSourceSymbol,
+  ac_voltage_source: ACVoltageSourceSymbol,
+  vcc_rail: VCCRailSymbol,
+  vss_rail: VSSRailSymbol,
+  variable_resistor: VariableResistorSymbol,
+  potentiometer: PotentiometerSymbol,
+  electrolytic_capacitor: ElectrolyticCapacitorSymbol,
+  inductor: InductorSymbol,
+  transformer: TransformerSymbol,
+  diode: DiodeSymbol,
+  zener_diode: ZenerDiodeSymbol,
+  photodiode: PhotodiodeSymbol,
+  fuse: FuseSymbol,
+  switch_nc: SwitchNCSymbol,
+  switch_spdt: SwitchSPDTSymbol,
+  pushbutton_nc: PushButtonNCSymbol,
+  limit_switch: LimitSwitchSymbol,
+  proximity_switch: ProximitySwitchSymbol,
+  pressure_switch: PressureSwitchSymbol,
+  temperature_switch: TemperatureSwitchSymbol,
+  gate_and: GateAndSymbol,
+  gate_or: GateOrSymbol,
+  gate_not: GateNotSymbol,
+  gate_nand: GateNandSymbol,
+  gate_nor: GateNorSymbol,
+  gate_xor: GateXorSymbol,
+  gate_xnor: GateXnorSymbol,
+  gate_buffer: GateBufferSymbol,
+  schmitt_trigger: SchmittTriggerSymbol,
+  npn_transistor: NPNTransistorSymbol,
+  pnp_transistor: PNPTransistorSymbol,
+  nmos_transistor: NMOSSymbol,
+  pmos_transistor: PMOSSymbol,
+  njfet_transistor: NJFETSymbol,
+  scr: SCRSymbol,
+  triac: TRIACSymbol,
+  op_amp: OpAmpSymbol,
+  comparator: ComparatorSymbol,
+  relay_contact_nc: RelayContactNCSymbol,
+  relay_contact_spdt: RelaySPDTSymbol,
+  solenoid: SolenoidSymbol,
+  motor: MotorSymbol,
+  generator: GeneratorSymbol,
+  contactor_coil: ContactorCoilSymbol,
+  contactor_no: ContactorNOSymbol,
+  contactor_nc: ContactorNCSymbol,
+  buzzer: BuzzerSymbol,
+  speaker: SpeakerSymbol,
+  circuit_breaker: CircuitBreakerSymbol,
+  voltmeter: VoltmeterSymbol,
+  ammeter: AmmeterSymbol,
+  wattmeter: WattmeterSymbol,
+  plc_digital_output: PLCDigitalOutputSymbol,
+  plc_pwm_output: PLCPWMOutputSymbol,
+  plc_digital_input: PLCDigitalInputSymbol,
+  plc_analog_input: PLCAnalogInputSymbol,
+}

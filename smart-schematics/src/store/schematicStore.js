@@ -1,0 +1,947 @@
+import { create } from 'zustand'
+import { computePinAbsPositions } from '../lib/utils'
+import { pruneJunctions } from '../lib/wireUtils'
+import {
+  isRunningInTauri,
+  openFileDialog, saveFileDialog,
+  readTextFile, writeTextFile,
+  getRecentFiles, addRecentFile, removeRecentFile,
+  basename,
+} from '../lib/tauriFs'
+
+let idCounter = 0
+export const genId = () => {
+  const uuid = globalThis.crypto?.randomUUID?.()
+  if (uuid) return `id_${uuid}`
+  // Fallback for environments without crypto.randomUUID — timestamp + counter +
+  // random keeps IDs unique even across reloads (no resetting global counter).
+  return `id_${Date.now().toString(36)}_${(idCounter++).toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+function snapshotDrawing(drawing) {
+  return JSON.parse(JSON.stringify({
+    components: drawing.components,
+    wires: drawing.wires,
+    junctions: drawing.junctions,
+    annotations: drawing.annotations || [],
+  }))
+}
+
+const createBlankDrawing = (name = 'Drawing 1') => ({
+  id: genId(),
+  name,
+  type: 'electrical',
+  components: [],
+  wires: [],
+  junctions: [],
+  annotations: [],
+  titleBlock: {
+    title: name,
+    drawingNumber: '',
+    revision: 'A',
+    author: '',
+    date: new Date().toISOString().split('T')[0],
+    company: '',
+    visible: false,
+  },
+  viewState: { panX: 0, panY: 0, zoom: 1 },
+  isDirty: false,
+  lastSaved: null,
+})
+
+const createBlankProject = (name = 'Project 1') => {
+  const drawing = createBlankDrawing('Drawing 1')
+  return {
+    project: {
+      id: genId(),
+      name,
+      drawingIds: [drawing.id],
+      activeDrawingId: drawing.id,
+      lastSaved: null,
+    },
+    drawing,
+  }
+}
+
+const useSchematicStore = create((set, get) => ({
+  // Projects layer
+  projects: [],
+  activeProjectId: null,
+
+  // Drawings — flat array across all projects
+  drawings: [],
+  activeDrawingId: null,
+
+  // UI state
+  selectedIds: [],
+  activeTool: 'select',
+  placingComponentType: null,
+  clipboard: [],
+  undoStack: [],
+  redoStack: [],
+  theme: 'light',
+  settings: {
+    gridSize: 10,
+    snapToGrid: true,
+    resistorStyle: 'IEC',
+    showGrid: true,
+    showCurrentValues: false,
+  },
+  showProjectBrowser: false,
+
+  // File state (Phase 15 / 16)
+  currentFilePath: null,       // path of the active project's file on disk
+  recentFiles: [],             // recently opened file paths
+  externalChangeDetected: false, // set true by file watcher when OneDrive syncs
+
+  // Theme
+  toggleTheme() {
+    const newTheme = get().theme === 'light' ? 'dark' : 'light'
+    set({ theme: newTheme })
+    document.documentElement.classList.toggle('dark', newTheme === 'dark')
+  },
+
+  // Project browser visibility
+  setShowProjectBrowser(v) { set({ showProjectBrowser: v }) },
+
+  // Helpers
+  getActiveProject() {
+    const { projects, activeProjectId } = get()
+    return projects.find(p => p.id === activeProjectId) || projects[0] || null
+  },
+
+  getActiveDrawing() {
+    const { drawings, activeDrawingId } = get()
+    return drawings.find(d => d.id === activeDrawingId) || null
+  },
+
+  getProjectDrawings(projectId) {
+    const { projects, drawings } = get()
+    const project = projects.find(p => p.id === projectId)
+    if (!project) return []
+    return project.drawingIds.map(id => drawings.find(d => d.id === id)).filter(Boolean)
+  },
+
+  updateDrawing(drawingId, updater) {
+    set(state => ({
+      drawings: state.drawings.map(d =>
+        d.id === drawingId ? { ...d, ...updater(d), isDirty: true } : d
+      ),
+    }))
+  },
+
+  // ─── Project management ────────────────────────────────────────────────────
+
+  newProject(name = 'New Project') {
+    const { project, drawing } = createBlankProject(name)
+    set(state => ({
+      projects: [...state.projects, project],
+      drawings: [...state.drawings, drawing],
+      activeProjectId: project.id,
+      activeDrawingId: drawing.id,
+      selectedIds: [],
+      undoStack: [],
+      redoStack: [],
+    }))
+  },
+
+  setActiveProject(id) {
+    const { projects } = get()
+    const project = projects.find(p => p.id === id)
+    if (!project) return
+    set({
+      activeProjectId: id,
+      activeDrawingId: project.activeDrawingId,
+      selectedIds: [],
+      undoStack: [],
+      redoStack: [],
+    })
+  },
+
+  renameProject(id, name) {
+    set(state => ({
+      projects: state.projects.map(p => p.id === id ? { ...p, name } : p),
+    }))
+  },
+
+  deleteProject(id) {
+    const { projects } = get()
+    if (projects.length <= 1) return
+    const project = projects.find(p => p.id === id)
+    if (!project) return
+    const remaining = projects.filter(p => p.id !== id)
+    const next = remaining[0]
+    set(state => ({
+      projects: remaining,
+      drawings: state.drawings.filter(d => !project.drawingIds.includes(d.id)),
+      activeProjectId: next.id,
+      activeDrawingId: next.activeDrawingId,
+      selectedIds: [],
+      undoStack: [],
+      redoStack: [],
+    }))
+  },
+
+  // ─── Drawing management ────────────────────────────────────────────────────
+
+  newDrawing() {
+    const { activeProjectId, projects, drawings } = get()
+    const project = projects.find(p => p.id === activeProjectId)
+    if (!project) return
+    const projectDrawings = project.drawingIds.map(id => drawings.find(d => d.id === id)).filter(Boolean)
+    const name = `Drawing ${projectDrawings.length + 1}`
+    const drawing = createBlankDrawing(name)
+    set(state => ({
+      drawings: [...state.drawings, drawing],
+      projects: state.projects.map(p =>
+        p.id === activeProjectId
+          ? { ...p, drawingIds: [...p.drawingIds, drawing.id], activeDrawingId: drawing.id }
+          : p
+      ),
+      activeDrawingId: drawing.id,
+    }))
+  },
+
+  setActiveDrawing(id) {
+    const { activeProjectId } = get()
+    set(state => ({
+      activeDrawingId: id,
+      selectedIds: [],
+      projects: state.projects.map(p =>
+        p.id === activeProjectId ? { ...p, activeDrawingId: id } : p
+      ),
+    }))
+  },
+
+  renameDrawing(id, name) {
+    set(state => ({
+      drawings: state.drawings.map(d =>
+        d.id === id ? { ...d, name, isDirty: true } : d
+      ),
+    }))
+  },
+
+  closeDrawing(id) {
+    const { projects, activeProjectId, activeDrawingId } = get()
+    const project = projects.find(p => p.id === activeProjectId)
+    if (!project || project.drawingIds.length <= 1) return
+    const idx = project.drawingIds.indexOf(id)
+    const newDrawingIds = project.drawingIds.filter(did => did !== id)
+    let newActiveDrawingId = activeDrawingId
+    if (activeDrawingId === id) {
+      newActiveDrawingId = newDrawingIds[Math.max(0, idx - 1)] || newDrawingIds[0]
+    }
+    set(state => ({
+      drawings: state.drawings.filter(d => d.id !== id),
+      projects: state.projects.map(p =>
+        p.id === activeProjectId
+          ? { ...p, drawingIds: newDrawingIds, activeDrawingId: newActiveDrawingId }
+          : p
+      ),
+      activeDrawingId: newActiveDrawingId,
+      selectedIds: [],
+    }))
+  },
+
+  duplicateDrawing(id) {
+    const { drawings, activeProjectId } = get()
+    const source = drawings.find(d => d.id === id)
+    if (!source) return
+    const copy = {
+      ...JSON.parse(JSON.stringify(source)),
+      id: genId(),
+      name: `${source.name} (copy)`,
+      isDirty: true,
+      lastSaved: null,
+    }
+    set(state => ({
+      drawings: [...state.drawings, copy],
+      projects: state.projects.map(p =>
+        p.id === activeProjectId
+          ? { ...p, drawingIds: [...p.drawingIds, copy.id], activeDrawingId: copy.id }
+          : p
+      ),
+      activeDrawingId: copy.id,
+    }))
+  },
+
+  // ─── Export / Import ───────────────────────────────────────────────────────
+
+  exportDrawingJSON(drawingId) {
+    const drawing = get().drawings.find(d => d.id === drawingId)
+    if (!drawing) return
+    const blob = new Blob([JSON.stringify(drawing, null, 2)], { type: 'application/json' })
+    _download(blob, `${drawing.name}.sch`)
+  },
+
+  importDrawingJSON(jsonStr) {
+    try {
+      const data = JSON.parse(jsonStr)
+      const { activeProjectId } = get()
+      const drawing = { ...data, id: genId(), isDirty: true, lastSaved: null }
+      set(state => ({
+        drawings: [...state.drawings, drawing],
+        projects: state.projects.map(p =>
+          p.id === activeProjectId
+            ? { ...p, drawingIds: [...p.drawingIds, drawing.id], activeDrawingId: drawing.id }
+            : p
+        ),
+        activeDrawingId: drawing.id,
+      }))
+    } catch {
+      alert('Invalid drawing file — could not import.')
+    }
+  },
+
+  exportProjectJSON(projectId) {
+    const { projects, drawings } = get()
+    const project = projects.find(p => p.id === projectId)
+    if (!project) return
+    const projectDrawings = project.drawingIds.map(id => drawings.find(d => d.id === id)).filter(Boolean)
+    const blob = new Blob([JSON.stringify({ ...project, drawings: projectDrawings }, null, 2)], { type: 'application/json' })
+    _download(blob, `${project.name}.scpro`)
+  },
+
+  importProjectJSON(jsonStr) {
+    try {
+      const data = JSON.parse(jsonStr)
+      const drawings = (data.drawings || []).map(d => ({ ...d, id: genId(), isDirty: false }))
+      const project = {
+        id: genId(),
+        name: data.name || 'Imported Project',
+        drawingIds: drawings.map(d => d.id),
+        activeDrawingId: drawings[0]?.id || null,
+        lastSaved: null,
+      }
+      set(state => ({
+        projects: [...state.projects, project],
+        drawings: [...state.drawings, ...drawings],
+        activeProjectId: project.id,
+        activeDrawingId: project.activeDrawingId,
+        selectedIds: [],
+        undoStack: [],
+        redoStack: [],
+      }))
+    } catch {
+      alert('Invalid project file — could not import.')
+    }
+  },
+
+  // ─── View state (pan/zoom) ─────────────────────────────────────────────────
+
+  setViewState(drawingId, viewState) {
+    set(state => ({
+      drawings: state.drawings.map(d =>
+        d.id === drawingId ? { ...d, viewState: { ...d.viewState, ...viewState } } : d
+      ),
+    }))
+  },
+
+  // ─── Tool ─────────────────────────────────────────────────────────────────
+
+  setActiveTool(tool) {
+    set({ activeTool: tool, placingComponentType: null })
+  },
+
+  startPlacing(componentType) {
+    set({ activeTool: 'place', placingComponentType: componentType })
+  },
+
+  // ─── Selection ────────────────────────────────────────────────────────────
+
+  setSelectedIds(ids) { set({ selectedIds: ids }) },
+  addToSelection(id) {
+    set(state => ({
+      selectedIds: state.selectedIds.includes(id)
+        ? state.selectedIds
+        : [...state.selectedIds, id],
+    }))
+  },
+  clearSelection() { set({ selectedIds: [] }) },
+
+  // ─── Wire management ──────────────────────────────────────────────────────
+
+  addWire(drawingId, wire) {
+    set(state => ({
+      drawings: state.drawings.map(d =>
+        d.id === drawingId ? { ...d, wires: [...d.wires, wire], isDirty: true } : d
+      ),
+    }))
+  },
+
+  addJunction(drawingId, junction) {
+    set(state => ({
+      drawings: state.drawings.map(d =>
+        d.id === drawingId ? { ...d, junctions: [...d.junctions, junction], isDirty: true } : d
+      ),
+    }))
+  },
+
+  // ─── Component placement ──────────────────────────────────────────────────
+
+  addComponent(drawingId, type, x, y, def) {
+    const drawing = get().drawings.find(d => d.id === drawingId)
+    if (!drawing) return null
+    const prefix = def.defaultDesignatorPrefix
+    const count = drawing.components.filter(c => c.type === type).length
+    const designator = `${prefix}${count + 1}`
+    const component = {
+      id: genId(),
+      type,
+      designator,
+      value: def.defaultValue || '',
+      description: '',
+      x,
+      y,
+      rotation: 0,
+      flipH: false,
+      flipV: false,
+      pins: def.pins.map(p => ({ ...p, absX: x + p.relX, absY: y + p.relY })),
+      simParams: Object.fromEntries(
+        Object.entries(def.simParams || {}).map(([k, v]) => [k, v.default ?? ''])
+      ),
+      simState: {},
+      labelOffset: { x: 0, y: -15 },
+    }
+    set(state => ({
+      drawings: state.drawings.map(d =>
+        d.id === drawingId
+          ? { ...d, components: [...d.components, component], isDirty: true }
+          : d
+      ),
+    }))
+    return component.id
+  },
+
+  updateComponent(drawingId, componentId, patch) {
+    set(state => ({
+      drawings: state.drawings.map(d => {
+        if (d.id !== drawingId) return d
+        return {
+          ...d,
+          isDirty: true,
+          components: d.components.map(c =>
+            c.id !== componentId ? c : { ...c, ...patch }
+          ),
+        }
+      }),
+    }))
+  },
+
+  updateComponentSimParam(drawingId, componentId, key, value) {
+    set(state => ({
+      drawings: state.drawings.map(d => {
+        if (d.id !== drawingId) return d
+        return {
+          ...d,
+          isDirty: true,
+          components: d.components.map(c =>
+            c.id !== componentId ? c : { ...c, simParams: { ...c.simParams, [key]: value } }
+          ),
+        }
+      }),
+    }))
+  },
+
+  // ─── Settings ─────────────────────────────────────────────────────────────
+
+  updateSettings(patch) {
+    set(state => ({ settings: { ...state.settings, ...patch } }))
+  },
+
+  // ─── Undo / Redo ──────────────────────────────────────────────────────────
+
+  pushUndo() {
+    const { activeDrawingId, drawings } = get()
+    const drawing = drawings.find(d => d.id === activeDrawingId)
+    if (!drawing) return
+    set(state => ({
+      undoStack: [
+        ...state.undoStack.slice(-49),
+        { drawingId: activeDrawingId, snapshot: snapshotDrawing(drawing) },
+      ],
+      redoStack: [],
+    }))
+  },
+
+  undo() {
+    const { undoStack, drawings } = get()
+    if (undoStack.length === 0) return
+    const { drawingId, snapshot } = undoStack[undoStack.length - 1]
+    const drawing = drawings.find(d => d.id === drawingId)
+    if (!drawing) return
+    const current = snapshotDrawing(drawing)
+    set(state => ({
+      undoStack: state.undoStack.slice(0, -1),
+      redoStack: [...state.redoStack.slice(-49), { drawingId, snapshot: current }],
+      drawings: state.drawings.map(d =>
+        d.id === drawingId ? { ...d, ...snapshot, isDirty: true } : d
+      ),
+      selectedIds: [],
+    }))
+  },
+
+  redo() {
+    const { redoStack, drawings } = get()
+    if (redoStack.length === 0) return
+    const { drawingId, snapshot } = redoStack[redoStack.length - 1]
+    const drawing = drawings.find(d => d.id === drawingId)
+    if (!drawing) return
+    const current = snapshotDrawing(drawing)
+    set(state => ({
+      redoStack: state.redoStack.slice(0, -1),
+      undoStack: [...state.undoStack.slice(-49), { drawingId, snapshot: current }],
+      drawings: state.drawings.map(d =>
+        d.id === drawingId ? { ...d, ...snapshot, isDirty: true } : d
+      ),
+      selectedIds: [],
+    }))
+  },
+
+  // ─── Move / Rotate / Flip / Delete ────────────────────────────────────────
+
+  // After a component's pins move (rotate/flip), drag the endpoints of any wires
+  // bound to those pins so they stay attached. points[0] follows pinA,
+  // points[last] follows pinB.
+  _reattachWires(wires, comp) {
+    const pinPos = {}
+    for (const p of comp.pins) pinPos[p.id] = { x: p.absX, y: p.absY }
+    return wires.map(w => {
+      const aPin = w.pinA?.componentId === comp.id ? pinPos[w.pinA.pinId] : null
+      const bPin = w.pinB?.componentId === comp.id ? pinPos[w.pinB.pinId] : null
+      if (!aPin && !bPin) return w
+      const points = w.points.map((pt, i) => {
+        if (aPin && i === 0) return { ...pt, ...aPin }
+        if (bPin && i === w.points.length - 1) return { ...pt, ...bPin }
+        return pt
+      })
+      return { ...w, points }
+    })
+  },
+
+  moveItems(drawingId, compIds, wireIds, annotationIds, dx, dy) {
+    get().pushUndo()
+    set(state => ({
+      drawings: state.drawings.map(d => {
+        if (d.id !== drawingId) return d
+        return {
+          ...d,
+          isDirty: true,
+          components: d.components.map(c =>
+            compIds.includes(c.id)
+              ? {
+                  ...c,
+                  x: c.x + dx,
+                  y: c.y + dy,
+                  pins: c.pins.map(p => ({ ...p, absX: p.absX + dx, absY: p.absY + dy })),
+                }
+              : c
+          ),
+          wires: d.wires.map(w =>
+            wireIds.includes(w.id)
+              ? { ...w, points: w.points.map(p => ({ x: p.x + dx, y: p.y + dy })) }
+              : w
+          ),
+          annotations: (d.annotations || []).map(a =>
+            (annotationIds || []).includes(a.id) ? { ...a, x: a.x + dx, y: a.y + dy } : a
+          ),
+        }
+      }),
+    }))
+  },
+
+  rotateComponent(drawingId, id, delta = 90) {
+    get().pushUndo()
+    set(state => ({
+      drawings: state.drawings.map(d => {
+        if (d.id !== drawingId) return d
+        let rotated = null
+        const components = d.components.map(c => {
+          if (c.id !== id) return c
+          const newRot = ((c.rotation || 0) + delta + 360) % 360
+          rotated = {
+            ...c,
+            rotation: newRot,
+            pins: computePinAbsPositions(c.pins, c.x, c.y, newRot, c.flipH, c.flipV),
+          }
+          return rotated
+        })
+        return {
+          ...d,
+          isDirty: true,
+          components,
+          wires: rotated ? get()._reattachWires(d.wires, rotated) : d.wires,
+        }
+      }),
+    }))
+  },
+
+  flipComponent(drawingId, id, axis) {
+    get().pushUndo()
+    set(state => ({
+      drawings: state.drawings.map(d => {
+        if (d.id !== drawingId) return d
+        let flipped = null
+        const components = d.components.map(c => {
+          if (c.id !== id) return c
+          const newFlipH = axis === 'H' ? !c.flipH : c.flipH
+          const newFlipV = axis === 'V' ? !c.flipV : c.flipV
+          flipped = {
+            ...c,
+            flipH: newFlipH,
+            flipV: newFlipV,
+            pins: computePinAbsPositions(c.pins, c.x, c.y, c.rotation || 0, newFlipH, newFlipV),
+          }
+          return flipped
+        })
+        return {
+          ...d,
+          isDirty: true,
+          components,
+          wires: flipped ? get()._reattachWires(d.wires, flipped) : d.wires,
+        }
+      }),
+    }))
+  },
+
+  deleteIds(drawingId, ids) {
+    if (ids.length === 0) return
+    get().pushUndo()
+    set(state => ({
+      drawings: state.drawings.map(d => {
+        if (d.id !== drawingId) return d
+        const wires = d.wires.filter(w => !ids.includes(w.id))
+        return {
+          ...d,
+          isDirty: true,
+          components: d.components.filter(c => !ids.includes(c.id)),
+          wires,
+          // Drop explicitly-deleted junctions, then prune any that are no longer
+          // real nodes because the wires meeting there were removed.
+          junctions: pruneJunctions(
+            d.junctions.filter(j => !ids.includes(j.id)),
+            wires
+          ),
+          annotations: (d.annotations || []).filter(a => !ids.includes(a.id)),
+        }
+      }),
+      selectedIds: [],
+    }))
+  },
+
+  // ─── Copy / Paste ─────────────────────────────────────────────────────────
+
+  copyToClipboard(drawingId, ids) {
+    const drawing = get().drawings.find(d => d.id === drawingId)
+    if (!drawing) return
+    const components = drawing.components.filter(c => ids.includes(c.id))
+    const wires = drawing.wires.filter(w => ids.includes(w.id))
+    const annotations = (drawing.annotations || []).filter(a => ids.includes(a.id))
+    set({ clipboard: JSON.parse(JSON.stringify({ components, wires, annotations })) })
+  },
+
+  pasteFromClipboard(drawingId) {
+    const { clipboard } = get()
+    if (!clipboard) return
+    const { components = [], wires = [], annotations = [] } = clipboard
+    if (!components.length && !wires.length && !annotations.length) return
+    get().pushUndo()
+    const OFFSET = 20
+    const idMap = {}
+    const newComps = components.map(c => {
+      const newId = genId()
+      idMap[c.id] = newId
+      return {
+        ...c,
+        id: newId,
+        x: c.x + OFFSET,
+        y: c.y + OFFSET,
+        pins: c.pins.map(p => ({ ...p, absX: p.absX + OFFSET, absY: p.absY + OFFSET })),
+      }
+    })
+    const newWires = wires.map(w => ({
+      ...w,
+      id: genId(),
+      points: w.points.map(p => ({ x: p.x + OFFSET, y: p.y + OFFSET })),
+      pinA: w.pinA ? { ...w.pinA, componentId: idMap[w.pinA.componentId] ?? w.pinA.componentId } : null,
+      pinB: w.pinB ? { ...w.pinB, componentId: idMap[w.pinB.componentId] ?? w.pinB.componentId } : null,
+    }))
+    const newAnnotations = annotations.map(a => ({ ...a, id: genId(), x: a.x + OFFSET, y: a.y + OFFSET }))
+    const newIds = [...newComps.map(c => c.id), ...newWires.map(w => w.id), ...newAnnotations.map(a => a.id)]
+    set(state => ({
+      drawings: state.drawings.map(d =>
+        d.id !== drawingId
+          ? d
+          : {
+              ...d,
+              isDirty: true,
+              components: [...d.components, ...newComps],
+              wires: [...d.wires, ...newWires],
+              annotations: [...(d.annotations || []), ...newAnnotations],
+            }
+      ),
+      selectedIds: newIds,
+    }))
+  },
+
+  // ─── Annotations ──────────────────────────────────────────────────────────
+
+  addAnnotation(drawingId, annotation) {
+    set(state => ({
+      drawings: state.drawings.map(d =>
+        d.id === drawingId
+          ? { ...d, annotations: [...(d.annotations || []), annotation], isDirty: true }
+          : d
+      ),
+    }))
+  },
+
+  updateAnnotation(drawingId, annotationId, patch) {
+    set(state => ({
+      drawings: state.drawings.map(d => {
+        if (d.id !== drawingId) return d
+        return {
+          ...d,
+          isDirty: true,
+          annotations: (d.annotations || []).map(a =>
+            a.id !== annotationId ? a : { ...a, ...patch }
+          ),
+        }
+      }),
+    }))
+  },
+
+  updateTitleBlock(drawingId, patch) {
+    set(state => ({
+      drawings: state.drawings.map(d =>
+        d.id !== drawingId ? d : {
+          ...d,
+          isDirty: true,
+          titleBlock: { ...d.titleBlock, ...patch },
+        }
+      ),
+    }))
+  },
+
+  // ─── Persistence ──────────────────────────────────────────────────────────
+
+  // Builds a serialisable snapshot of the active project
+  _buildProjectSnapshot() {
+    const { projects, drawings, activeProjectId } = get()
+    const project = projects.find(p => p.id === activeProjectId)
+    if (!project) return null
+    const projectDrawings = project.drawingIds
+      .map(id => drawings.find(d => d.id === id))
+      .filter(Boolean)
+    return { version: 2, ...project, drawings: projectDrawings }
+  },
+
+  // saveAll — writes to file (Tauri) or localStorage (browser)
+  async saveAll() {
+    const { projects, drawings, currentFilePath } = get()
+    const now = Date.now()
+    const savedDrawings = drawings.map(d => ({ ...d, isDirty: false, lastSaved: now }))
+    const savedProjects = projects.map(p => ({ ...p, lastSaved: now }))
+    set({ drawings: savedDrawings, projects: savedProjects })
+
+    if (isRunningInTauri() && currentFilePath) {
+      const snapshot = get()._buildProjectSnapshot()
+      if (snapshot) {
+        await writeTextFile(currentFilePath, JSON.stringify(snapshot, null, 2))
+      }
+    } else {
+      // Browser fallback: localStorage
+      localStorage.setItem('schematic_projects', JSON.stringify({
+        version: 2,
+        projects: savedProjects,
+        drawings: savedDrawings,
+      }))
+    }
+  },
+
+  // Open a .scpro file via native dialog (Tauri) or fall back to browser import
+  async openProjectFile() {
+    if (!isRunningInTauri()) {
+      // Trigger hidden file input in FileMenu — signal via a store flag
+      set({ _triggerBrowserOpen: Date.now() })
+      return
+    }
+    const path = await openFileDialog([
+      { name: 'Schematic Project', extensions: ['scpro', 'json'] },
+    ])
+    if (!path) return
+    await get()._loadProjectFromPath(path)
+  },
+
+  // Save active project to its current file path (or prompt if none)
+  async saveProjectFile() {
+    const { currentFilePath } = get()
+    if (currentFilePath) {
+      await get().saveAll()
+    } else {
+      await get().saveProjectFileAs()
+    }
+  },
+
+  // Save active project, always prompting for a path
+  async saveProjectFileAs() {
+    if (!isRunningInTauri()) {
+      // Fall back to existing JSON export
+      const { activeProjectId } = get()
+      if (activeProjectId) get().exportProjectJSON(activeProjectId)
+      return
+    }
+    const { projects, activeProjectId } = get()
+    const project = projects.find(p => p.id === activeProjectId)
+    const path = await saveFileDialog(
+      `${project?.name || 'project'}.scpro`,
+      [{ name: 'Schematic Project', extensions: ['scpro'] }]
+    )
+    if (!path) return
+    set({ currentFilePath: path })
+    addRecentFile(path)
+    set({ recentFiles: getRecentFiles() })
+    await get().saveAll()
+  },
+
+  // Load project data from a file path
+  async _loadProjectFromPath(path) {
+    try {
+      const raw = await readTextFile(path)
+      const data = JSON.parse(raw)
+      const drawings = (data.drawings || []).map(d => ({ ...d, isDirty: false }))
+      const project = {
+        id: data.id || genId(),
+        name: data.name || basename(path).replace(/\.scpro$/, ''),
+        drawingIds: drawings.map(d => d.id),
+        activeDrawingId: drawings[0]?.id || null,
+        lastSaved: Date.now(),
+      }
+      set(state => ({
+        projects: [...state.projects.filter(p => p.id !== project.id), project],
+        drawings: [
+          ...state.drawings.filter(d => !project.drawingIds.includes(d.id)),
+          ...drawings,
+        ],
+        activeProjectId: project.id,
+        activeDrawingId: project.activeDrawingId,
+        currentFilePath: path,
+        externalChangeDetected: false,
+        selectedIds: [],
+        undoStack: [],
+        redoStack: [],
+      }))
+      addRecentFile(path)
+      set({ recentFiles: getRecentFiles() })
+    } catch (e) {
+      console.error('Failed to open project file', e)
+      alert(`Could not open file: ${basename(path)}\n\n${e.message}`)
+    }
+  },
+
+  // Re-read the current file from disk (called when external change detected)
+  async reloadFromCurrentFile() {
+    const { currentFilePath } = get()
+    if (!currentFilePath) return
+    set({ externalChangeDetected: false })
+    await get()._loadProjectFromPath(currentFilePath)
+  },
+
+  dismissExternalChange() {
+    set({ externalChangeDetected: false })
+  },
+
+  setExternalChangeDetected(v) {
+    set({ externalChangeDetected: v })
+  },
+
+  loadRecentFiles() {
+    set({ recentFiles: getRecentFiles() })
+  },
+
+  removeRecentFile(path) {
+    removeRecentFile(path)
+    set({ recentFiles: getRecentFiles() })
+  },
+
+  loadFromStorage() {
+    // In Tauri mode, try to re-open the last used file
+    if (isRunningInTauri()) {
+      set({ recentFiles: getRecentFiles() })
+      const recent = getRecentFiles()
+      if (recent.length > 0) {
+        get()._loadProjectFromPath(recent[0])
+        return
+      }
+      // No recent files — start blank
+      const { project, drawing } = createBlankProject('Default Project')
+      set({
+        projects: [project],
+        drawings: [drawing],
+        activeProjectId: project.id,
+        activeDrawingId: drawing.id,
+        recentFiles: [],
+      })
+      return
+    }
+
+    // Browser mode — use localStorage
+    try {
+      const raw = localStorage.getItem('schematic_projects')
+      if (raw) {
+        const { projects, drawings } = JSON.parse(raw)
+        if (projects?.length > 0 && drawings?.length > 0) {
+          const activeProject = projects[0]
+          set({
+            projects,
+            drawings,
+            activeProjectId: activeProject.id,
+            activeDrawingId: activeProject.activeDrawingId,
+          })
+          return
+        }
+      }
+      // Legacy migration — old flat drawings format
+      const legacy = localStorage.getItem('schematic_drawings')
+      if (legacy) {
+        const drawings = JSON.parse(legacy)
+        if (drawings?.length > 0) {
+          const project = {
+            id: genId(),
+            name: 'Default Project',
+            drawingIds: drawings.map(d => d.id),
+            activeDrawingId: drawings[0].id,
+            lastSaved: null,
+          }
+          set({
+            projects: [project],
+            drawings,
+            activeProjectId: project.id,
+            activeDrawingId: project.activeDrawingId,
+          })
+          return
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to load from storage', e)
+    }
+    // Fresh start
+    const { project, drawing } = createBlankProject('Default Project')
+    set({
+      projects: [project],
+      drawings: [drawing],
+      activeProjectId: project.id,
+      activeDrawingId: drawing.id,
+    })
+  },
+}))
+
+function _download(blob, filename) {
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
+export default useSchematicStore

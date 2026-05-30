@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+**/src-tauri/target/
+**/src-tauri/gen/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS / editor
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.sw?
+*.local
+
+# Local agent / planning files (not part of the published app)
+.claude/settings.local.json
+SIM_UPGRADE_PLAN.md
+schematic_tool_claude_code_prompt.md
+CODEBASE.md
+node_modules
