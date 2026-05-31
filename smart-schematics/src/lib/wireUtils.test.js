@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { wireConnectionCount, pruneJunctions } from './wireUtils.js'
+import { wireConnectionCount, pruneJunctions, findNearestPin } from './wireUtils.js'
 
 const w = (...pts) => ({ id: `w${Math.random()}`, points: pts.map(([x, y]) => ({ x, y })) })
 
@@ -42,5 +42,33 @@ describe('pruneJunctions', () => {
     const junctions = [{ id: 'j1', x: 0, y: 0 }, { id: 'j2', x: 999, y: 999 }]
     const kept = pruneJunctions(junctions, wires)
     expect(kept.map(j => j.id)).toEqual(['j1'])
+  })
+})
+
+describe('findNearestPin', () => {
+  // Horizontal 2-pin component at (100,100); after a 90° rotation the pins
+  // move to the rotated absolute positions carried in absX/absY.
+  const rotatedComp = {
+    id: 'c1', x: 100, y: 100,
+    pins: [
+      { id: 'A', relX: -20, relY: 0, absX: 100, absY: 80 },
+      { id: 'B', relX: 20, relY: 0, absX: 100, absY: 120 },
+    ],
+  }
+
+  it('snaps to the rotated pin position (absX/absY), not the unrotated offset', () => {
+    const hit = findNearestPin(100, 120, [rotatedComp], 6, 0)
+    expect(hit).toMatchObject({ type: 'pin', componentId: 'c1', pinId: 'B', x: 100, y: 120 })
+  })
+
+  it('does not snap at the stale unrotated location', () => {
+    // (120,100) is where pin B would sit before rotation — must no longer match.
+    expect(findNearestPin(120, 100, [rotatedComp], 6, 0)).toBeNull()
+  })
+
+  it('falls back to comp.x+relX when absX/absY are absent', () => {
+    const comp = { id: 'c2', x: 0, y: 0, pins: [{ id: 'A', relX: 20, relY: 0 }] }
+    const hit = findNearestPin(20, 0, [comp], 6, 0)
+    expect(hit).toMatchObject({ pinId: 'A', x: 20, y: 0 })
   })
 })

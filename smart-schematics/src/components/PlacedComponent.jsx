@@ -214,20 +214,6 @@ const PlacedComponent = memo(function PlacedComponent({
             : <SymbolComponent state={getSymbolState(component.type, simState, interactiveState, hydSimState, component.simParams)} params={component.simParams || {}} />
           }
         </g>
-
-        {/* Pin dots — shown in wire mode */}
-        {showPins && def?.pins.map(pin => (
-          <circle
-            key={pin.id}
-            cx={pin.relX}
-            cy={pin.relY}
-            r={3}
-            fill="rgba(37,99,235,0.6)"
-            stroke="#2563eb"
-            strokeWidth="0.5"
-            style={{ pointerEvents: 'none' }}
-          />
-        ))}
       </g>
 
       {/* Upright labels — positioned outside the rotation so text stays readable,

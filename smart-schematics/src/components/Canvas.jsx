@@ -960,6 +960,7 @@ export default function Canvas({ onCursorMove }) {
             selectedIds={selectedIds}
             onWireClick={handleWireClick}
             isRunning={isRunning}
+            wireMode={activeTool === 'wire'}
           />
 
           <HydraulicFlowLayer wires={effectiveWires} isRunning={isRunning} />
@@ -1033,8 +1034,8 @@ export default function Canvas({ onCursorMove }) {
               return (
                 <circle
                   key={`${comp.id}-${pin.id}`}
-                  cx={comp.x + pin.relX}
-                  cy={comp.y + pin.relY}
+                  cx={pin.absX ?? comp.x + pin.relX}
+                  cy={pin.absY ?? comp.y + pin.relY}
                   r={isSnapped ? 4 : 3}
                   fill={isSnapped ? '#2563eb' : 'rgba(37,99,235,0.4)'}
                   stroke="#2563eb"

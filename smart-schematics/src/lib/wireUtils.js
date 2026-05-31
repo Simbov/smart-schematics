@@ -19,6 +19,16 @@ export function dedupPoints(points) {
   )
 }
 
+// Absolute world position of a pin, honouring the component's rotation/flip.
+// Pins carry precomputed absX/absY (kept in sync on move/rotate/flip); fall back
+// to the un-transformed offset only if those are missing.
+function pinWorldPos(comp, pin) {
+  return {
+    x: pin.absX ?? comp.x + pin.relX,
+    y: pin.absY ?? comp.y + pin.relY,
+  }
+}
+
 // Find nearest component pin.
 // A pin is a snap candidate when the cursor is either within `threshold` world
 // units of the pin OR anywhere inside the component's body (its pin bounding box
@@ -35,8 +45,7 @@ export function findNearestPin(wx, wy, components, threshold = 18, bodyPad = 14)
     // Component body bounding box (in world coords) from its pins.
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
     for (const pin of pins) {
-      const px = comp.x + pin.relX
-      const py = comp.y + pin.relY
+      const { x: px, y: py } = pinWorldPos(comp, pin)
       if (px < minX) minX = px
       if (px > maxX) maxX = px
       if (py < minY) minY = py
@@ -48,8 +57,7 @@ export function findNearestPin(wx, wy, components, threshold = 18, bodyPad = 14)
       wy >= minY - bodyPad && wy <= maxY + bodyPad
 
     for (const pin of pins) {
-      const px = comp.x + pin.relX
-      const py = comp.y + pin.relY
+      const { x: px, y: py } = pinWorldPos(comp, pin)
       const d = Math.sqrt((wx - px) ** 2 + (wy - py) ** 2)
       // Eligible if near the pin OR clicking within the component body.
       if ((d <= threshold || insideBody) && d < bestDist) {

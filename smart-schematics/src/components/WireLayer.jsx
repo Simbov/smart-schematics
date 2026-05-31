@@ -47,7 +47,7 @@ function buildWirePath(wire, crossings) {
   return d
 }
 
-const WirePath = memo(function WirePath({ wire, crossings, selected, onClick }) {
+const WirePath = memo(function WirePath({ wire, crossings, selected, onClick, wireMode }) {
   const d = useMemo(() => buildWirePath(wire, crossings), [wire, crossings])
 
   const dasharray =
@@ -56,7 +56,9 @@ const WirePath = memo(function WirePath({ wire, crossings, selected, onClick }) 
 
   return (
     <>
-      {/* Fat invisible hit area */}
+      {/* Fat invisible hit area. In wire mode it must not capture clicks —
+          otherwise it selects the existing wire instead of letting the canvas
+          place/junction a new wire onto it (the canvas snaps to wires itself). */}
       <path
         d={d}
         stroke="transparent"
@@ -64,7 +66,7 @@ const WirePath = memo(function WirePath({ wire, crossings, selected, onClick }) 
         fill="none"
         onMouseDown={e => e.stopPropagation()}
         onClick={e => { e.stopPropagation(); onClick?.(e) }}
-        style={{ cursor: 'pointer' }}
+        style={{ cursor: 'pointer', pointerEvents: wireMode ? 'none' : 'auto' }}
       />
       {/* Visible wire */}
       <path
@@ -134,7 +136,7 @@ function useFlowAnimation(wires, isRunning) {
   }, [isRunning, wires])
 }
 
-export default function WireLayer({ wires, junctions, selectedIds, onWireClick, isRunning }) {
+export default function WireLayer({ wires, junctions, selectedIds, onWireClick, isRunning, wireMode }) {
   useFlowAnimation(wires, isRunning)
 
   return (
@@ -149,6 +151,7 @@ export default function WireLayer({ wires, junctions, selectedIds, onWireClick, 
             crossings={crossings}
             selected={selectedIds.includes(wire.id)}
             onClick={() => onWireClick?.(wire.id)}
+            wireMode={wireMode}
           />
         )
       })}
