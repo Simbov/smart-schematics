@@ -7,6 +7,11 @@ project adheres to [Semantic Versioning](https://semver.org/). The section for
 each version is published verbatim as the GitHub Release notes (and shown in the
 in-app "update available" dialog), so write it for end users.
 
+Jot changes under **[Unreleased]** as you work. `npm run release` stamps that
+section with the version and date and starts a fresh Unreleased block.
+
+## [Unreleased]
+
 ## [0.0.3]
 
 ### Added
