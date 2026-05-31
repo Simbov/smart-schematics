@@ -1,0 +1,80 @@
+name: Release
+
+# Builds native installers for macOS + Windows and attaches them to a
+# GitHub Release whenever you push a version tag like `v0.0.1`.
+#
+#   git tag v0.0.1 && git push origin v0.0.1
+#
+# You can also trigger it manually from the Actions tab (workflow_dispatch).
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+# Needed so the workflow can create/upload the GitHub Release.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Universal binary covers both Apple Silicon and Intel Macs.
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+            rust-targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+          - platform: windows-latest
+            args: ""
+            rust-targets: ""
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: smart-schematics/package-lock.json
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "smart-schematics/src-tauri -> target"
+
+      - name: Install frontend dependencies
+        working-directory: smart-schematics
+        run: npm ci
+
+      - name: Build app + create Release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: smart-schematics
+          tagName: ${{ github.ref_name }}
+          releaseName: "Smart Schematics ${{ github.ref_name }}"
+          releaseBody: |
+            Native installers for macOS and Windows are attached below.
+
+            **macOS (.dmg):** the app is unsigned, so on first launch
+            right-click the app → **Open** → **Open**. (Or run
+            `xattr -cr "/Applications/Smart Schematics.app"` once.)
+
+            **Windows (.msi/.exe):** SmartScreen may warn — click
+            **More info** → **Run anyway**.
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
