@@ -58,15 +58,40 @@ jobs:
         working-directory: smart-schematics
         run: npm ci
 
+      - name: Extract release notes from CHANGELOG
+        id: changelog
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Capture the lines under "## [VERSION]" up to the next "## [" heading.
+          NOTES=$(awk -v hdr="## [$VERSION]" '
+            index($0, hdr) == 1 { capture = 1; next }
+            /^## \[/ { capture = 0 }
+            capture { print }
+          ' CHANGELOG.md)
+          {
+            echo "notes<<CHANGELOG_EOF"
+            echo "$NOTES"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build app + create Release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater signing — required so tauri-action produces signed bundles
+          # and a latest.json manifest. Add these in repo Settings → Secrets.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: smart-schematics
           tagName: ${{ github.ref_name }}
           releaseName: "Smart Schematics ${{ github.ref_name }}"
           releaseBody: |
+            ${{ steps.changelog.outputs.notes }}
+
+            ---
+
             Native installers for macOS and Windows are attached below.
 
             **macOS (.dmg):** the app is unsigned, so on first launch

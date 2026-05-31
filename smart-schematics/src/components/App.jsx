@@ -13,6 +13,7 @@ import ProjectBrowser from './ProjectBrowser'
 import ExternalChangeBanner from './ExternalChangeBanner'
 import ErrorBoundary from './ErrorBoundary'
 import { setWindowTitle, basename } from '../lib/tauriFs'
+import { checkForUpdates } from '../lib/updater'
 
 export default function App() {
   const theme = useSchematicStore(s => s.theme)
@@ -40,6 +41,11 @@ export default function App() {
   // Bootstrap
   useEffect(() => {
     loadFromStorage()
+  }, [])
+
+  // Check for app updates once on startup (no-op outside Tauri)
+  useEffect(() => {
+    checkForUpdates({ silent: true })
   }, [])
 
   // Auto-save: 30-second interval + 2-second debounce on any drawing change

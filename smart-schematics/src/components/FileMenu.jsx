@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import {
   ChevronDown, ChevronRight, FilePlus, Copy, Download, Upload,
-  FolderOpen, Save, SaveAll, Clock, X,
+  FolderOpen, Save, SaveAll, Clock, X, RefreshCw,
 } from 'lucide-react'
 import useSchematicStore from '../store/schematicStore'
 import { isRunningInTauri, basename } from '../lib/tauriFs'
+import { checkForUpdates } from '../lib/updater'
 
 function downloadBlob(blob, filename) {
   const a = document.createElement('a')
@@ -295,6 +296,11 @@ export default function FileMenu() {
 
           <MenuItem icon={<FolderOpen size={12} />} label="Manage Projects…"
             onClick={action(() => setShowProjectBrowser(true))} style={menuItemStyle} />
+
+          <div style={separatorStyle} />
+
+          <MenuItem icon={<RefreshCw size={12} />} label="Check for Updates…"
+            onClick={action(() => checkForUpdates({ silent: false }))} style={menuItemStyle} />
         </div>
       )}
 
