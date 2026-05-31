@@ -56,6 +56,13 @@ if (run('git rev-list --count HEAD..origin/main') !== '0')
 if (run('git tag --list').split('\n').includes(tag))
   die(`Tag ${tag} already exists.`)
 
+// ── Lockfile must be in sync (CI runs `npm ci`, which is strict) ──────────
+// Refreshes only the lockfile; if that produces a diff, the committed lock was
+// out of sync and would break the CI build — bail so it gets committed first.
+run('npm install --package-lock-only')
+if (run(`git -C "${repoRoot}" status --porcelain smart-schematics/package-lock.json`))
+  die('package-lock.json was out of sync — refreshed it. Commit the change, then re-run release.')
+
 // ── Tests must pass before we touch anything ──────────────────────────────
 console.log('▶ Running tests…\n')
 stream('npm run test:run')
