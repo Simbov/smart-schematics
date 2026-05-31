@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { runDCSimulation } from './dcSolver.js'
-import { battery, resistor, lamp, spdt, wire, boundWire } from '../../test/circuitBuilder.js'
+import { battery, resistor, lamp, spdt, wire, boundWire, ground, voltmeter, diode, potentiometer } from '../../test/circuitBuilder.js'
 
 describe('dcSolver — basic circuits', () => {
   it('drives a single resistor across a battery (Ohm law)', () => {
@@ -132,5 +132,67 @@ describe('dcSolver — degenerate circuits', () => {
     const res = runDCSimulation([], [], {})
     expect(res.componentStates).toEqual({})
     expect(res.wireStates).toEqual({})
+  })
+})
+
+describe('dcSolver — multiple ground symbols are one node', () => {
+  it('closes a circuit through two un-wired ground symbols', () => {
+    // POS → lamp → ground#2 ;  battery NEG → ground#1.  The two ground symbols
+    // are NOT wired together — they must still be the same node (node 0) so the
+    // lamp lights. Previously only the first ground became node 0 and the second
+    // floated, leaving the lamp dark.
+    const bt = battery([0, 0], [0, 100])              // 9V, POS(0,0) NEG(0,100)
+    const la = lamp([0, 0], [200, 0])                 // A on POS, B at (200,0)
+    const g1 = ground([0, 100])                       // shares NEG coord
+    const g2 = ground([200, 0])                       // shares lamp.B coord
+    const res = runDCSimulation([bt, la, g1, g2], [], {})
+    expect(res.componentStates[la.id].on).toBe(true)
+    expect(res.componentStates[la.id].I).toBeCloseTo(0.9, 4)
+  })
+})
+
+describe('dcSolver — potentiometer wiper divider', () => {
+  it('taps half the supply at position 0.5', () => {
+    const bt = battery([0, 0], [0, 100], { voltage: 10 })
+    const g = ground([0, 100])                        // NEG = node 0
+    const rv = potentiometer([0, 0], [0, 100], [50, 50], 10000, 0.5)
+    const vm = voltmeter([50, 50], [0, 100])          // probe W → ground
+    const res = runDCSimulation([bt, g, rv, vm], [], {})
+    expect(res.componentStates[vm.id].V).toBeCloseTo(5, 2)
+  })
+
+  it('taps 7.5V at position 0.25 (wiper nearer A)', () => {
+    const bt = battery([0, 0], [0, 100], { voltage: 10 })
+    const g = ground([0, 100])
+    const rv = potentiometer([0, 0], [0, 100], [50, 50], 10000, 0.25)
+    const vm = voltmeter([50, 50], [0, 100])
+    const res = runDCSimulation([bt, g, rv, vm], [], {})
+    expect(res.componentStates[vm.id].V).toBeCloseTo(7.5, 2)
+  })
+})
+
+describe('dcSolver — diode forward voltage & zener breakdown', () => {
+  it('honors the configured forward voltage', () => {
+    // 9V across LED (Vf=2.1) + 100Ω. I = (9 − 2.1)/(Ron 10 + 100) = 0.06273 A.
+    const bt = battery([0, 0], [0, 100], { voltage: 9 })
+    const g = ground([0, 100])
+    const d = diode([0, 0], [100, 0], { type: 'led', forwardVoltage: 2.1 })
+    const r = resistor([100, 0], [0, 100], 100)
+    const res = runDCSimulation([bt, g, d, r], [], {})
+    expect(res.componentStates[d.id].on).toBe(true)
+    expect(res.componentStates[d.id].I).toBeCloseTo((9 - 2.1) / 110, 3)
+  })
+
+  it('clamps a node to the zener voltage in reverse breakdown', () => {
+    // 10V → 1kΩ → node ; zener (5.1V) from node(K) to ground(A) reverse-biased.
+    // KCL: (10−Vn)/1000 = (Vn−5.1)/10  → Vn ≈ 5.15V.
+    const bt = battery([0, 0], [0, 100], { voltage: 10 })
+    const g = ground([0, 100])
+    const r = resistor([0, 0], [100, 0], 1000)
+    const z = diode([0, 100], [100, 0], { type: 'zener_diode', zenerVoltage: 5.1 }) // A=gnd, K=node
+    const vm = voltmeter([100, 0], [0, 100])
+    const res = runDCSimulation([bt, g, r, z, vm], [], {})
+    expect(res.componentStates[z.id].on).toBe(true)
+    expect(res.componentStates[vm.id].V).toBeCloseTo(5.15, 1)
   })
 })

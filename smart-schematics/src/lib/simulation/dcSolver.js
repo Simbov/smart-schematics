@@ -20,6 +20,34 @@ class UnionFind {
 
 function ptKey(x, y) { return `${Math.round(x)},${Math.round(y)}` }
 
+const clamp01 = p => Math.min(1, Math.max(0, p))
+
+// Potentiometer: total R between A–B with a wiper W. Splits into A–W and W–B
+// so the wiper actually taps a divided voltage. position 0 → wiper at A.
+function potResistances(comp) {
+  const R = Math.max(1e-3, comp.simParams?.resistance ?? parseValue(comp.value, 10000))
+  const p = clamp01(comp.simParams?.position ?? 0.5)
+  return { rAW: Math.max(1e-3, R * p), rWB: Math.max(1e-3, R * (1 - p)) }
+}
+
+// Rheostat: effective resistance scales with wiper position (0 → ~short, 1 → full R).
+function varResistance(comp) {
+  const R = Math.max(1e-3, comp.simParams?.resistance ?? parseValue(comp.value, 10000))
+  const p = clamp01(comp.simParams?.position ?? 1)
+  return Math.max(1e-3, R * p)
+}
+
+// Diode family parameters. Vf honors the configured forward voltage; zeners also
+// carry a reverse breakdown voltage Vz (reverse conduction clamps |Vak| ≈ Vz).
+function diodeParams(comp) {
+  const isLed = comp.type === 'led'
+  const Vf = comp.simParams?.forwardVoltage ?? (isLed ? 2.0 : 0.7)
+  const Vz = comp.type === 'zener_diode'
+    ? Math.max(0.1, comp.simParams?.zenerVoltage ?? parseValue(comp.value, 5.1))
+    : null
+  return { Vf, Vz, Ron: 10 }
+}
+
 function buildWireNets(wires) {
   const uf = new UnionFind()
   for (const wire of wires) {
@@ -84,6 +112,23 @@ function _runDCSimulation(components, wires, interactiveStates) {
 
   // Build wire nets
   const uf = buildWireNets(wires || [])
+
+  // All `ground` symbols denote the same global node (node 0), and all `vss_rail`
+  // symbols likewise share a node, even when not explicitly wired together — this
+  // matches how ground is drawn in real schematics. Without this, only the FIRST
+  // ground symbol's net became node 0 and any other ground symbol floated, so a
+  // circuit whose return relied on a second ground symbol would not close.
+  const groundPts = []
+  const vssPts = []
+  for (const comp of components) {
+    if (comp.type === 'ground') {
+      for (const p of (comp.pins || [])) groundPts.push(ptKey(p.absX, p.absY))
+    } else if (comp.type === 'vss_rail') {
+      for (const p of (comp.pins || [])) vssPts.push(ptKey(p.absX, p.absY))
+    }
+  }
+  for (let i = 1; i < groundPts.length; i++) uf.union(groundPts[0], groundPts[i])
+  for (let i = 1; i < vssPts.length; i++) uf.union(vssPts[0], vssPts[i])
 
   // Collect all pin nets
   const pinNet = {}  // `${compId}.${pinId}` → netId string
@@ -208,9 +253,18 @@ function _runDCSimulation(components, wires, interactiveStates) {
         case 'ground': case 'vss_rail': break
 
         // Resistive passives
-        case 'resistor': case 'variable_resistor': case 'potentiometer':
+        case 'resistor':
           stampResistor(id, 'A', 'B', Math.max(1e-3, comp.simParams?.resistance ?? parseValue(comp.value, 1000)))
           break
+        case 'variable_resistor':
+          stampResistor(id, 'A', 'B', varResistance(comp))
+          break
+        case 'potentiometer': {
+          const { rAW, rWB } = potResistances(comp)
+          stampResistor(id, 'A', 'W', rAW)
+          stampResistor(id, 'W', 'B', rWB)
+          break
+        }
         case 'fuse': stampResistor(id, 'A', 'B', 0.01); break
         case 'inductor': stampResistor(id, 'A', 'B', 0.001); break
         case 'lamp': stampResistor(id, 'A', 'B', 10); break
@@ -337,8 +391,16 @@ function _runDCSimulation(components, wires, interactiveStates) {
             break
           }
           case 'ground': case 'vss_rail': break
-          case 'resistor': case 'variable_resistor': case 'potentiometer':
+          case 'resistor':
             stampResistor(cid, 'A', 'B', Math.max(1e-3, comp.simParams?.resistance ?? parseValue(comp.value, 1000))); break
+          case 'variable_resistor':
+            stampResistor(cid, 'A', 'B', varResistance(comp)); break
+          case 'potentiometer': {
+            const { rAW, rWB } = potResistances(comp)
+            stampResistor(cid, 'A', 'W', rAW)
+            stampResistor(cid, 'W', 'B', rWB)
+            break
+          }
           case 'fuse': stampResistor(cid, 'A', 'B', 0.01); break
           case 'inductor': stampResistor(cid, 'A', 'B', 0.001); break
           case 'lamp': stampResistor(cid, 'A', 'B', 10); break
@@ -385,21 +447,27 @@ function _runDCSimulation(components, wires, interactiveStates) {
 
           // Piecewise linear diode model
           case 'led': case 'diode': case 'zener_diode': case 'photodiode': {
-            const Vf = comp.type === 'led' ? 1.8 : 0.6
-            const Ron = 10
+            const { Vf, Vz, Ron } = diodeParams(comp)
             const nA = pn('A'), nK = pn('K')
             if (!nA || !nK) break
             const Va = nodeVoltages[nA] ?? 0
             const Vk = nodeVoltages[nK] ?? 0
             const Vd = Va - Vk
+            const p = nA !== groundNet ? netIdx[nA] : -1
+            const n = nK !== groundNet ? netIdx[nK] : -1
             if (Vd > Vf * 0.5) {
-              // Forward biased: stamp conductance + current source (companion)
-              const G_on = 1 / Ron
+              // Forward biased: I_AK = G·Vd − G·Vf. The −G·Vf offset is a companion
+              // current source opposing conduction: inject +I_eq at the anode, −I_eq
+              // at the cathode (so the device draws less than a bare resistor).
+              stamp(nA, nK, 1 / Ron)
               const I_eq = Vf / Ron
-              stamp(nA, nK, G_on)
-              // Current source to represent forward voltage offset
-              const p = nA !== groundNet ? netIdx[nA] : -1
-              const n = nK !== groundNet ? netIdx[nK] : -1
+              if (p >= 0) b[p] += I_eq
+              if (n >= 0) b[n] -= I_eq
+            } else if (Vz != null && -Vd > Vz * 0.99) {
+              // Zener reverse breakdown: I_AK = G·Vd + G·Vz (current flows K→A and
+              // clamps |Vak| ≈ Vz). Offset sign is flipped vs the forward case.
+              stamp(nA, nK, 1 / Ron)
+              const I_eq = Vz / Ron
               if (p >= 0) b[p] -= I_eq
               if (n >= 0) b[n] += I_eq
             } else {
@@ -479,9 +547,20 @@ function _runDCSimulation(components, wires, interactiveStates) {
         compV = V('POS') - V('NEG')
         compP = compV * compI; on = true; break
 
-      case 'resistor': case 'variable_resistor': case 'potentiometer': {
+      case 'resistor': {
         const R = Math.max(1e-3, comp.simParams?.resistance ?? parseValue(comp.value, 1000))
         compV = V('A') - V('B'); compI = Math.abs(compV) / R; compP = compI * compI * R; on = compI > 1e-4; break
+      }
+      case 'variable_resistor': {
+        const R = varResistance(comp)
+        compV = V('A') - V('B'); compI = Math.abs(compV) / R; compP = compI * compI * R; on = compI > 1e-4; break
+      }
+      case 'potentiometer': {
+        const { rAW, rWB } = potResistances(comp)
+        const iAW = Math.abs(V('A') - V('W')) / rAW
+        const iWB = Math.abs(V('W') - V('B')) / rWB
+        compV = V('A') - V('B'); compI = Math.max(iAW, iWB)
+        compP = iAW * iAW * rAW + iWB * iWB * rWB; on = compI > 1e-4; break
       }
       case 'fuse': compV = V('A') - V('B'); compI = Math.abs(compV) / 0.01; compP = compI * compI * 0.01; break
       case 'inductor': compV = V('A') - V('B'); compI = Math.abs(compV) / 0.001; compP = compI * compI * 0.001; break
@@ -501,10 +580,12 @@ function _runDCSimulation(components, wires, interactiveStates) {
         compV = V(pa) - V(pb); compI = Math.abs(compV) / 1e9; compP = compI * compI * 1e9; break
       }
       case 'led': case 'diode': case 'zener_diode': case 'photodiode': {
-        const Vf = comp.type === 'led' ? 1.8 : 0.6
+        const { Vf, Vz, Ron } = diodeParams(comp)
         compV = V('A') - V('K')
-        compI = compV > Vf * 0.5 ? (compV - Vf) / 10 : compV * 1e-6
-        compP = compV * compI; on = compI > 1e-3; break
+        if (compV > Vf * 0.5) compI = (compV - Vf) / Ron
+        else if (Vz != null && -compV > Vz * 0.99) compI = (compV + Vz) / Ron  // reverse breakdown, K→A (negative)
+        else compI = compV * 1e-6
+        compP = compV * compI; on = Math.abs(compI) > 1e-3; break
       }
       case 'switch_no': case 'limit_switch': case 'proximity_switch':
       case 'pressure_switch': case 'temperature_switch':

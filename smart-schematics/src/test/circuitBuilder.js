@@ -69,6 +69,33 @@ export function lamp(aXY, bXY, { designator = 'LA1', id = uid('la') } = {}) {
   }
 }
 
+/** Ground symbol (single GND pin). All ground symbols share node 0. */
+export function ground(xy, { id = uid('gnd') } = {}) {
+  return { id, type: 'ground', designator: 'GND', value: '', simParams: {}, pins: [pin('GND', ...xy)] }
+}
+
+/** Voltmeter probe (1GΩ, negligible loading): reads V(A)−V(B) as componentStates.V. */
+export function voltmeter(aXY, bXY, { designator = 'VM1', id = uid('vm') } = {}) {
+  return { id, type: 'voltmeter', designator, value: '', simParams: {}, pins: [pin('A', ...aXY), pin('B', ...bXY)] }
+}
+
+/** Diode/LED/zener: anode A, cathode K. Pass `forwardVoltage`/`zenerVoltage`/`type`. */
+export function diode(aXY, kXY, { type = 'diode', forwardVoltage, zenerVoltage, designator = 'D1', id = uid('d') } = {}) {
+  const simParams = {}
+  if (forwardVoltage != null) simParams.forwardVoltage = forwardVoltage
+  if (zenerVoltage != null) simParams.zenerVoltage = zenerVoltage
+  return { id, type, designator, value: '', simParams, pins: [pin('A', ...aXY), pin('K', ...kXY)] }
+}
+
+/** Potentiometer: ends A/B, wiper W. `position` 0→wiper at A, 1→wiper at B. */
+export function potentiometer(aXY, bXY, wXY, ohms, position = 0.5, { designator = 'RV1', id = uid('rv') } = {}) {
+  return {
+    id, type: 'potentiometer', designator, value: `${ohms}`,
+    simParams: { resistance: ohms, position },
+    pins: [pin('A', ...aXY), pin('B', ...bXY), pin('W', ...wXY)],
+  }
+}
+
 /** SPDT switch: COM / NO / NC. `position` is the configured initial throw ('NO'|'NC'). */
 export function spdt(comXY, noXY, ncXY, position = 'NO', { designator = 'S1', id = uid('s') } = {}) {
   return {
