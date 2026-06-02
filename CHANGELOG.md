@@ -12,6 +12,8 @@ section with the version and date and starts a fresh Unreleased block.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-06-02
+
 ### Added
 - **Images on schematics.** Insert PNG/JPG/SVG images onto a drawing as a
   backdrop — move, resize (with optional aspect-lock), rotate, set opacity, and
