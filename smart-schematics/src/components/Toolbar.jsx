@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useRef } from 'react'
 import {
   MousePointer2, Pencil, Type, MessageSquare, LayoutTemplate,
   ZoomIn, ZoomOut, Maximize2, Grid3X3,
@@ -8,6 +8,8 @@ import {
 } from 'lucide-react'
 import useSchematicStore from '../store/schematicStore'
 import { TOOLBAR_GROUPS, buttonTooltip } from '../lib/toolbarConfig'
+import { aspectFitSize, defaultPlacement } from '../lib/imageUtils'
+import { isRunningInTauri, openFileDialog, readImageAsDataUrl } from '../lib/tauriFs'
 
 // Maps the string icon names in toolbarConfig to their lucide components.
 const ICONS = {
@@ -55,6 +57,10 @@ export default function Toolbar() {
   const rotateComponent = useSchematicStore(s => s.rotateComponent)
   const flipComponent = useSchematicStore(s => s.flipComponent)
   const updateTitleBlock = useSchematicStore(s => s.updateTitleBlock)
+  const addImage = useSchematicStore(s => s.addImage)
+  const pushUndo = useSchematicStore(s => s.pushUndo)
+  const setSelectedIds = useSchematicStore(s => s.setSelectedIds)
+  const fileInputRef = useRef(null)
 
   const hasSelection = selectedIds.length > 0
   const drawing = drawings.find(d => d.id === activeDrawingId)
@@ -74,6 +80,50 @@ export default function Toolbar() {
     })
   }
 
+  // Insert an image from a base64 data URL: measure it, aspect-fit-clamp the
+  // size, center it in the current viewport (snapping the origin to grid), then
+  // add it to the drawing and select it. All the geometry is pure (imageUtils).
+  const insertImageFromDataUrl = (src) => {
+    if (!src || !drawing || !activeDrawingId) return
+    const probe = new window.Image()
+    probe.onload = () => {
+      const size = aspectFitSize(probe.naturalWidth, probe.naturalHeight)
+      const { panX, panY, zoom } = drawing.viewState || { panX: 0, panY: 0, zoom: 1 }
+      // Screen center → world coords (mirrors screenToWorld).
+      const cx = (window.innerWidth / 2 - panX) / zoom
+      const cy = (window.innerHeight / 2 - panY) / zoom
+      const grid = settings.snapToGrid ? settings.gridSize : 0
+      const origin = defaultPlacement(cx, cy, size, grid)
+      pushUndo()
+      const id = addImage(activeDrawingId, { src, x: origin.x, y: origin.y, width: size.width, height: size.height })
+      setSelectedIds([id])
+      setActiveTool('select')
+    }
+    probe.src = src
+  }
+
+  const handleInsertImage = async () => {
+    if (isRunningInTauri()) {
+      const path = await openFileDialog([
+        { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'] },
+      ])
+      if (!path) return
+      const dataUrl = await readImageAsDataUrl(path)
+      insertImageFromDataUrl(dataUrl)
+    } else {
+      fileInputRef.current?.click()
+    }
+  }
+
+  const onFileChosen = (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // allow re-picking the same file
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => insertImageFromDataUrl(reader.result)
+    reader.readAsDataURL(file)
+  }
+
   // Per-button behaviour/state, keyed by config id. The config controls which
   // buttons exist, their order, grouping, labels, and shortcut hints; this map
   // supplies what's stateful. Buttons with `comingSoon` (Insert Image, Box) are
@@ -85,6 +135,7 @@ export default function Toolbar() {
     wire: { onClick: () => setActiveTool('wire'), active: activeTool === 'wire' },
     text: { onClick: () => setActiveTool('text'), active: activeTool === 'text' },
     callout: { onClick: () => setActiveTool('callout'), active: activeTool === 'callout' },
+    insertImage: { onClick: handleInsertImage, disabled: !drawing },
     titleBlock: {
       active: drawing?.titleBlock?.visible,
       onClick: () => {
@@ -126,6 +177,14 @@ export default function Toolbar() {
 
   return (
     <div className="flex items-center gap-0.5 flex-1 min-w-0 overflow-x-auto">
+      {/* Hidden image picker (browser fallback; Tauri uses the native dialog) */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        style={{ display: 'none' }}
+        onChange={onFileChosen}
+      />
       {TOOLBAR_GROUPS.map((group, gi) => (
         <React.Fragment key={group.id}>
           {gi > 0 && <Divider />}

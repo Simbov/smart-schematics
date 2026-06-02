@@ -46,6 +46,38 @@ export async function writeTextFile(path, content) {
   }
 }
 
+// Read a binary file (e.g. an image picked via openFileDialog) and return it as
+// a base64 `data:` URL suitable for an <image href>. Tauri-only; returns null in
+// a plain browser (which uses the hidden <input> + FileReader path instead).
+export async function readImageAsDataUrl(path) {
+  if (!isRunningInTauri()) return null
+  const { readFile } = await import('@tauri-apps/plugin-fs')
+  const bytes = await readFile(path) // Uint8Array
+  // Chunked base64 encode to avoid blowing the call stack on large images.
+  let binary = ''
+  const CHUNK = 0x8000
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK))
+  }
+  const b64 = btoa(binary)
+  const mime = mimeForExtension(path)
+  return `data:${mime};base64,${b64}`
+}
+
+// Best-effort MIME guess from a file extension for the image data URL.
+function mimeForExtension(path) {
+  const ext = (path.split('.').pop() || '').toLowerCase()
+  switch (ext) {
+    case 'png': return 'image/png'
+    case 'jpg':
+    case 'jpeg': return 'image/jpeg'
+    case 'gif': return 'image/gif'
+    case 'svg': return 'image/svg+xml'
+    case 'webp': return 'image/webp'
+    default: return 'application/octet-stream'
+  }
+}
+
 export async function watchFile(path, callback) {
   if (!isRunningInTauri()) return () => {}
   const { watch } = await import('@tauri-apps/plugin-fs')

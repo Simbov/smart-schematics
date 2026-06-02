@@ -35,9 +35,9 @@ describe('toolbarConfig', () => {
     }
   })
 
-  it('reserves disabled slots for the Stage 3 / Stage 5 tools', () => {
+  it('reserves a disabled slot for the Stage 5 Box tool; Insert Image is live (Stage 3)', () => {
     const byId = Object.fromEntries(allToolbarButtons().map(b => [b.id, b]))
-    expect(byId.insertImage.comingSoon).toBe(true)
+    expect(byId.insertImage.comingSoon).toBeUndefined()
     expect(byId.box.comingSoon).toBe(true)
   })
 
@@ -61,9 +61,9 @@ describe('toolbarConfig', () => {
     expect(buttonTooltip(byId.simOverlay)).toBe('Toggle Simulation Overlay')
   })
 
-  it('marks reserved slots as coming soon in the tooltip', () => {
+  it('marks the still-reserved Box slot as coming soon in the tooltip', () => {
     const byId = Object.fromEntries(allToolbarButtons().map(b => [b.id, b]))
-    expect(buttonTooltip(byId.insertImage)).toBe('Insert Image — coming soon')
+    expect(buttonTooltip(byId.insertImage)).toBe('Insert Image')
     expect(buttonTooltip(byId.box)).toBe('Box — coming soon')
   })
 })

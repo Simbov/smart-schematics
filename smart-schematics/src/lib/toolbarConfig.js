@@ -30,7 +30,7 @@ export const TOOLBAR_GROUPS = [
     buttons: [
       { id: 'text', label: 'Text', shortcut: 'T', icon: 'Type' },
       { id: 'callout', label: 'Callout Box', shortcut: 'B', icon: 'MessageSquare' },
-      { id: 'insertImage', label: 'Insert Image', icon: 'Image', comingSoon: true },
+      { id: 'insertImage', label: 'Insert Image', icon: 'Image' },
       { id: 'box', label: 'Box', icon: 'Square', comingSoon: true },
       { id: 'titleBlock', label: 'Toggle Title Block', icon: 'LayoutTemplate' },
     ],
