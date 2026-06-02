@@ -1,0 +1,68 @@
+{
+  "version": 2,
+  "id": "p_v2_fixture",
+  "name": "Legacy V2 Project",
+  "drawingIds": ["d_v2_main"],
+  "activeDrawingId": "d_v2_main",
+  "drawings": [
+    {
+      "id": "d_v2_main",
+      "name": "Power Supply",
+      "type": "electrical",
+      "components": [
+        {
+          "id": "c_r1",
+          "type": "resistor",
+          "designator": "R1",
+          "value": "1k",
+          "description": "",
+          "x": 100,
+          "y": 100,
+          "rotation": 0,
+          "flipH": false,
+          "flipV": false,
+          "pins": [
+            { "id": "p1", "relX": -20, "relY": 0, "absX": 80, "absY": 100 },
+            { "id": "p2", "relX": 20, "relY": 0, "absX": 120, "absY": 100 }
+          ],
+          "simParams": { "resistance": "1000" },
+          "simState": {},
+          "labelOffset": { "x": 0, "y": -15 }
+        }
+      ],
+      "wires": [
+        {
+          "id": "w_1",
+          "points": [
+            { "x": 120, "y": 100 },
+            { "x": 200, "y": 100 }
+          ],
+          "pinA": { "componentId": "c_r1", "pinId": "p2" },
+          "pinB": null
+        }
+      ],
+      "junctions": [],
+      "annotations": [
+        {
+          "id": "a_1",
+          "type": "text",
+          "x": 60,
+          "y": 60,
+          "text": "Legacy note\nsecond line"
+        }
+      ],
+      "titleBlock": {
+        "title": "Power Supply",
+        "drawingNumber": "001",
+        "revision": "A",
+        "author": "Sim",
+        "date": "2024-01-01",
+        "company": "Acme",
+        "visible": true
+      },
+      "viewState": { "panX": 0, "panY": 0, "zoom": 1 },
+      "isDirty": false,
+      "lastSaved": null
+    }
+  ]
+}

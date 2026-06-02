@@ -78,6 +78,32 @@ function mimeForExtension(path) {
   }
 }
 
+// Decode a base64 string into a Uint8Array (no data: prefix). Used to write an
+// attachment's stored payload back out to disk. Pure — exported for testing.
+export function base64ToBytes(b64) {
+  // Strip a leading data: URL prefix if one slipped in.
+  const comma = b64.indexOf(',')
+  const raw = b64.startsWith('data:') && comma >= 0 ? b64.slice(comma + 1) : b64
+  const binary = atob(raw)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return bytes
+}
+
+// Write raw bytes (Uint8Array) to a path. Tauri-only; no-op in a plain browser
+// (which uses a Blob download instead). Suppresses the file watcher like the
+// text writer so exporting an attachment doesn't trip a false "external change".
+export async function writeBinaryFile(path, bytes) {
+  if (!isRunningInTauri()) return
+  const { writeFile } = await import('@tauri-apps/plugin-fs')
+  setSelfWriting(true)
+  try {
+    await writeFile(path, bytes)
+  } finally {
+    setTimeout(() => setSelfWriting(false), 800)
+  }
+}
+
 export async function watchFile(path, callback) {
   if (!isRunningInTauri()) return () => {}
   const { watch } = await import('@tauri-apps/plugin-fs')

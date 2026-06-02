@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import {
   ChevronDown, ChevronRight, FilePlus, Copy, Download, Upload,
-  FolderOpen, Save, SaveAll, Clock, X, RefreshCw,
+  FolderOpen, Save, SaveAll, Clock, X, RefreshCw, Paperclip, Trash2,
 } from 'lucide-react'
 import useSchematicStore from '../store/schematicStore'
 import { isRunningInTauri, basename } from '../lib/tauriFs'
 import { checkForUpdates } from '../lib/updater'
+import { projectSize, formatBytes, isOverSizeLimit } from '../lib/projectFile'
 
 function downloadBlob(blob, filename) {
   const a = document.createElement('a')
@@ -22,9 +23,11 @@ function getSVGElement() {
 export default function FileMenu() {
   const [open, setOpen] = useState(false)
   const [recentOpen, setRecentOpen] = useState(false)
+  const [manageOpen, setManageOpen] = useState(false)
   const menuRef = useRef(null)
   const importRef = useRef(null)
   const importProjectRef = useRef(null)
+  const attachRef = useRef(null)
 
   const activeDrawingId = useSchematicStore(s => s.activeDrawingId)
   const drawings = useSchematicStore(s => s.drawings)
@@ -46,8 +49,25 @@ export default function FileMenu() {
   const saveProjectFileAs = useSchematicStore(s => s.saveProjectFileAs)
   const _loadProjectFromPath = useSchematicStore(s => s._loadProjectFromPath)
   const removeRecentFileFn = useSchematicStore(s => s.removeRecentFile)
+  const attachFile = useSchematicStore(s => s.attachFile)
+  const addAttachment = useSchematicStore(s => s.addAttachment)
+  const removeAttachment = useSchematicStore(s => s.removeAttachment)
+  const exportAttachment = useSchematicStore(s => s.exportAttachment)
 
   const inTauri = isRunningInTauri()
+
+  const project = projects.find(p => p.id === activeProjectId)
+  const attachments = project?.attachments || []
+
+  // Estimated serialized file size for the size-awareness line in the menu.
+  const sizeBytes = (() => {
+    if (!project) return 0
+    const projectDrawings = (project.drawingIds || [])
+      .map(id => drawings.find(d => d.id === id))
+      .filter(Boolean)
+    return projectSize({ version: 3, ...project, drawings: projectDrawings })
+  })()
+  const sizeOver = isOverSizeLimit(sizeBytes)
 
   useEffect(() => {
     const handler = e => {
@@ -184,6 +204,27 @@ export default function FileMenu() {
     e.target.value = ''
   }, [importProjectJSON])
 
+  // Browser fallback for "Attach File…": read the picked file as base64 and embed.
+  const handleAttachFile = useCallback(e => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = ev => {
+      const result = ev.target.result || ''
+      // FileReader.readAsDataURL → "data:<mime>;base64,<payload>"; strip the prefix.
+      const comma = String(result).indexOf(',')
+      const data = comma >= 0 ? String(result).slice(comma + 1) : String(result)
+      addAttachment({ name: file.name, mime: file.type || 'application/octet-stream', data })
+    }
+    reader.readAsDataURL(file)
+    e.target.value = ''
+  }, [addAttachment])
+
+  const handleAttachClick = useCallback(() => {
+    if (inTauri) attachFile()
+    else attachRef.current?.click()
+  }, [inTauri, attachFile])
+
   const menuItemStyle = {
     color: 'var(--component-color)',
   }
@@ -300,8 +341,28 @@ export default function FileMenu() {
 
           <div style={separatorStyle} />
 
+          {/* Attachments — embedded sub-files on the project (Stage 7) */}
+          <MenuItem icon={<Paperclip size={12} />} label="Attach File…"
+            onClick={action(handleAttachClick)} disabled={!activeProjectId} style={menuItemStyle} />
+          <MenuItem icon={<Paperclip size={12} />}
+            label={`Manage Attachments…${attachments.length ? ` (${attachments.length})` : ''}`}
+            onClick={action(() => setManageOpen(true))} disabled={!activeProjectId} style={menuItemStyle} />
+
+          <div style={separatorStyle} />
+
           <MenuItem icon={<FolderOpen size={12} />} label="Manage Projects…"
             onClick={action(() => setShowProjectBrowser(true))} style={menuItemStyle} />
+
+          {/* Size awareness — warn past the threshold. */}
+          <div
+            className="px-3 py-1.5 text-xs"
+            style={{ color: sizeOver ? '#eab308' : '#9ca3af' }}
+            title={sizeOver
+              ? 'Large project file — remove unused images/attachments to keep sync fast.'
+              : 'Estimated saved file size'}
+          >
+            {sizeOver ? '⚠ ' : ''}Project size: {formatBytes(sizeBytes)}
+          </div>
 
           <div style={separatorStyle} />
 
@@ -313,8 +374,95 @@ export default function FileMenu() {
       {/* Hidden file inputs (browser fallback) */}
       <input ref={importRef} type="file" accept=".sch,.json" style={{ display: 'none' }} onChange={handleImportDrawing} />
       <input ref={importProjectRef} type="file" accept=".scpro,.json" style={{ display: 'none' }} onChange={handleImportProject} />
+      <input ref={attachRef} type="file" style={{ display: 'none' }} onChange={handleAttachFile} />
+
+      {manageOpen && (
+        <ManageAttachmentsModal
+          attachments={attachments}
+          onClose={() => setManageOpen(false)}
+          onAttach={handleAttachClick}
+          onExport={id => exportAttachment(id)}
+          onRemove={id => removeAttachment(id)}
+        />
+      )}
     </div>
   )
+}
+
+function ManageAttachmentsModal({ attachments, onClose, onAttach, onExport, onRemove }) {
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.4)' }}
+      onMouseDown={onClose}
+    >
+      <div
+        className="rounded shadow-xl border w-[480px] max-w-[90vw] max-h-[80vh] flex flex-col"
+        style={{ background: 'var(--panel-bg)', borderColor: 'var(--panel-border)', color: 'var(--component-color)' }}
+        onMouseDown={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: 'var(--panel-border)' }}>
+          <span className="text-sm font-semibold flex items-center gap-2"><Paperclip size={14} /> Attachments</span>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={16} /></button>
+        </div>
+        <div className="flex-1 overflow-auto p-2">
+          {attachments.length === 0 ? (
+            <div className="text-xs text-gray-400 px-3 py-6 text-center">
+              No attachments. Use “Attach File…” to embed datasheets, notes, or reference files in this project.
+            </div>
+          ) : (
+            attachments.map(att => (
+              <div
+                key={att.id}
+                className="flex items-center gap-2 px-3 py-2 rounded hover:bg-black/5 dark:hover:bg-white/5 text-xs"
+              >
+                <Paperclip size={12} className="text-gray-400 flex-shrink-0" />
+                <span className="flex-1 truncate" title={att.name}>{att.name}</span>
+                <span className="text-gray-400">{formatBytes(estimateAttachmentBytes(att.data))}</span>
+                <button
+                  className="px-2 py-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 flex items-center gap-1"
+                  title="Export to disk"
+                  onClick={() => onExport(att.id)}
+                >
+                  <Download size={12} /> Export
+                </button>
+                <button
+                  className="px-1 py-0.5 rounded text-red-400 hover:bg-red-500/10"
+                  title="Remove attachment"
+                  onClick={() => { if (confirm(`Remove attachment “${att.name}”?`)) onRemove(att.id) }}
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+        <div className="px-4 py-3 border-t flex justify-between" style={{ borderColor: 'var(--panel-border)' }}>
+          <button
+            className="text-xs px-3 py-1.5 rounded border flex items-center gap-1.5 hover:bg-black/5 dark:hover:bg-white/5"
+            style={{ borderColor: 'var(--panel-border)' }}
+            onClick={onAttach}
+          >
+            <Paperclip size={12} /> Attach File…
+          </button>
+          <button
+            className="text-xs px-3 py-1.5 rounded border hover:bg-black/5 dark:hover:bg-white/5"
+            style={{ borderColor: 'var(--panel-border)' }}
+            onClick={onClose}
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Rough decoded-byte size of a base64 payload (3 bytes per 4 chars, minus padding).
+function estimateAttachmentBytes(b64) {
+  if (typeof b64 !== 'string' || !b64.length) return 0
+  const padding = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0
+  return Math.floor((b64.length * 3) / 4) - padding
 }
 
 function MenuItem({ icon, label, shortcut, onClick, disabled, style }) {
