@@ -12,8 +12,10 @@ import HydraulicFlowLayer from './HydraulicFlowLayer'
 import MeasurementOverlay from './MeasurementOverlay'
 import InteractiveControl, { isControllable } from './InteractiveControl'
 import AnnotationLayer from './AnnotationLayer'
+import ImageLayer from './ImageLayer'
 import TitleBlock from './TitleBlock'
 import InlineEditor from './InlineEditor'
+import { resizeBox, snapBox, RESIZE_HANDLES } from '../lib/imageUtils'
 import { ELECTRICAL_SYMBOL_MAP } from '../lib/symbols/electrical'
 import { HYDRAULIC_SYMBOL_MAP } from '../lib/symbols/HydraulicSymbols'
 import { getElectricalDef } from '../lib/components/electrical'
@@ -87,6 +89,11 @@ export default function Canvas({ onCursorMove }) {
   const calloutDragRef = useRef(null)
   const [calloutDraft, setCalloutDraft] = useState(null)
 
+  // Image resize state. resizeRef holds the in-progress gesture; resizeBoxState
+  // mirrors the live box for rendering without mutating the store mid-drag.
+  const resizeRef = useRef(null) // { imageId, handle, startWorld, startBox, keepAspect }
+  const [resizeBoxState, setResizeBoxState] = useState(null) // { imageId, box }
+
   // Inline editor state
   const [inlineEdit, setInlineEdit] = useState(null)
   // { annotationId?, titleBlockField?, worldX, worldY, value, multiline, isNew? }
@@ -136,6 +143,7 @@ export default function Canvas({ onCursorMove }) {
   const deleteIds = useSchematicStore(s => s.deleteIds)
   const copyToClipboard = useSchematicStore(s => s.copyToClipboard)
   const pasteFromClipboard = useSchematicStore(s => s.pasteFromClipboard)
+  const updateImage = useSchematicStore(s => s.updateImage)
 
   const drawing = drawings.find(d => d.id === activeDrawingId)
   const { panX, panY, zoom } = drawing?.viewState || { panX: 0, panY: 0, zoom: 1 }
@@ -220,9 +228,13 @@ export default function Canvas({ onCursorMove }) {
       const { selectedIds: ids, activeDrawingId: did, drawings: drws } = useSchematicStore.getState()
       const dr = drws.find(d => d.id === did)
       const selComps = dr?.components.filter(c => ids.includes(c.id)) || []
+      const selImgs = (dr?.images || []).filter(im => ids.includes(im.id))
+      const singleImg = ids.length === 1 && selImgs.length === 1 ? selImgs[0] : null
 
       if (e.key === 'r' || e.key === 'R') {
         if (selComps.length === 1) rotateComponent(did, selComps[0].id, 90)
+        // Images rotate in 90° steps about their center.
+        else if (singleImg) { pushUndo(); updateImage(did, singleImg.id, { rotation: ((singleImg.rotation || 0) + 90) % 360 }) }
         return
       }
       if (e.key === 'x' || e.key === 'X') {
@@ -277,6 +289,7 @@ export default function Canvas({ onCursorMove }) {
             ...(dr.components || []).map(c => c.id),
             ...(dr.wires || []).map(w => w.id),
             ...(dr.annotations || []).map(a => a.id),
+            ...(dr.images || []).filter(im => !im.locked).map(im => im.id),
           ])
         }
         return
@@ -298,7 +311,7 @@ export default function Canvas({ onCursorMove }) {
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
     }
-  }, [activeTool, wirePoints, undo, redo, deleteIds, copyToClipboard, pasteFromClipboard, rotateComponent, flipComponent, zoomToSelection])
+  }, [activeTool, wirePoints, undo, redo, deleteIds, copyToClipboard, pasteFromClipboard, rotateComponent, flipComponent, zoomToSelection, pushUndo, updateImage])
 
   const zoomAt = useCallback((factor, cx, cy) => {
     if (!activeDrawingId) return
@@ -508,7 +521,8 @@ export default function Canvas({ onCursorMove }) {
             dragRef.current.compIds,
             dragRef.current.wireIds,
             dragRef.current.annotationIds || [],
-            dx, dy
+            dx, dy,
+            dragRef.current.imageIds || []
           )
         }
       }
@@ -551,6 +565,12 @@ export default function Canvas({ onCursorMove }) {
             const aw = a.width || 120, ah = a.height || 60
             if (a.x >= minX && a.x + aw <= maxX && a.y >= minY && a.y + ah <= maxY) inside.push(a.id)
           }
+        }
+        // Images: fully-enclosed (and not locked) by the band.
+        for (const im of (dr?.images || [])) {
+          if (im.locked) continue
+          if (im.x >= minX && im.x + im.width <= maxX && im.y >= minY && im.y + im.height <= maxY)
+            inside.push(im.id)
         }
         if (inside.length > 0) setSelectedIds(inside)
         else clearSelection()
@@ -665,11 +685,11 @@ export default function Canvas({ onCursorMove }) {
     }
   }, [activeDrawingId, getSVGPos, toWorld, addComponent, finishWire, clearSelection, pushUndo, addAnnotation])
 
-  // Unified drag starter for components, wires, and annotations
-  const startDrag = useCallback((id, e, isAnnotation = false) => {
+  // Unified drag starter for components, wires, annotations, and images
+  const startDrag = useCallback((id, e, alwaysDraggable = false) => {
     const tool = useSchematicStore.getState().activeTool
-    // Components/wires only drag in select mode; annotations are always draggable
-    if (!isAnnotation && tool !== 'select') return
+    // Components/wires only drag in select mode; annotations & images always do
+    if (!alwaysDraggable && tool !== 'select') return
     e.stopPropagation()
     const { sx, sy } = getSVGPos(e)
     const worldStart = toWorld(sx, sy, true)
@@ -693,8 +713,9 @@ export default function Canvas({ onCursorMove }) {
     const compIds = (dr?.components || []).filter(c => dragIds.includes(c.id)).map(c => c.id)
     const wireIds = (dr?.wires || []).filter(w => dragIds.includes(w.id)).map(w => w.id)
     const annotationIds = (dr?.annotations || []).filter(a => dragIds.includes(a.id)).map(a => a.id)
+    const imageIds = (dr?.images || []).filter(im => dragIds.includes(im.id)).map(im => im.id)
 
-    dragRef.current = { compIds, wireIds, annotationIds, startWorld: worldStart }
+    dragRef.current = { compIds, wireIds, annotationIds, imageIds, startWorld: worldStart }
     isDraggingItems.current = true
     mouseDownPos.current = { x: e.clientX, y: e.clientY }
     didDrag.current = false
@@ -708,6 +729,57 @@ export default function Canvas({ onCursorMove }) {
     startDrag(id, e, false)
   }, [startDrag])
   const handleAnnotationMouseDown = useCallback((id, e) => startDrag(id, e, true), [startDrag])
+  // Images: select on click (unless locked — locked images get pointer-events:none
+  // in ImageLayer so this never fires for them), drag like an annotation.
+  const handleImageMouseDown = useCallback((id, e) => startDrag(id, e, true), [startDrag])
+  const handleImageClick = useCallback((id, e) => {
+    if (isDraggingItems.current) return
+    setActiveTool('select')
+    if (e?.shiftKey) addToSelection(id)
+    else setSelectedIds([id])
+  }, [setActiveTool, setSelectedIds, addToSelection])
+
+  // Begin dragging an image resize handle. Math lives in imageUtils.resizeBox;
+  // here we only translate pointer movement into world dx/dy and snap on commit.
+  const startImageResize = useCallback((imageId, handle, e) => {
+    e.stopPropagation()
+    e.preventDefault()
+    const dr = useSchematicStore.getState().drawings.find(d => d.id === activeDrawingId)
+    const img = (dr?.images || []).find(im => im.id === imageId)
+    if (!img) return
+    const startBox = { x: img.x, y: img.y, width: img.width, height: img.height }
+    const z = dr.viewState?.zoom || 1
+    const startClient = { x: e.clientX, y: e.clientY }
+    // `lastBox` on the ref is the source of truth for the commit, so we don't
+    // run side effects inside a setState updater.
+    resizeRef.current = { imageId, handle, startBox, z, startClient, lastBox: startBox }
+    setResizeBoxState({ imageId, box: startBox })
+
+    const onMove = (ev) => {
+      const r = resizeRef.current
+      if (!r) return
+      const dx = (ev.clientX - r.startClient.x) / r.z
+      const dy = (ev.clientY - r.startClient.y) / r.z
+      const box = resizeBox(r.startBox, r.handle, dx, dy, ev.shiftKey)
+      r.lastBox = box
+      setResizeBoxState({ imageId: r.imageId, box })
+    }
+    const onUp = () => {
+      const r = resizeRef.current
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      resizeRef.current = null
+      setResizeBoxState(null)
+      if (r) {
+        const { gridSize, snapToGrid } = useSchematicStore.getState().settings
+        const out = snapToGrid ? snapBox(r.lastBox, gridSize) : r.lastBox
+        pushUndo()
+        updateImage(activeDrawingId, r.imageId, out)
+      }
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [activeDrawingId, pushUndo, updateImage])
 
   const handleComponentClick = useCallback((id, e) => {
     if (isDraggingItems.current) return
@@ -858,6 +930,16 @@ export default function Canvas({ onCursorMove }) {
     }
     return a
   })
+  // Images carry the drag offset, plus the live resize box while a handle is dragged.
+  const effectiveImages = (drawing?.images || []).map(im => {
+    if (resizeBoxState && resizeBoxState.imageId === im.id) {
+      return { ...im, ...resizeBoxState.box }
+    }
+    if (isDraggingNow && dragRef.current?.imageIds?.includes(im.id)) {
+      return { ...im, x: im.x + dragDelta.dx, y: im.y + dragDelta.dy }
+    }
+    return im
+  })
 
   // Resolve each component's designator side so labels dodge wires. Recomputes
   // only when components or wires actually change (not on every render), and we
@@ -897,6 +979,11 @@ export default function Canvas({ onCursorMove }) {
     (ann.x + Math.max(ann.width || 0, 120) >= visX && ann.x - 20 <= visX + visW &&
      ann.y + Math.max(ann.height || 0, 60) >= visY && ann.y - 20 <= visY + visH)
   )
+  const IMG_MARGIN = 20
+  const visibleImages = effectiveImages.filter(im =>
+    (im.x + im.width + IMG_MARGIN >= visX && im.x - IMG_MARGIN <= visX + visW &&
+     im.y + im.height + IMG_MARGIN >= visY && im.y - IMG_MARGIN <= visY + visH)
+  )
 
   // Rubber band rect in world coords
   const rb = rubberBand
@@ -915,6 +1002,12 @@ export default function Canvas({ onCursorMove }) {
     w: Math.max(10, Math.abs(cd.endWorld.x - cd.startWorld.x)),
     h: Math.max(10, Math.abs(cd.endWorld.y - cd.startWorld.y)),
   } : null
+
+  // The single image (if any) that should show resize handles: exactly one
+  // selected image, not locked, in select tool, not mid-rotation.
+  const singleSelectedImage = (activeTool === 'select' && selectedIds.length === 1)
+    ? effectiveImages.find(im => im.id === selectedIds[0] && !im.locked && !(im.rotation % 360))
+    : null
 
   // Inline editor screen position
   const ieScreenX = inlineEdit ? inlineEdit.worldX * zoom + panX : 0
@@ -948,6 +1041,15 @@ export default function Canvas({ onCursorMove }) {
         )}
 
         <g transform={`translate(${panX},${panY}) scale(${zoom})`}>
+          {/* Images are backdrops: rendered first so components/wires sit on top. */}
+          <ImageLayer
+            images={visibleImages}
+            selectedIds={selectedIds}
+            zoom={zoom}
+            onImageClick={handleImageClick}
+            onImageMouseDown={handleImageMouseDown}
+          />
+
           <TitleBlock
             titleBlock={drawing.titleBlock}
             onEditField={handleTitleBlockEdit}
@@ -1076,6 +1178,36 @@ export default function Canvas({ onCursorMove }) {
               style={{ pointerEvents: 'none' }}
             />
           )}
+
+          {/* Image resize handles — screen-space sized via 1/zoom counter-scale */}
+          {singleSelectedImage && (() => {
+            const im = singleSelectedImage
+            const HS = 8 / zoom // handle side in world units → constant on-screen
+            const pos = {
+              nw: [im.x, im.y], n: [im.x + im.width / 2, im.y], ne: [im.x + im.width, im.y],
+              e: [im.x + im.width, im.y + im.height / 2], se: [im.x + im.width, im.y + im.height],
+              s: [im.x + im.width / 2, im.y + im.height], sw: [im.x, im.y + im.height],
+              w: [im.x, im.y + im.height / 2],
+            }
+            const cursors = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize' }
+            return RESIZE_HANDLES.map(h => {
+              const [hx, hy] = pos[h]
+              return (
+                <rect
+                  key={`rh-${h}`}
+                  x={hx - HS / 2}
+                  y={hy - HS / 2}
+                  width={HS}
+                  height={HS}
+                  fill="var(--panel-bg)"
+                  stroke="var(--selection-color)"
+                  strokeWidth={1 / zoom}
+                  style={{ cursor: cursors[h] }}
+                  onMouseDown={(e) => startImageResize(im.id, h, e)}
+                />
+              )
+            })
+          })()}
         </g>
       </svg>
 

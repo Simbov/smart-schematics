@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import useSchematicStore from '../store/schematicStore'
 import useSimulationStore from '../store/simulationStore'
 import { getElectricalDef } from '../lib/components/electrical'
@@ -73,6 +73,8 @@ export default function PropertiesPanel() {
   const updateComponent = useSchematicStore(s => s.updateComponent)
   const updateComponentSimParam = useSchematicStore(s => s.updateComponentSimParam)
   const updateAnnotation = useSchematicStore(s => s.updateAnnotation)
+  const updateImage = useSchematicStore(s => s.updateImage)
+  const removeImage = useSchematicStore(s => s.removeImage)
 
   const isRunning = useSimulationStore(s => s.isRunning)
   const simCompState = useSimulationStore(s => s.componentStates[selectedIds[0]])
@@ -81,16 +83,20 @@ export default function PropertiesPanel() {
   const [local, setLocal] = useState({ designator: '', value: '', description: '' })
   const [localSim, setLocalSim] = useState({})
   const [localAnn, setLocalAnn] = useState({ text: '', fontSize: 14, fontWeight: 'normal', fontStyle: 'normal' })
+  const [localImg, setLocalImg] = useState({ x: 0, y: 0, width: 0, height: 0, opacity: 1, rotation: 0 })
 
   const selected = selectedIds.length === 0 ? null
     : selectedIds.length === 1
       ? (drawing?.components.find(c => c.id === selectedIds[0])
         || drawing?.wires.find(w => w.id === selectedIds[0])
-        || (drawing?.annotations || []).find(a => a.id === selectedIds[0]))
+        || (drawing?.annotations || []).find(a => a.id === selectedIds[0])
+        || (drawing?.images || []).find(im => im.id === selectedIds[0]))
       : 'multi'
 
-  const isAnnotation = selected && selected !== 'multi' && (selected.type === 'text' || selected.type === 'callout')
-  const isComponent = selected && selected !== 'multi' && !isAnnotation && selected.designator !== undefined
+  // Images carry a `src` (and no designator/text), so distinguish them first.
+  const isImage = selected && selected !== 'multi' && selected.src !== undefined && selected.designator === undefined
+  const isAnnotation = selected && selected !== 'multi' && !isImage && (selected.type === 'text' || selected.type === 'callout')
+  const isComponent = selected && selected !== 'multi' && !isAnnotation && !isImage && selected.designator !== undefined
 
   // Sync local state when selection changes
   useEffect(() => {
@@ -115,6 +121,16 @@ export default function PropertiesPanel() {
         fontSize: selected.fontSize ?? 14,
         fontWeight: selected.fontWeight ?? 'normal',
         fontStyle: selected.fontStyle ?? 'normal',
+      })
+    }
+    if (isImage) {
+      setLocalImg({
+        x: selected.x ?? 0,
+        y: selected.y ?? 0,
+        width: selected.width ?? 0,
+        height: selected.height ?? 0,
+        opacity: selected.opacity ?? 1,
+        rotation: selected.rotation ?? 0,
       })
     }
   }, [selectedIds[0]])
@@ -143,6 +159,22 @@ export default function PropertiesPanel() {
     if (!isAnnotation) return
     updateAnnotation(activeDrawingId, selected.id, { [field]: val })
   }, [isAnnotation, activeDrawingId, selected?.id])
+
+  const commitImageField = useCallback((patch) => {
+    if (!isImage) return
+    pushUndo()
+    updateImage(activeDrawingId, selected.id, patch)
+  }, [isImage, activeDrawingId, selected?.id])
+
+  const replaceInputRef = useRef(null)
+  const onReplaceImage = (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || !isImage) return
+    const reader = new FileReader()
+    reader.onload = () => commitImageField({ src: reader.result })
+    reader.readAsDataURL(file)
+  }
 
   const def = isComponent ? getAnyDef(selected.type) : null
   const simParamDefs = def?.simParams ?? {}
@@ -253,6 +285,52 @@ export default function PropertiesPanel() {
                   </div>
                 </>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* Image selected */}
+        {isImage && (
+          <div className="space-y-1.5">
+            <input ref={replaceInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={onReplaceImage} />
+            <div className="grid gap-1.5" style={{ gridTemplateColumns: '1fr 1fr 1fr 1fr' }}>
+              <Field label="X" type="number" value={localImg.x}
+                onChange={v => setLocalImg(i => ({ ...i, x: Number(v) }))}
+                onBlur={() => commitImageField({ x: localImg.x })} />
+              <Field label="Y" type="number" value={localImg.y}
+                onChange={v => setLocalImg(i => ({ ...i, y: Number(v) }))}
+                onBlur={() => commitImageField({ y: localImg.y })} />
+              <Field label="W" type="number" value={localImg.width}
+                onChange={v => setLocalImg(i => ({ ...i, width: Number(v) }))}
+                onBlur={() => commitImageField({ width: Math.max(1, localImg.width) })} />
+              <Field label="H" type="number" value={localImg.height}
+                onChange={v => setLocalImg(i => ({ ...i, height: Number(v) }))}
+                onBlur={() => commitImageField({ height: Math.max(1, localImg.height) })} />
+            </div>
+            <div className="grid gap-1.5 items-center" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
+              <Field label="Opacity" type="number" value={localImg.opacity}
+                onChange={v => setLocalImg(i => ({ ...i, opacity: Number(v) }))}
+                onBlur={() => commitImageField({ opacity: Math.min(1, Math.max(0, localImg.opacity)) })} />
+              <SelectField label="Rotate" value={String(localImg.rotation)}
+                options={['0', '90', '180', '270']}
+                onChange={v => { const r = Number(v); setLocalImg(i => ({ ...i, rotation: r })); commitImageField({ rotation: r }) }} />
+              <div className="flex items-center gap-1">
+                <span className="text-gray-400 flex-shrink-0" style={{ fontSize: 10 }}>Lock</span>
+                <input type="checkbox" checked={!!selected.locked}
+                  onChange={e => commitImageField({ locked: e.target.checked })} />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                className="rounded px-2 py-0.5"
+                style={{ fontSize: 11, border: '1px solid var(--panel-border)', color: 'var(--component-color)' }}
+                onClick={() => replaceInputRef.current?.click()}
+              >Replace image…</button>
+              <button
+                className="rounded px-2 py-0.5 text-red-500"
+                style={{ fontSize: 11, border: '1px solid var(--panel-border)' }}
+                onClick={() => { pushUndo(); removeImage(activeDrawingId, selected.id) }}
+              >Delete</button>
             </div>
           </div>
         )}
