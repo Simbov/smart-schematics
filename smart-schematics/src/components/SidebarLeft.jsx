@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
-import { ChevronLeft, ChevronRight, FolderTree } from 'lucide-react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
+import FileTree from './FileTree'
 
 // Collapsible left rail that will host the Stage 6 file tree. For Stage 2 it is
 // just the chassis: a "Files" header + empty placeholder body, and a collapse
@@ -54,10 +55,9 @@ export default function SidebarLeft() {
         </button>
       </div>
 
-      {/* Body — empty placeholder; Stage 6 fills this with the project file tree */}
-      <div className="flex-1 overflow-y-auto flex flex-col items-center justify-center gap-2 px-4 text-center">
-        <FolderTree size={20} className="text-gray-300 dark:text-gray-600" />
-        <p className="text-xs text-gray-400">File tree coming soon.</p>
+      {/* Body — the project file tree (folders, drawings, attachments) */}
+      <div className="flex-1 min-h-0 overflow-hidden">
+        <FileTree />
       </div>
     </div>
   )
