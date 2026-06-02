@@ -14,7 +14,7 @@ vi.mock('@tauri-apps/plugin-updater', () => ({ check: h.check }))
 vi.mock('@tauri-apps/plugin-dialog', () => ({ ask: h.ask, message: h.message }))
 vi.mock('@tauri-apps/plugin-process', () => ({ relaunch: h.relaunch }))
 
-import { checkForUpdates } from './updater'
+import { checkForUpdates, buildUpdatePrompt, MAX_NOTE_LINES, MAX_NOTE_CHARS } from './updater'
 
 beforeEach(() => {
   h.check.mockReset()
@@ -81,5 +81,40 @@ describe('checkForUpdates', () => {
     h.check.mockRejectedValue(new Error('network down'))
     await checkForUpdates({ silent: true })
     expect(h.message).not.toHaveBeenCalled()
+  })
+})
+
+describe('buildUpdatePrompt', () => {
+  it('keeps a short changelog verbatim and ends with the action question', () => {
+    const msg = buildUpdatePrompt('0.1.0', '0.0.3', '### Added\n- One thing')
+    expect(msg).toContain('Smart Schematics 0.1.0 is available (you have 0.0.3).')
+    expect(msg).toContain('### Added\n- One thing')
+    expect(msg).not.toContain('see the full changelog')
+    expect(msg.trimEnd().endsWith('Download and install now?')).toBe(true)
+  })
+
+  it('truncates a changelog with too many lines and appends the marker', () => {
+    const body = Array.from({ length: MAX_NOTE_LINES + 20 }, (_, i) => `line ${i}`).join('\n')
+    const msg = buildUpdatePrompt('0.1.0', '0.0.3', body)
+    const notesPart = msg.split('\n\n')[1]
+    // body lines kept are capped, plus the ellipsis marker line
+    expect(notesPart.split('\n').length).toBeLessThanOrEqual(MAX_NOTE_LINES + 1)
+    expect(msg).toContain('see the full changelog on the releases page')
+    expect(msg.trimEnd().endsWith('Download and install now?')).toBe(true)
+  })
+
+  it('truncates a changelog with too many characters', () => {
+    const msg = buildUpdatePrompt('0.1.0', '0.0.3', 'x'.repeat(MAX_NOTE_CHARS + 200))
+    expect(msg).toContain('see the full changelog')
+    // notes block must not exceed the char cap (plus the marker)
+    const notesPart = msg.split('\n\n')[1]
+    expect(notesPart.length).toBeLessThan(MAX_NOTE_CHARS + 80)
+  })
+
+  it('omits the notes block entirely when there is no body', () => {
+    const msg = buildUpdatePrompt('0.1.0', '0.0.3', '')
+    expect(msg).toBe(
+      'Smart Schematics 0.1.0 is available (you have 0.0.3).\n\nDownload and install now?',
+    )
   })
 })
