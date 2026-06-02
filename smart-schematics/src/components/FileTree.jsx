@@ -111,7 +111,8 @@ export default function FileTree() {
   }
   const onRootDrop = e => {
     e.preventDefault()
-    handleDrop(dragId, null)
+    const dId = e.dataTransfer.getData('text/plain') || dragId
+    handleDrop(dId, null)
     setDragId(null)
     setRootDropHover(false)
   }
