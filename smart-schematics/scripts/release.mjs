@@ -103,6 +103,12 @@ bump(
 )
 console.log('✓ Bumped package.json, tauri.conf.json, Cargo.toml, Cargo.lock')
 
+// Keep the npm lockfile's version in sync with package.json (it carries its own
+// "version" field). Without this it drifts a version behind every release and
+// trips the lockfile precondition on the next run.
+run('npm install --package-lock-only')
+console.log('✓ Synced package-lock.json')
+
 // ── Commit, tag, push ─────────────────────────────────────────────────────
 run(`git -C "${repoRoot}" add -A`)
 run(`git -C "${repoRoot}" commit -m "Release ${tag}"`)
