@@ -3,6 +3,7 @@ import { Sun, Moon, FileText } from 'lucide-react'
 import useSchematicStore from '../store/schematicStore'
 import useSimulationStore from '../store/simulationStore'
 import Toolbar from './Toolbar'
+import SidebarLeft from './SidebarLeft'
 import ComponentLibrary from './ComponentLibrary'
 import Canvas from './Canvas'
 import PropertiesPanel from './PropertiesPanel'
@@ -121,22 +122,32 @@ export default function App() {
       className={theme === 'dark' ? 'dark' : ''}
       style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
     >
-      {/* Top bar */}
+      {/* Top bar: brand + horizontal toolbar + theme toggle (one row to conserve
+          vertical space). The toolbar takes the middle and scrolls horizontally
+          rather than overflowing on a narrow window. */}
       <div
-        className="flex items-center px-3 gap-2 flex-shrink-0 border-b"
+        className="flex items-center px-2 gap-2 flex-shrink-0 border-b"
         style={{
-          height: 36,
+          minHeight: 42,
           background: 'var(--toolbar-bg)',
           borderColor: 'var(--panel-border)',
         }}
       >
-        <FileText size={16} className="text-blue-500" />
-        <span className="text-sm font-semibold" style={{ color: 'var(--component-color)' }}>
-          Smart Schematics
-        </span>
-        <div className="flex-1" />
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <FileText size={16} className="text-blue-500" />
+          <span
+            className="text-sm font-semibold hidden md:inline whitespace-nowrap"
+            style={{ color: 'var(--component-color)' }}
+          >
+            Smart Schematics
+          </span>
+        </div>
+        <div className="self-center w-px h-5 flex-shrink-0" style={{ background: 'var(--panel-border)' }} />
+
+        <Toolbar />
+
         <button
-          className="flex items-center justify-center w-7 h-7 rounded hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
+          className="flex items-center justify-center w-7 h-7 rounded hover:bg-black/10 dark:hover:bg-white/10 transition-colors flex-shrink-0"
           onClick={toggleTheme}
           title={theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
         >
@@ -157,8 +168,8 @@ export default function App() {
 
       {/* Main working area */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Left toolbar */}
-        <Toolbar />
+        {/* Left file rail (Stage 6 file tree lives here) */}
+        <SidebarLeft />
 
         {/* Canvas */}
         <div className="flex-1 flex flex-col overflow-hidden relative">
