@@ -213,13 +213,14 @@ const useSchematicStore = create((set, get) => ({
 
   // ─── Drawing management ────────────────────────────────────────────────────
 
-  newDrawing() {
+  newDrawing(folderId = null) {
     const { activeProjectId, projects, drawings } = get()
     const project = projects.find(p => p.id === activeProjectId)
     if (!project) return
     const projectDrawings = project.drawingIds.map(id => drawings.find(d => d.id === id)).filter(Boolean)
     const name = `Drawing ${projectDrawings.length + 1}`
     const drawing = createBlankDrawing(name)
+    if (folderId != null) drawing.folderId = folderId
     set(state => ({
       drawings: [...state.drawings, drawing],
       projects: state.projects.map(p =>
@@ -868,6 +869,30 @@ const useSchematicStore = create((set, get) => ({
       ),
       drawings: state.drawings.map(d =>
         toRemove.has(d.folderId) ? { ...d, folderId: null, isDirty: true } : d
+      ),
+    }))
+  },
+
+  // Re-parent a folder. Rejects cycles (can't drop a folder into itself or one
+  // of its own descendants) — the FileTree validates via canMove() first, but we
+  // guard here too so the store can never enter an inconsistent state.
+  moveFolder(folderId, newParentId = null) {
+    const { activeProjectId, projects } = get()
+    const project = projects.find(p => p.id === activeProjectId)
+    if (!project || folderId === newParentId) return
+    const folders = project.folders || []
+    // Walk up from newParentId; if we hit folderId, the move would form a cycle.
+    let cursor = newParentId
+    while (cursor != null) {
+      if (cursor === folderId) return
+      const parent = folders.find(f => f.id === cursor)
+      cursor = parent ? parent.parentId : null
+    }
+    set(state => ({
+      projects: state.projects.map(p =>
+        p.id === activeProjectId
+          ? { ...p, folders: (p.folders || []).map(f => f.id === folderId ? { ...f, parentId: newParentId ?? null } : f) }
+          : p
       ),
     }))
   },
