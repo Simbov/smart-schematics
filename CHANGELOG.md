@@ -12,6 +12,12 @@ section with the version and date and starts a fresh Unreleased block.
 
 ## [Unreleased]
 
+### Fixed
+- The "update available" dialog no longer hides its buttons when the release
+  notes are long: the notes shown in the prompt are now trimmed (the full
+  changelog stays on the releases page), so **Update** and **Later** are always
+  reachable.
+
 ## [0.1.0] - 2026-06-02
 
 ### Added
