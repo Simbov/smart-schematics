@@ -24,7 +24,23 @@ function snapshotDrawing(drawing) {
     wires: drawing.wires,
     junctions: drawing.junctions,
     annotations: drawing.annotations || [],
+    images: drawing.images || [],
   }))
+}
+
+// Backfill new-schema fields on a drawing loaded from an older file (v2 → v3).
+// Mutates and returns the drawing so old `.scpro`/localStorage files open unchanged.
+function migrateDrawing(d) {
+  d.images ??= []
+  d.folderId ??= null
+  return d
+}
+
+// Backfill new-schema fields on a project loaded from an older file (v2 → v3).
+function migrateProject(p) {
+  p.folders ??= []
+  p.attachments ??= []
+  return p
 }
 
 const createBlankDrawing = (name = 'Drawing 1') => ({
@@ -35,6 +51,8 @@ const createBlankDrawing = (name = 'Drawing 1') => ({
   wires: [],
   junctions: [],
   annotations: [],
+  images: [],            // image elements (base64 data URLs) — drawn behind components
+  folderId: null,        // file-tree folder this drawing sits in (null = root)
   titleBlock: {
     title: name,
     drawingNumber: '',
@@ -57,6 +75,8 @@ const createBlankProject = (name = 'Project 1') => {
       name,
       drawingIds: [drawing.id],
       activeDrawingId: drawing.id,
+      folders: [],        // nested file-tree folders: { id, name, parentId }
+      attachments: [],    // embedded sub-files: { id, name, mime, data, addedAt }
       lastSaved: null,
     },
     drawing,
@@ -305,14 +325,16 @@ const useSchematicStore = create((set, get) => ({
   importProjectJSON(jsonStr) {
     try {
       const data = JSON.parse(jsonStr)
-      const drawings = (data.drawings || []).map(d => ({ ...d, id: genId(), isDirty: false }))
-      const project = {
+      const drawings = (data.drawings || []).map(d => migrateDrawing({ ...d, id: genId(), isDirty: false }))
+      const project = migrateProject({
         id: genId(),
         name: data.name || 'Imported Project',
         drawingIds: drawings.map(d => d.id),
         activeDrawingId: drawings[0]?.id || null,
+        folders: data.folders,
+        attachments: data.attachments,
         lastSaved: null,
-      }
+      })
       set(state => ({
         projects: [...state.projects, project],
         drawings: [...state.drawings, ...drawings],
@@ -519,7 +541,9 @@ const useSchematicStore = create((set, get) => ({
     })
   },
 
-  moveItems(drawingId, compIds, wireIds, annotationIds, dx, dy) {
+  // `imageIds` is appended last (default []) so existing 6-arg callers keep working;
+  // Stage 3 passes image ids to translate selected images alongside everything else.
+  moveItems(drawingId, compIds, wireIds, annotationIds, dx, dy, imageIds = []) {
     get().pushUndo()
     set(state => ({
       drawings: state.drawings.map(d => {
@@ -544,6 +568,9 @@ const useSchematicStore = create((set, get) => ({
           ),
           annotations: (d.annotations || []).map(a =>
             (annotationIds || []).includes(a.id) ? { ...a, x: a.x + dx, y: a.y + dy } : a
+          ),
+          images: (d.images || []).map(img =>
+            (imageIds || []).includes(img.id) ? { ...img, x: img.x + dx, y: img.y + dy } : img
           ),
         }
       }),
@@ -623,6 +650,7 @@ const useSchematicStore = create((set, get) => ({
             wires
           ),
           annotations: (d.annotations || []).filter(a => !ids.includes(a.id)),
+          images: (d.images || []).filter(img => !ids.includes(img.id)),
         }
       }),
       selectedIds: [],
@@ -637,14 +665,15 @@ const useSchematicStore = create((set, get) => ({
     const components = drawing.components.filter(c => ids.includes(c.id))
     const wires = drawing.wires.filter(w => ids.includes(w.id))
     const annotations = (drawing.annotations || []).filter(a => ids.includes(a.id))
-    set({ clipboard: JSON.parse(JSON.stringify({ components, wires, annotations })) })
+    const images = (drawing.images || []).filter(img => ids.includes(img.id))
+    set({ clipboard: JSON.parse(JSON.stringify({ components, wires, annotations, images })) })
   },
 
   pasteFromClipboard(drawingId) {
     const { clipboard } = get()
     if (!clipboard) return
-    const { components = [], wires = [], annotations = [] } = clipboard
-    if (!components.length && !wires.length && !annotations.length) return
+    const { components = [], wires = [], annotations = [], images = [] } = clipboard
+    if (!components.length && !wires.length && !annotations.length && !images.length) return
     get().pushUndo()
     const OFFSET = 20
     const idMap = {}
@@ -667,7 +696,13 @@ const useSchematicStore = create((set, get) => ({
       pinB: w.pinB ? { ...w.pinB, componentId: idMap[w.pinB.componentId] ?? w.pinB.componentId } : null,
     }))
     const newAnnotations = annotations.map(a => ({ ...a, id: genId(), x: a.x + OFFSET, y: a.y + OFFSET }))
-    const newIds = [...newComps.map(c => c.id), ...newWires.map(w => w.id), ...newAnnotations.map(a => a.id)]
+    const newImages = images.map(img => ({ ...img, id: genId(), x: img.x + OFFSET, y: img.y + OFFSET }))
+    const newIds = [
+      ...newComps.map(c => c.id),
+      ...newWires.map(w => w.id),
+      ...newAnnotations.map(a => a.id),
+      ...newImages.map(img => img.id),
+    ]
     set(state => ({
       drawings: state.drawings.map(d =>
         d.id !== drawingId
@@ -678,6 +713,7 @@ const useSchematicStore = create((set, get) => ({
               components: [...d.components, ...newComps],
               wires: [...d.wires, ...newWires],
               annotations: [...(d.annotations || []), ...newAnnotations],
+              images: [...(d.images || []), ...newImages],
             }
       ),
       selectedIds: newIds,
@@ -723,6 +759,140 @@ const useSchematicStore = create((set, get) => ({
     }))
   },
 
+  // ─── Images ───────────────────────────────────────────────────────────────
+
+  addImage(drawingId, image) {
+    const img = { rotation: 0, opacity: 1, locked: false, ...image, id: image.id || genId() }
+    set(state => ({
+      drawings: state.drawings.map(d =>
+        d.id === drawingId
+          ? { ...d, images: [...(d.images || []), img], isDirty: true }
+          : d
+      ),
+    }))
+    return img.id
+  },
+
+  updateImage(drawingId, imageId, patch) {
+    set(state => ({
+      drawings: state.drawings.map(d => {
+        if (d.id !== drawingId) return d
+        return {
+          ...d,
+          isDirty: true,
+          images: (d.images || []).map(img =>
+            img.id !== imageId ? img : { ...img, ...patch }
+          ),
+        }
+      }),
+    }))
+  },
+
+  removeImage(drawingId, imageId) {
+    set(state => ({
+      drawings: state.drawings.map(d =>
+        d.id !== drawingId ? d : {
+          ...d,
+          isDirty: true,
+          images: (d.images || []).filter(img => img.id !== imageId),
+        }
+      ),
+    }))
+  },
+
+  // ─── Folders (file tree) ──────────────────────────────────────────────────
+
+  addFolder(name = 'New Folder', parentId = null) {
+    const { activeProjectId } = get()
+    const folder = { id: genId(), name, parentId }
+    set(state => ({
+      projects: state.projects.map(p =>
+        p.id === activeProjectId
+          ? { ...p, folders: [...(p.folders || []), folder] }
+          : p
+      ),
+    }))
+    return folder.id
+  },
+
+  renameFolder(folderId, name) {
+    const { activeProjectId } = get()
+    set(state => ({
+      projects: state.projects.map(p =>
+        p.id === activeProjectId
+          ? { ...p, folders: (p.folders || []).map(f => f.id === folderId ? { ...f, name } : f) }
+          : p
+      ),
+    }))
+  },
+
+  // Delete a folder and (recursively) its descendant folders. Drawings that lived
+  // in any removed folder are re-parented to root (folderId = null) so nothing is
+  // orphaned with a dangling folderId.
+  deleteFolder(folderId) {
+    const { activeProjectId, projects } = get()
+    const project = projects.find(p => p.id === activeProjectId)
+    if (!project) return
+    const folders = project.folders || []
+    // Collect the folder + all descendants.
+    const toRemove = new Set([folderId])
+    let grew = true
+    while (grew) {
+      grew = false
+      for (const f of folders) {
+        if (!toRemove.has(f.id) && toRemove.has(f.parentId)) {
+          toRemove.add(f.id)
+          grew = true
+        }
+      }
+    }
+    set(state => ({
+      projects: state.projects.map(p =>
+        p.id === activeProjectId
+          ? { ...p, folders: (p.folders || []).filter(f => !toRemove.has(f.id)) }
+          : p
+      ),
+      drawings: state.drawings.map(d =>
+        toRemove.has(d.folderId) ? { ...d, folderId: null, isDirty: true } : d
+      ),
+    }))
+  },
+
+  moveDrawingToFolder(drawingId, folderId) {
+    set(state => ({
+      drawings: state.drawings.map(d =>
+        d.id === drawingId ? { ...d, folderId: folderId ?? null, isDirty: true } : d
+      ),
+    }))
+  },
+
+  // ─── Attachments (embedded sub-files) ─────────────────────────────────────
+
+  addAttachment(attachment) {
+    const { activeProjectId } = get()
+    const att = { id: genId(), addedAt: Date.now(), ...attachment }
+    if (!att.id) att.id = genId()
+    set(state => ({
+      projects: state.projects.map(p =>
+        p.id === activeProjectId
+          ? { ...p, attachments: [...(p.attachments || []), att] }
+          : p
+      ),
+    }))
+    return att.id
+  },
+
+  removeAttachment(attachmentId) {
+    const { activeProjectId } = get()
+    set(state => ({
+      projects: state.projects.map(p =>
+        p.id === activeProjectId
+          ? { ...p, attachments: (p.attachments || []).filter(a => a.id !== attachmentId) }
+          : p
+      ),
+    }))
+  },
+
   // ─── Persistence ──────────────────────────────────────────────────────────
 
   // Builds a serialisable snapshot of the active project
@@ -733,7 +903,7 @@ const useSchematicStore = create((set, get) => ({
     const projectDrawings = project.drawingIds
       .map(id => drawings.find(d => d.id === id))
       .filter(Boolean)
-    return { version: 2, ...project, drawings: projectDrawings }
+    return { version: 3, ...project, drawings: projectDrawings }
   },
 
   // saveAll — writes to file (Tauri) or localStorage (browser)
@@ -752,7 +922,7 @@ const useSchematicStore = create((set, get) => ({
     } else {
       // Browser fallback: localStorage
       localStorage.setItem('schematic_projects', JSON.stringify({
-        version: 2,
+        version: 3,
         projects: savedProjects,
         drawings: savedDrawings,
       }))
@@ -809,14 +979,17 @@ const useSchematicStore = create((set, get) => ({
     try {
       const raw = await readTextFile(path)
       const data = JSON.parse(raw)
-      const drawings = (data.drawings || []).map(d => ({ ...d, isDirty: false }))
-      const project = {
+      // Migrate older (v2) files: backfill new-schema fields so they open unchanged.
+      const drawings = (data.drawings || []).map(d => migrateDrawing({ ...d, isDirty: false }))
+      const project = migrateProject({
         id: data.id || genId(),
         name: data.name || basename(path).replace(/\.scpro$/, ''),
         drawingIds: drawings.map(d => d.id),
         activeDrawingId: drawings[0]?.id || null,
+        folders: data.folders,
+        attachments: data.attachments,
         lastSaved: Date.now(),
-      }
+      })
       set(state => ({
         projects: [...state.projects.filter(p => p.id !== project.id), project],
         drawings: [
@@ -889,8 +1062,10 @@ const useSchematicStore = create((set, get) => ({
     try {
       const raw = localStorage.getItem('schematic_projects')
       if (raw) {
-        const { projects, drawings } = JSON.parse(raw)
-        if (projects?.length > 0 && drawings?.length > 0) {
+        const parsed = JSON.parse(raw)
+        const projects = (parsed.projects || []).map(migrateProject)
+        const drawings = (parsed.drawings || []).map(migrateDrawing)
+        if (projects.length > 0 && drawings.length > 0) {
           const activeProject = projects[0]
           set({
             projects,
@@ -904,15 +1079,15 @@ const useSchematicStore = create((set, get) => ({
       // Legacy migration — old flat drawings format
       const legacy = localStorage.getItem('schematic_drawings')
       if (legacy) {
-        const drawings = JSON.parse(legacy)
-        if (drawings?.length > 0) {
-          const project = {
+        const drawings = (JSON.parse(legacy) || []).map(migrateDrawing)
+        if (drawings.length > 0) {
+          const project = migrateProject({
             id: genId(),
             name: 'Default Project',
             drawingIds: drawings.map(d => d.id),
             activeDrawingId: drawings[0].id,
             lastSaved: null,
-          }
+          })
           set({
             projects: [project],
             drawings,

@@ -196,3 +196,36 @@ describe('dcSolver — diode forward voltage & zener breakdown', () => {
     expect(res.componentStates[vm.id].V).toBeCloseTo(5.15, 1)
   })
 })
+
+describe('dcSolver — component box is inert (Stage 1)', () => {
+  // A box is a built-in component (type:'box') with no simulation model. The
+  // solver no-ops unknown types, so a box dropped across a live circuit must
+  // draw no current, change no node voltage, and never short its pins' nets.
+  function pin(id, x, y) { return { id, absX: x, absY: y } }
+  function box(p1, p2, { id = 'box1' } = {}) {
+    return { id, type: 'box', designator: 'U1', value: '', simParams: {}, pins: [pin('A', ...p1), pin('B', ...p2)] }
+  }
+
+  it('changes no node voltage and draws no current when placed across a divider', () => {
+    // 9V across two 100Ω resistors in series → midpoint at 4.5V.
+    const bt = battery([0, 0], [0, 100])
+    const r1 = resistor([0, 0], [0, 50], 100)
+    const r2 = resistor([0, 50], [0, 100], 100)
+    const vm = voltmeter([0, 50], [0, 100])
+
+    const base = runDCSimulation([bt, r1, r2, vm], [], {})
+    expect(base.componentStates[vm.id].V).toBeCloseTo(4.5, 3)
+
+    // Add a box whose pins land on the POS net and the GND net.
+    const bx = box([0, 0], [0, 100])
+    const withBox = runDCSimulation([bt, r1, r2, vm, bx], [], {})
+
+    // Node voltage and resistor current unchanged → box is inert, no short.
+    expect(withBox.componentStates[vm.id].V).toBeCloseTo(base.componentStates[vm.id].V, 6)
+    expect(withBox.componentStates[r1.id].I).toBeCloseTo(base.componentStates[r1.id].I, 6)
+
+    // The box itself carries essentially no current.
+    const bxState = withBox.componentStates[bx.id]
+    if (bxState) expect(Math.abs(bxState.I)).toBeLessThan(1e-9)
+  })
+})

@@ -84,3 +84,82 @@ describe('rotateComponent reattaches bound wires', () => {
     expect(after.points).toEqual([{ x: 0, y: 0 }, { x: 10, y: 0 }])
   })
 })
+
+// ─── Stage 1: image elements in the store ────────────────────────────────────
+
+const SAMPLE_SRC = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=='
+
+function setupDrawingWithImage(imgOverrides = {}) {
+  const store = useSchematicStore.getState()
+  store.newProject('Image Project')
+  const drawingId = useSchematicStore.getState().activeDrawingId
+  const id = useSchematicStore.getState().addImage(drawingId, {
+    id: 'img1', src: SAMPLE_SRC, x: 10, y: 20, width: 100, height: 50, ...imgOverrides,
+  })
+  return { drawingId, imageId: id }
+}
+
+describe('image store actions', () => {
+  it('addImage applies rotation/opacity/locked defaults', () => {
+    const { drawingId } = setupDrawingWithImage()
+    const img = drawing().images[0]
+    expect(img).toMatchObject({
+      id: 'img1', src: SAMPLE_SRC, x: 10, y: 20, width: 100, height: 50,
+      rotation: 0, opacity: 1, locked: false,
+    })
+  })
+
+  it('updateImage patches fields and marks dirty', () => {
+    const { drawingId, imageId } = setupDrawingWithImage()
+    useSchematicStore.getState().updateImage(drawingId, imageId, { opacity: 0.5, locked: true })
+    const img = drawing().images[0]
+    expect(img.opacity).toBe(0.5)
+    expect(img.locked).toBe(true)
+    expect(drawing().isDirty).toBe(true)
+  })
+
+  it('moveItems translates images via imageIds', () => {
+    const { drawingId, imageId } = setupDrawingWithImage()
+    useSchematicStore.getState().moveItems(drawingId, [], [], [], 5, 7, [imageId])
+    const img = drawing().images[0]
+    expect(img.x).toBe(15)
+    expect(img.y).toBe(27)
+  })
+
+  it('moveItems leaves images alone when their id is not passed', () => {
+    const { drawingId } = setupDrawingWithImage()
+    useSchematicStore.getState().moveItems(drawingId, [], [], [], 5, 7)
+    const img = drawing().images[0]
+    expect(img.x).toBe(10)
+    expect(img.y).toBe(20)
+  })
+
+  it('deleteIds removes images', () => {
+    const { drawingId, imageId } = setupDrawingWithImage()
+    useSchematicStore.getState().deleteIds(drawingId, [imageId])
+    expect(drawing().images).toHaveLength(0)
+  })
+
+  it('undo restores a deleted image (snapshot includes images)', () => {
+    const { drawingId, imageId } = setupDrawingWithImage()
+    useSchematicStore.getState().deleteIds(drawingId, [imageId])
+    expect(drawing().images).toHaveLength(0)
+    useSchematicStore.getState().undo()
+    const img = drawing().images[0]
+    expect(img.id).toBe('img1')
+    expect(img.src).toBe(SAMPLE_SRC)
+  })
+
+  it('copy/paste an image clones it with a new id and the same src', () => {
+    const { drawingId } = setupDrawingWithImage()
+    useSchematicStore.getState().copyToClipboard(drawingId, ['img1'])
+    useSchematicStore.getState().pasteFromClipboard(drawingId)
+    const images = drawing().images
+    expect(images).toHaveLength(2)
+    expect(images[1].id).not.toBe('img1')
+    expect(images[1].src).toBe(SAMPLE_SRC)
+    // pasted clone is offset by the paste OFFSET (20)
+    expect(images[1].x).toBe(30)
+    expect(images[1].y).toBe(40)
+  })
+})
