@@ -4,13 +4,22 @@ import {
   ZoomIn, ZoomOut, Maximize2, Grid3X3,
   Undo2, Redo2, Activity,
   Trash2, RotateCw, FlipHorizontal, FlipVertical,
+  Image, Square,
 } from 'lucide-react'
 import useSchematicStore from '../store/schematicStore'
+import { TOOLBAR_GROUPS, buttonTooltip } from '../lib/toolbarConfig'
 
-const ToolButton = ({ icon: Icon, label, active, onClick, disabled }) => (
+// Maps the string icon names in toolbarConfig to their lucide components.
+const ICONS = {
+  Undo2, Redo2, MousePointer2, Pencil, Type, MessageSquare, Image, Square,
+  LayoutTemplate, Trash2, RotateCw, FlipHorizontal, FlipVertical,
+  ZoomIn, ZoomOut, Maximize2, Grid3X3, Activity,
+}
+
+const ToolButton = ({ icon: Icon, title, active, onClick, disabled }) => (
   <button
     className={[
-      'flex items-center justify-center w-9 h-9 rounded transition-colors',
+      'flex items-center justify-center w-8 h-8 rounded transition-colors flex-shrink-0',
       active
         ? 'bg-blue-600 text-white'
         : 'text-gray-500 dark:text-gray-400 hover:bg-black/10 dark:hover:bg-white/10',
@@ -18,14 +27,15 @@ const ToolButton = ({ icon: Icon, label, active, onClick, disabled }) => (
     ].join(' ')}
     onClick={onClick}
     disabled={disabled}
-    title={label}
+    title={title}
   >
     <Icon size={16} />
   </button>
 )
 
+// Vertical divider between button groups in the horizontal bar.
 const Divider = () => (
-  <div className="my-1 h-px bg-gray-200 dark:bg-gray-700 mx-2" />
+  <div className="self-center mx-1 w-px h-5 bg-gray-200 dark:bg-gray-700 flex-shrink-0" />
 )
 
 export default function Toolbar() {
@@ -44,11 +54,9 @@ export default function Toolbar() {
   const deleteIds = useSchematicStore(s => s.deleteIds)
   const rotateComponent = useSchematicStore(s => s.rotateComponent)
   const flipComponent = useSchematicStore(s => s.flipComponent)
-
   const updateTitleBlock = useSchematicStore(s => s.updateTitleBlock)
 
   const hasSelection = selectedIds.length > 0
-
   const drawing = drawings.find(d => d.id === activeDrawingId)
   const selectedComponents = drawing?.components.filter(c => selectedIds.includes(c.id)) || []
   const singleComp = selectedComponents.length === 1 ? selectedComponents[0] : null
@@ -66,111 +74,76 @@ export default function Toolbar() {
     })
   }
 
+  // Per-button behaviour/state, keyed by config id. The config controls which
+  // buttons exist, their order, grouping, labels, and shortcut hints; this map
+  // supplies what's stateful. Buttons with `comingSoon` (Insert Image, Box) are
+  // reserved for later stages and rendered disabled with no handler.
+  const controls = {
+    undo: { onClick: undo, disabled: undoStack.length === 0 },
+    redo: { onClick: redo, disabled: redoStack.length === 0 },
+    select: { onClick: () => setActiveTool('select'), active: activeTool === 'select' },
+    wire: { onClick: () => setActiveTool('wire'), active: activeTool === 'wire' },
+    text: { onClick: () => setActiveTool('text'), active: activeTool === 'text' },
+    callout: { onClick: () => setActiveTool('callout'), active: activeTool === 'callout' },
+    titleBlock: {
+      active: drawing?.titleBlock?.visible,
+      onClick: () => {
+        if (drawing && activeDrawingId) {
+          updateTitleBlock(activeDrawingId, { visible: !drawing.titleBlock?.visible })
+        }
+      },
+    },
+    delete: {
+      disabled: !hasSelection,
+      onClick: () => activeDrawingId && deleteIds(activeDrawingId, selectedIds),
+    },
+    rotate: {
+      disabled: !singleComp,
+      onClick: () => singleComp && rotateComponent(activeDrawingId, singleComp.id, 90),
+    },
+    flipH: {
+      disabled: !singleComp,
+      onClick: () => singleComp && flipComponent(activeDrawingId, singleComp.id, 'H'),
+    },
+    flipV: {
+      disabled: !singleComp,
+      onClick: () => singleComp && flipComponent(activeDrawingId, singleComp.id, 'V'),
+    },
+    zoomIn: { onClick: () => zoomBy(1.2) },
+    zoomOut: { onClick: () => zoomBy(1 / 1.2) },
+    zoomFit: {
+      onClick: () => { if (activeDrawingId) setViewState(activeDrawingId, { panX: 0, panY: 0, zoom: 1 }) },
+    },
+    toggleGrid: {
+      active: settings.showGrid,
+      onClick: () => updateSettings({ showGrid: !settings.showGrid }),
+    },
+    simOverlay: {
+      active: settings.showCurrentValues,
+      onClick: () => updateSettings({ showCurrentValues: !settings.showCurrentValues }),
+    },
+  }
+
   return (
-    <div
-      className="flex flex-col items-center py-2 gap-0.5 border-r overflow-y-auto flex-shrink-0"
-      style={{
-        width: 48,
-        background: 'var(--toolbar-bg)',
-        borderColor: 'var(--panel-border)',
-      }}
-    >
-      <ToolButton icon={Undo2} label="Undo (Ctrl+Z)" onClick={undo} disabled={undoStack.length === 0} />
-      <ToolButton icon={Redo2} label="Redo (Ctrl+Y)" onClick={redo} disabled={redoStack.length === 0} />
-
-      <Divider />
-
-      <ToolButton
-        icon={MousePointer2}
-        label="Select (V)"
-        active={activeTool === 'select'}
-        onClick={() => setActiveTool('select')}
-      />
-      <ToolButton
-        icon={Pencil}
-        label="Wire (W)"
-        active={activeTool === 'wire'}
-        onClick={() => setActiveTool('wire')}
-      />
-
-      <Divider />
-
-      <ToolButton
-        icon={Type}
-        label="Text (T)"
-        active={activeTool === 'text'}
-        onClick={() => setActiveTool('text')}
-      />
-      <ToolButton
-        icon={MessageSquare}
-        label="Callout Box (B)"
-        active={activeTool === 'callout'}
-        onClick={() => setActiveTool('callout')}
-      />
-      <ToolButton
-        icon={LayoutTemplate}
-        label="Toggle Title Block"
-        active={drawing?.titleBlock?.visible}
-        onClick={() => {
-          if (drawing && activeDrawingId) {
-            updateTitleBlock(activeDrawingId, { visible: !drawing.titleBlock?.visible })
-          }
-        }}
-      />
-
-      <Divider />
-
-      <ToolButton
-        icon={Trash2}
-        label="Delete (Del)"
-        disabled={!hasSelection}
-        onClick={() => activeDrawingId && deleteIds(activeDrawingId, selectedIds)}
-      />
-      <ToolButton
-        icon={RotateCw}
-        label="Rotate 90° (R)"
-        disabled={!singleComp}
-        onClick={() => singleComp && rotateComponent(activeDrawingId, singleComp.id, 90)}
-      />
-      <ToolButton
-        icon={FlipHorizontal}
-        label="Flip Horizontal (X)"
-        disabled={!singleComp}
-        onClick={() => singleComp && flipComponent(activeDrawingId, singleComp.id, 'H')}
-      />
-      <ToolButton
-        icon={FlipVertical}
-        label="Flip Vertical (Y)"
-        disabled={!singleComp}
-        onClick={() => singleComp && flipComponent(activeDrawingId, singleComp.id, 'V')}
-      />
-
-      <Divider />
-
-      <ToolButton icon={ZoomIn} label="Zoom In (+)" onClick={() => zoomBy(1.2)} />
-      <ToolButton icon={ZoomOut} label="Zoom Out (-)" onClick={() => zoomBy(1 / 1.2)} />
-      <ToolButton
-        icon={Maximize2}
-        label="Fit to Screen (0)"
-        onClick={() => {
-          if (activeDrawingId) setViewState(activeDrawingId, { panX: 0, panY: 0, zoom: 1 })
-        }}
-      />
-      <ToolButton
-        icon={Grid3X3}
-        label="Toggle Grid"
-        active={settings.showGrid}
-        onClick={() => updateSettings({ showGrid: !settings.showGrid })}
-      />
-
-      <Divider />
-
-      <ToolButton
-        icon={Activity}
-        label="Toggle Simulation Overlay"
-        active={settings.showCurrentValues}
-        onClick={() => updateSettings({ showCurrentValues: !settings.showCurrentValues })}
-      />
+    <div className="flex items-center gap-0.5 flex-1 min-w-0 overflow-x-auto">
+      {TOOLBAR_GROUPS.map((group, gi) => (
+        <React.Fragment key={group.id}>
+          {gi > 0 && <Divider />}
+          {group.buttons.map(btn => {
+            const ctrl = controls[btn.id] || {}
+            return (
+              <ToolButton
+                key={btn.id}
+                icon={ICONS[btn.icon]}
+                title={buttonTooltip(btn)}
+                active={ctrl.active}
+                onClick={ctrl.onClick}
+                disabled={btn.comingSoon || ctrl.disabled}
+              />
+            )
+          })}
+        </React.Fragment>
+      ))}
     </div>
   )
 }
