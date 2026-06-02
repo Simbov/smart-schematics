@@ -51,26 +51,38 @@ export default function FileTreeNode({
   }
 
   // ─── Drag & drop ──────────────────────────────────────────────────────────
+  // The drag SOURCE is the row (draggable below). The drop TARGET for a folder is
+  // the whole node wrapper (its row + expanded children), so the hit area is
+  // generous and a near-miss drops INTO the folder rather than silently falling
+  // through to the root drop zone. `allowDrop` always calls preventDefault for a
+  // folder (required for onDrop to fire) — it does NOT gate on the React `dragId`
+  // state, which may not have re-rendered onto this node yet. The dragged id is
+  // read from dataTransfer on drop (set at dragstart), so the move never depends
+  // on state timing.
   const handleDragStart = e => {
     e.stopPropagation()
     setDragId(node.id)
     e.dataTransfer.effectAllowed = 'move'
     e.dataTransfer.setData('text/plain', node.id)
   }
-  const handleDragOver = e => {
+  const allowDrop = e => {
     if (!isFolder) return // only folders accept drops
-    if (dragId == null || dragId === node.id) return
     e.preventDefault()
+    e.stopPropagation() // innermost folder wins; keeps the root zone inactive
     e.dataTransfer.dropEffect = 'move'
     if (!dropHover) setDropHover(true)
   }
-  const handleDragLeave = () => { if (dropHover) setDropHover(false) }
+  const handleDragLeave = e => {
+    e.stopPropagation()
+    if (dropHover) setDropHover(false)
+  }
   const handleDrop = e => {
     if (!isFolder) return
     e.preventDefault()
     e.stopPropagation()
     setDropHover(false)
-    onDrop(dragId, node.id)
+    const dId = e.dataTransfer.getData('text/plain') || dragId
+    onDrop(dId, node.id)
     setDragId(null)
   }
   const handleDragEnd = () => setDragId(null)
@@ -82,24 +94,26 @@ export default function FileTreeNode({
   }
 
   return (
-    <div>
+    <div
+      onDragOver={isFolder ? allowDrop : undefined}
+      onDragEnter={isFolder ? allowDrop : undefined}
+      onDragLeave={isFolder ? handleDragLeave : undefined}
+      onDrop={isFolder ? handleDrop : undefined}
+      style={isFolder && dropHover ? {
+        background: 'rgba(59,130,246,0.10)',
+        outline: '1px dashed #3b82f6',
+        borderRadius: 4,
+      } : undefined}
+    >
       <div
         className="group flex items-center gap-1 pr-1 py-0.5 cursor-pointer rounded text-xs"
         style={{
           paddingLeft: 4 + depth * 12,
-          background: isActive
-            ? 'var(--toolbar-bg)'
-            : dropHover
-              ? 'rgba(59,130,246,0.15)'
-              : 'transparent',
+          background: isActive ? 'var(--toolbar-bg)' : 'transparent',
           color: isActive ? 'var(--component-color)' : '#6b7280',
-          outline: dropHover ? '1px dashed #3b82f6' : 'none',
         }}
         draggable={!editing}
         onDragStart={handleDragStart}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
         onDragEnd={handleDragEnd}
         onClick={rowClick}
         title={node.name}
