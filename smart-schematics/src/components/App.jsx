@@ -7,7 +7,7 @@ import SidebarLeft from './SidebarLeft'
 import ComponentLibrary from './ComponentLibrary'
 import Canvas from './Canvas'
 import PropertiesPanel from './PropertiesPanel'
-import DrawingManager from './DrawingManager'
+import FileMenu from './FileMenu'
 import SimulationControls from './SimulationControls'
 import StatusBar from './StatusBar'
 import ProjectBrowser from './ProjectBrowser'
@@ -144,6 +144,10 @@ export default function App() {
         </div>
         <div className="self-center w-px h-5 flex-shrink-0" style={{ background: 'var(--panel-border)' }} />
 
+        <FileMenu />
+
+        <div className="self-center w-px h-5 flex-shrink-0" style={{ background: 'var(--panel-border)' }} />
+
         <Toolbar />
 
         <button
@@ -157,9 +161,6 @@ export default function App() {
           }
         </button>
       </div>
-
-      {/* Drawing tabs */}
-      <DrawingManager />
 
       {/* Simulation controls */}
       <ErrorBoundary name="Simulation Controls">
