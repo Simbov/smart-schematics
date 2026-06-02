@@ -136,6 +136,7 @@ export default function Toolbar() {
     text: { onClick: () => setActiveTool('text'), active: activeTool === 'text' },
     callout: { onClick: () => setActiveTool('callout'), active: activeTool === 'callout' },
     insertImage: { onClick: handleInsertImage, disabled: !drawing },
+    box: { onClick: () => setActiveTool('box'), active: activeTool === 'box', disabled: !drawing },
     titleBlock: {
       active: drawing?.titleBlock?.visible,
       onClick: () => {

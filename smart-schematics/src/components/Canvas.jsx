@@ -96,6 +96,12 @@ export default function Canvas({ onCursorMove }) {
   const resizeRef = useRef(null) // { imageId, handle, startWorld, startBox, keepAspect }
   const [resizeBoxState, setResizeBoxState] = useState(null) // { imageId, box }
 
+  // Box resize state (Stage 5) — mirrors the image resize gesture but commits via
+  // updateBox (center-coords) and recomputes pins. boxResizeState holds the live
+  // top-left box for rendering the rect + handles without mutating the store.
+  const boxResizeRef = useRef(null) // { boxId, handle, startBox(topleft), z, startClient, lastBox }
+  const [boxResizeState, setBoxResizeState] = useState(null) // { boxId, box(topleft) }
+
   // Inline editor state (title-block cells only)
   const [inlineEdit, setInlineEdit] = useState(null)
   // { titleBlockField, worldX, worldY, value, multiline, isNew? }
@@ -149,6 +155,9 @@ export default function Canvas({ onCursorMove }) {
   const copyToClipboard = useSchematicStore(s => s.copyToClipboard)
   const pasteFromClipboard = useSchematicStore(s => s.pasteFromClipboard)
   const updateImage = useSchematicStore(s => s.updateImage)
+  const addBox = useSchematicStore(s => s.addBox)
+  const updateBox = useSchematicStore(s => s.updateBox)
+  const updateComponent = useSchematicStore(s => s.updateComponent)
 
   const drawing = drawings.find(d => d.id === activeDrawingId)
   const { panX, panY, zoom } = drawing?.viewState || { panX: 0, panY: 0, zoom: 1 }
@@ -626,6 +635,16 @@ export default function Canvas({ onCursorMove }) {
       return
     }
 
+    if (tool === 'box') {
+      if (e.detail === 1 && state.activeDrawingId) {
+        pushUndo()
+        const id = addBox(state.activeDrawingId, snapped.x, snapped.y)
+        if (id) setSelectedIds([id])
+        setActiveTool('select')
+      }
+      return
+    }
+
     if (tool === 'wire') {
       const snap = snapTargetRef.current || { type: 'grid', x: snapped.x, y: snapped.y }
       const target = { x: snap.x, y: snap.y }
@@ -687,7 +706,7 @@ export default function Canvas({ onCursorMove }) {
       // Click on empty canvas — clear selection
       clearSelection()
     }
-  }, [activeDrawingId, getSVGPos, toWorld, addComponent, finishWire, clearSelection, pushUndo, addAnnotation])
+  }, [activeDrawingId, getSVGPos, toWorld, addComponent, addBox, setActiveTool, setSelectedIds, finishWire, clearSelection, pushUndo, addAnnotation])
 
   // Unified drag starter for components, wires, annotations, and images
   const startDrag = useCallback((id, e, alwaysDraggable = false) => {
@@ -785,6 +804,62 @@ export default function Canvas({ onCursorMove }) {
     window.addEventListener('mouseup', onUp)
   }, [activeDrawingId, pushUndo, updateImage])
 
+  // Begin dragging a box resize handle. Box geometry math lives in
+  // boxComponent.resizeBoxGeometry (grid-snap + min-size); the box's stored x/y
+  // is its CENTER, so we convert to a top-left box for the gesture, then back to
+  // center on commit and let updateBox re-derive pins + reattach wires.
+  const startBoxResize = useCallback((boxId, handle, e) => {
+    e.stopPropagation()
+    e.preventDefault()
+    const dr = useSchematicStore.getState().drawings.find(d => d.id === activeDrawingId)
+    const comp = (dr?.components || []).find(c => c.id === boxId)
+    if (!comp || comp.type !== 'box') return
+    const w = comp.box.width, h = comp.box.height
+    const startBox = { x: comp.x - w / 2, y: comp.y - h / 2, width: w, height: h }
+    const z = dr.viewState?.zoom || 1
+    const startClient = { x: e.clientX, y: e.clientY }
+    boxResizeRef.current = { boxId, handle, startBox, z, startClient, lastBox: startBox }
+    setBoxResizeState({ boxId, box: startBox })
+
+    const onMove = (ev) => {
+      const r = boxResizeRef.current
+      if (!r) return
+      const dx = (ev.clientX - r.startClient.x) / r.z
+      const dy = (ev.clientY - r.startClient.y) / r.z
+      // Live preview is un-snapped for smoothness; snap happens on commit.
+      const box = resizeBox(r.startBox, r.handle, dx, dy, ev.shiftKey)
+      r.lastBox = box
+      setBoxResizeState({ boxId: r.boxId, box })
+    }
+    const onUp = () => {
+      const r = boxResizeRef.current
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      boxResizeRef.current = null
+      setBoxResizeState(null)
+      if (r) {
+        const { gridSize, snapToGrid } = useSchematicStore.getState().settings
+        const grid = snapToGrid ? gridSize : 0
+        // Snap width/height to grid multiples (floor at the min box size).
+        const snappedW = grid > 0 ? Math.max(10, Math.round(r.lastBox.width / grid) * grid) : Math.max(10, r.lastBox.width)
+        const snappedH = grid > 0 ? Math.max(10, Math.round(r.lastBox.height / grid) * grid) : Math.max(10, r.lastBox.height)
+        // New center = top-left + half new size, with the moved corner anchored.
+        const cx = r.lastBox.x + snappedW / 2
+        const cy = r.lastBox.y + snappedH / 2
+        pushUndo()
+        // Move the component origin to the new center, then update box size (which
+        // recomputes pins + reattaches wires).
+        updateComponent(activeDrawingId, r.boxId, {
+          x: grid > 0 ? Math.round(cx / grid) * grid : cx,
+          y: grid > 0 ? Math.round(cy / grid) * grid : cy,
+        })
+        updateBox(activeDrawingId, r.boxId, { width: snappedW, height: snappedH })
+      }
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [activeDrawingId, pushUndo, updateBox, updateComponent])
+
   const handleComponentClick = useCallback((id, e) => {
     if (isDraggingItems.current) return
     if (activeTool !== 'select') return
@@ -848,6 +923,27 @@ export default function Canvas({ onCursorMove }) {
     })
   }, [activeTool, activeDrawingId])
 
+  // Double-clicking a box opens the rich-text editor on its label, sized to the
+  // box interior. Commit/cancel route to updateBox (boxId branch in commitRichEdit).
+  const handleComponentDoubleClick = useCallback((id, e) => {
+    const state = useSchematicStore.getState()
+    const dr = state.drawings.find(d => d.id === activeDrawingId)
+    const comp = (dr?.components || []).find(c => c.id === id)
+    if (!comp || comp.type !== 'box') return
+    const w = comp.box?.width || 80
+    const h = comp.box?.height || 60
+    setRichEdit({
+      boxId: id,
+      worldX: comp.x - w / 2 + 4,
+      worldY: comp.y - h / 2 + 4,
+      width: w - 8,
+      height: h - 8,
+      doc: comp.box?.doc || emptyDoc(),
+      fixedSize: true,
+      isNew: false,
+    })
+  }, [activeDrawingId])
+
   const handleWireClick = useCallback((id, e) => {
     if (activeTool !== 'select') return
     if (e?.shiftKey) {
@@ -873,8 +969,12 @@ export default function Canvas({ onCursorMove }) {
   // Rich-text editor commit / cancel (text + callout annotations)
   const commitRichEdit = useCallback((doc) => {
     if (!richEdit) return
-    // An empty new annotation is discarded (avoids stray invisible boxes).
-    if (richEdit.isNew && isEmptyDoc(doc)) {
+    if (richEdit.boxId) {
+      // Box label edit — store the doc on the box payload.
+      pushUndo()
+      updateBox(activeDrawingId, richEdit.boxId, { doc })
+    } else if (richEdit.isNew && isEmptyDoc(doc)) {
+      // An empty new annotation is discarded (avoids stray invisible boxes).
       deleteIds(activeDrawingId, [richEdit.annotationId])
     } else {
       // updateAnnotation keeps the plain `text` mirror in sync with `doc`.
@@ -882,11 +982,11 @@ export default function Canvas({ onCursorMove }) {
     }
     setActiveTool('select')
     setRichEdit(null)
-  }, [richEdit, activeDrawingId, updateAnnotation, deleteIds, setActiveTool])
+  }, [richEdit, activeDrawingId, updateAnnotation, updateBox, deleteIds, pushUndo, setActiveTool])
 
   const cancelRichEdit = useCallback(() => {
     if (!richEdit) return
-    if (richEdit.isNew) deleteIds(activeDrawingId, [richEdit.annotationId])
+    if (!richEdit.boxId && richEdit.isNew) deleteIds(activeDrawingId, [richEdit.annotationId])
     setActiveTool('select')
     setRichEdit(null)
   }, [richEdit, activeDrawingId, deleteIds, setActiveTool])
@@ -930,6 +1030,16 @@ export default function Canvas({ onCursorMove }) {
   const effectiveComponents = (drawing?.components || []).map(c => {
     if (isDraggingNow && dragRef.current?.compIds.includes(c.id)) {
       return { ...c, x: c.x + dragDelta.dx, y: c.y + dragDelta.dy }
+    }
+    // Live box-resize preview: top-left box → center + size, without committing.
+    if (boxResizeState && boxResizeState.boxId === c.id && c.type === 'box') {
+      const b = boxResizeState.box
+      return {
+        ...c,
+        x: b.x + b.width / 2,
+        y: b.y + b.height / 2,
+        box: { ...c.box, width: b.width, height: b.height },
+      }
     }
     return c
   })
@@ -1024,6 +1134,17 @@ export default function Canvas({ onCursorMove }) {
     ? effectiveImages.find(im => im.id === selectedIds[0] && !im.locked && !(im.rotation % 360))
     : null
 
+  // The single box (if any) that should show resize handles: exactly one selected
+  // box, in select tool, not mid-rotation. Returned as a top-left box for handle
+  // placement (its stored x/y is the center).
+  const singleSelectedBox = (() => {
+    if (activeTool !== 'select' || selectedIds.length !== 1) return null
+    const c = effectiveComponents.find(c => c.id === selectedIds[0] && c.type === 'box' && !(c.rotation % 360))
+    if (!c) return null
+    const w = c.box?.width || 80, h = c.box?.height || 60
+    return { id: c.id, x: c.x - w / 2, y: c.y - h / 2, width: w, height: h }
+  })()
+
   // Inline editor screen position
   const ieScreenX = inlineEdit ? inlineEdit.worldX * zoom + panX : 0
   const ieScreenY = inlineEdit ? inlineEdit.worldY * zoom + panY : 0
@@ -1108,6 +1229,7 @@ export default function Canvas({ onCursorMove }) {
               isRunning={isRunning}
               onMouseDown={(e) => handleComponentMouseDown(comp.id, e)}
               onClick={(e) => handleComponentClick(comp.id, e)}
+              onDoubleClick={(e) => handleComponentDoubleClick(comp.id, e)}
             />
           ))}
 
@@ -1226,6 +1348,36 @@ export default function Canvas({ onCursorMove }) {
               )
             })
           })()}
+
+          {/* Box resize handles (Stage 5) — same screen-space sizing as images */}
+          {singleSelectedBox && (() => {
+            const bx = singleSelectedBox
+            const HS = 8 / zoom
+            const pos = {
+              nw: [bx.x, bx.y], n: [bx.x + bx.width / 2, bx.y], ne: [bx.x + bx.width, bx.y],
+              e: [bx.x + bx.width, bx.y + bx.height / 2], se: [bx.x + bx.width, bx.y + bx.height],
+              s: [bx.x + bx.width / 2, bx.y + bx.height], sw: [bx.x, bx.y + bx.height],
+              w: [bx.x, bx.y + bx.height / 2],
+            }
+            const cursors = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize' }
+            return RESIZE_HANDLES.map(h => {
+              const [hx, hy] = pos[h]
+              return (
+                <rect
+                  key={`brh-${h}`}
+                  x={hx - HS / 2}
+                  y={hy - HS / 2}
+                  width={HS}
+                  height={HS}
+                  fill="var(--panel-bg)"
+                  stroke="var(--selection-color)"
+                  strokeWidth={1 / zoom}
+                  style={{ cursor: cursors[h] }}
+                  onMouseDown={(e) => startBoxResize(bx.id, h, e)}
+                />
+              )
+            })
+          })()}
         </g>
       </svg>
 
@@ -1265,5 +1417,6 @@ function getCursor(tool) {
   if (tool === 'place') return 'crosshair'
   if (tool === 'text') return 'text'
   if (tool === 'callout') return 'crosshair'
+  if (tool === 'box') return 'crosshair'
   return 'default'
 }

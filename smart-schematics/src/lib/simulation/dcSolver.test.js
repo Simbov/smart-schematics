@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { runDCSimulation } from './dcSolver.js'
 import { battery, resistor, lamp, spdt, wire, boundWire, ground, voltmeter, diode, potentiometer } from '../../test/circuitBuilder.js'
+import { createBox } from '../boxComponent.js'
 
 describe('dcSolver — basic circuits', () => {
   it('drives a single resistor across a battery (Ohm law)', () => {
@@ -227,5 +228,41 @@ describe('dcSolver — component box is inert (Stage 1)', () => {
     // The box itself carries essentially no current.
     const bxState = withBox.componentStates[bx.id]
     if (bxState) expect(Math.abs(bxState.I)).toBeLessThan(1e-9)
+  })
+})
+
+describe('dcSolver — real createBox() box is inert (Stage 5)', () => {
+  // Build an actual box via the Stage 5 factory and drop it across a live
+  // battery→lamp loop with its two edge pins landing on the live POS and GND
+  // nets. The lamp must light exactly as if the box weren't there, and the box
+  // must create no net short (no extra current path).
+  it('does not perturb a live lamp circuit or short its pins', () => {
+    const bt = battery([0, 0], [0, 100])
+    const la = lamp([0, 0], [0, 100])
+
+    const base = runDCSimulation([bt, la], [], {})
+    expect(base.componentStates[la.id].on).toBe(true)
+    const baseI = base.componentStates[la.id].I
+
+    // Real box at center (40,50), default 80×60 → W1 pin at (0,50)?  We instead
+    // position it so its two default pins (W1 left, E1 right) sit on the POS net
+    // (0,0) and GND net (0,100). Place center at (0,50): W1 rel(-40,0)→(-40,50),
+    // E1 rel(40,0)→(40,50). Those don't touch the nets, so override pin coords to
+    // land exactly on POS and GND (the solver reads absX/absY).
+    const bx = createBox({ x: 0, y: 50, width: 80, height: 60, grid: 10, id: 'BX1' })
+    bx.pins = [
+      { ...bx.pins[0], absX: 0, absY: 0 },     // W1 → POS net
+      { ...bx.pins[1], absX: 0, absY: 100 },   // E1 → GND net
+    ]
+
+    const withBox = runDCSimulation([bt, la, bx], [], {})
+
+    // Lamp current unchanged → the box added no conductive path (no short).
+    expect(withBox.componentStates[la.id].on).toBe(true)
+    expect(withBox.componentStates[la.id].I).toBeCloseTo(baseI, 6)
+
+    // The box draws no current of its own.
+    const bxState = withBox.componentStates[bx.id]
+    if (bxState) expect(Math.abs(bxState.I || 0)).toBeLessThan(1e-9)
   })
 })

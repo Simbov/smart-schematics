@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { computePinAbsPositions } from '../lib/utils'
 import { pruneJunctions } from '../lib/wireUtils'
 import { plainToDoc, docToPlain } from '../lib/richText'
+import { createBox } from '../lib/boxComponent'
 import {
   isRunningInTauri,
   openFileDialog, saveFileDialog,
@@ -17,6 +18,15 @@ export const genId = () => {
   // Fallback for environments without crypto.randomUUID — timestamp + counter +
   // random keeps IDs unique even across reloads (no resetting global counter).
   return `id_${Date.now().toString(36)}_${(idCounter++).toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+// Derive a per-side pin-count spec from a box's existing pins (by `direction`).
+// Used when resizing a box so the pin layout is preserved (counts unchanged,
+// positions re-spaced on the new edges).
+function pinSpecFromPins(pins = []) {
+  const spec = { W: 0, E: 0, N: 0, S: 0 }
+  for (const p of pins) if (p.direction in spec) spec[p.direction]++
+  return spec
 }
 
 function snapshotDrawing(drawing) {
@@ -443,6 +453,64 @@ const useSchematicStore = create((set, get) => ({
       ),
     }))
     return component.id
+  },
+
+  // Add a component-box (Stage 5). Boxes have no library def, so they bypass
+  // addComponent and are built by the pure createBox factory. Designators use a
+  // 'BX' prefix; the box gets a fresh id and pin abs positions seeded at origin.
+  addBox(drawingId, x, y, opts = {}) {
+    const drawing = get().drawings.find(d => d.id === drawingId)
+    if (!drawing) return null
+    const grid = get().settings.snapToGrid ? get().settings.gridSize : 0
+    const count = drawing.components.filter(c => c.type === 'box').length
+    const box = createBox({ x, y, grid, designator: `BX${count + 1}`, id: genId(), ...opts })
+    set(state => ({
+      drawings: state.drawings.map(d =>
+        d.id === drawingId
+          ? { ...d, components: [...d.components, box], isDirty: true }
+          : d
+      ),
+    }))
+    return box.id
+  },
+
+  // Update a box's `box` payload (size/doc/fill/stroke/cornerRadius/pin spec).
+  // When width/height/pinSpec change, pins are recomputed from the new geometry
+  // and their absolute positions re-derived from the component transform, then
+  // bound wires are re-attached so they follow the moved pins.
+  updateBox(drawingId, componentId, boxPatch, pinSpec = null) {
+    set(state => ({
+      drawings: state.drawings.map(d => {
+        if (d.id !== drawingId) return d
+        let updated = null
+        const components = d.components.map(c => {
+          if (c.id !== componentId || c.type !== 'box') return c
+          const nextBox = { ...c.box, ...boxPatch }
+          let pins = c.pins
+          // Geometry or pin-count change ⇒ rebuild pins on the edges. When no
+          // explicit pinSpec is given (e.g. a resize), preserve the current
+          // per-side counts derived from the existing pins.
+          if (pinSpec || boxPatch.width != null || boxPatch.height != null) {
+            const spec = pinSpec || pinSpecFromPins(c.pins)
+            const rebuilt = createBox({
+              x: c.x, y: c.y,
+              width: nextBox.width, height: nextBox.height,
+              pinSpec: spec,
+              grid: get().settings.snapToGrid ? get().settings.gridSize : 0,
+            })
+            pins = computePinAbsPositions(rebuilt.pins, c.x, c.y, c.rotation || 0, c.flipH, c.flipV)
+          }
+          updated = { ...c, box: nextBox, pins }
+          return updated
+        })
+        return {
+          ...d,
+          isDirty: true,
+          components,
+          wires: updated ? get()._reattachWires(d.wires, updated) : d.wires,
+        }
+      }),
+    }))
   },
 
   updateComponent(drawingId, componentId, patch) {

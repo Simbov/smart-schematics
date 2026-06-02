@@ -5,6 +5,7 @@ import { getElectricalDef } from '../lib/components/electrical'
 import { getHydraulicDef } from '../lib/components/hydraulic'
 import { getCustomDef } from '../lib/components/custom'
 import CustomSymbol from '../lib/symbols/CustomSymbol'
+import BoxSymbol from '../lib/symbols/BoxSymbol'
 import { INTERACTIVE_TYPES } from '../lib/simulation/electricalSim'
 import { MANUAL_DCV_TYPES } from '../lib/simulation/hydraulicSim'
 import { formatSI } from '../lib/simulation/parseValue'
@@ -119,6 +120,7 @@ const PlacedComponent = memo(function PlacedComponent({
   selected,
   onClick,
   onMouseDown,
+  onDoubleClick,
   showPins = false,
   simState,
   interactiveState,
@@ -126,14 +128,16 @@ const PlacedComponent = memo(function PlacedComponent({
   isRunning = false,
   labelSide = 'top',
 }) {
+  const isBox = component.type === 'box'
   const isCustom = component.type.startsWith('custom_')
-  const SymbolComponent = isCustom ? null : (SYMBOL_MAP_ALL[component.type] || null)
+  const SymbolComponent = isBox ? BoxSymbol : (isCustom ? null : (SYMBOL_MAP_ALL[component.type] || null))
   const def = getAnyDef(component.type)
-  if (!isCustom && !SymbolComponent) return null
+  if (!isBox && !isCustom && !SymbolComponent) return null
   if (isCustom && !def) return null
 
-  const w = def?.width || 40
-  const h = def?.height || 20
+  // A box carries its own size in component.box; everything else uses the def.
+  const w = isBox ? (component.box?.width || 80) : (def?.width || 40)
+  const h = isBox ? (component.box?.height || 60) : (def?.height || 20)
 
   // Rotate/flip apply only to the symbol body; the labels stay upright (see below).
   const bodyTransforms = []
@@ -170,6 +174,7 @@ const PlacedComponent = memo(function PlacedComponent({
       transform={`translate(${component.x}, ${component.y})`}
       onMouseDown={e => { e.stopPropagation(); onMouseDown?.(e) }}
       onClick={e => { e.stopPropagation(); onClick?.(e) }}
+      onDoubleClick={e => { e.stopPropagation(); onDoubleClick?.(e) }}
       style={{ cursor: 'pointer', pointerEvents: showPins ? 'none' : 'auto' }}
     >
       {/* Rotated / flipped symbol body */}
@@ -209,9 +214,11 @@ const PlacedComponent = memo(function PlacedComponent({
 
         {/* Symbol */}
         <g style={{ color: isRunning && simState?.on ? 'var(--sim-active-color, #f59e0b)' : 'var(--component-color)' }}>
-          {isCustom
-            ? <CustomSymbol svgPathData={def.svgPathData} />
-            : <SymbolComponent state={getSymbolState(component.type, simState, interactiveState, hydSimState, component.simParams)} params={component.simParams || {}} />
+          {isBox
+            ? <BoxSymbol box={component.box} instanceId={component.id} />
+            : isCustom
+              ? <CustomSymbol svgPathData={def.svgPathData} />
+              : <SymbolComponent state={getSymbolState(component.type, simState, interactiveState, hydSimState, component.simParams)} params={component.simParams || {}} />
           }
         </g>
       </g>
