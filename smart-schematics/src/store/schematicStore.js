@@ -6,10 +6,11 @@ import { createBox } from '../lib/boxComponent'
 import {
   isRunningInTauri,
   openFileDialog, saveFileDialog,
-  readTextFile, writeTextFile,
+  readTextFile, writeTextFile, writeBinaryFile, base64ToBytes,
   getRecentFiles, addRecentFile, removeRecentFile,
   basename,
 } from '../lib/tauriFs'
+import { sanitizeLoadedProject } from '../lib/projectFile'
 
 let idCounter = 0
 export const genId = () => {
@@ -344,7 +345,10 @@ const useSchematicStore = create((set, get) => ({
 
   importProjectJSON(jsonStr) {
     try {
-      const data = JSON.parse(jsonStr)
+      const parsed = JSON.parse(jsonStr)
+      // Drop malformed images/attachments so a corrupt embedded payload can't
+      // crash the import (mirrors the file-open path).
+      const { data } = sanitizeLoadedProject(parsed)
       const drawings = (data.drawings || []).map(d => migrateDrawing({ ...d, id: genId(), isDirty: false }))
       const project = migrateProject({
         id: genId(),
@@ -1000,6 +1004,63 @@ const useSchematicStore = create((set, get) => ({
     }))
   },
 
+  // Write an attachment's stored base64 payload back out to disk. In Tauri this
+  // prompts for a path (saveFileDialog) and writes the decoded bytes; in the
+  // browser it triggers a Blob download. Returns true on success.
+  async exportAttachment(attachmentId) {
+    const { activeProjectId, projects } = get()
+    const project = projects.find(p => p.id === activeProjectId)
+    const att = (project?.attachments || []).find(a => a.id === attachmentId)
+    if (!att) return false
+    try {
+      if (isRunningInTauri()) {
+        const ext = (att.name?.split('.').pop() || '').toLowerCase()
+        const path = await saveFileDialog(
+          att.name || 'attachment',
+          ext ? [{ name: ext.toUpperCase(), extensions: [ext] }] : []
+        )
+        if (!path) return false
+        await writeBinaryFile(path, base64ToBytes(att.data))
+      } else {
+        const bytes = base64ToBytes(att.data)
+        const blob = new Blob([bytes], { type: att.mime || 'application/octet-stream' })
+        _download(blob, att.name || 'attachment')
+      }
+      return true
+    } catch (e) {
+      console.error('Failed to export attachment', e)
+      if (typeof alert === 'function') alert(`Could not export attachment: ${e.message || e}`)
+      return false
+    }
+  },
+
+  // Read a file from disk (Tauri) or a File object (browser) and embed it as a
+  // base64 attachment. Tauri path prompts via openFileDialog. Returns the new
+  // attachment id (or null if cancelled/failed).
+  async attachFile() {
+    try {
+      if (isRunningInTauri()) {
+        const path = await openFileDialog([])
+        if (!path) return null
+        const { readFile } = await import('@tauri-apps/plugin-fs')
+        const bytes = await readFile(path)
+        let binary = ''
+        const CHUNK = 0x8000
+        for (let i = 0; i < bytes.length; i += CHUNK) {
+          binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK))
+        }
+        const data = btoa(binary)
+        return get().addAttachment({ name: basename(path), mime: 'application/octet-stream', data })
+      }
+      // Browser path is driven by FileMenu's hidden <input>; nothing to do here.
+      return null
+    } catch (e) {
+      console.error('Failed to attach file', e)
+      if (typeof alert === 'function') alert(`Could not attach file: ${e.message || e}`)
+      return null
+    }
+  },
+
   // ─── Persistence ──────────────────────────────────────────────────────────
 
   // Builds a serialisable snapshot of the active project
@@ -1013,27 +1074,56 @@ const useSchematicStore = create((set, get) => ({
     return { version: 3, ...project, drawings: projectDrawings }
   },
 
-  // saveAll — writes to file (Tauri) or localStorage (browser)
+  // saveAll — writes to file (Tauri) or localStorage (browser).
+  //
+  // Save integrity (Stage 7): serialize FIRST, then write, then mark saved. If
+  // JSON.stringify or the write throws (e.g. a corrupt image payload, disk full),
+  // we surface a dialog and bail WITHOUT marking drawings clean and WITHOUT
+  // having touched the existing good file — so a failed snapshot can never
+  // overwrite a known-good one. Returns true on success, false on failure.
   async saveAll() {
     const { projects, drawings, currentFilePath } = get()
     const now = Date.now()
-    const savedDrawings = drawings.map(d => ({ ...d, isDirty: false, lastSaved: now }))
-    const savedProjects = projects.map(p => ({ ...p, lastSaved: now }))
-    set({ drawings: savedDrawings, projects: savedProjects })
 
-    if (isRunningInTauri() && currentFilePath) {
-      const snapshot = get()._buildProjectSnapshot()
-      if (snapshot) {
-        await writeTextFile(currentFilePath, JSON.stringify(snapshot, null, 2))
+    try {
+      if (isRunningInTauri() && currentFilePath) {
+        const snapshot = get()._buildProjectSnapshot()
+        if (snapshot) {
+          // Serialize before any state mutation; a throw here leaves disk intact.
+          const json = JSON.stringify(snapshot, null, 2)
+          await writeTextFile(currentFilePath, json)
+        }
+      } else {
+        const savedDrawings = drawings.map(d => ({ ...d, isDirty: false, lastSaved: now }))
+        const savedProjects = projects.map(p => ({ ...p, lastSaved: now }))
+        // Browser fallback: localStorage. Build the payload before writing so a
+        // serialization error doesn't clobber the previously-stored project.
+        const payload = JSON.stringify({
+          version: 3,
+          projects: savedProjects,
+          drawings: savedDrawings,
+        })
+        localStorage.setItem('schematic_projects', payload)
       }
-    } else {
-      // Browser fallback: localStorage
-      localStorage.setItem('schematic_projects', JSON.stringify({
-        version: 3,
-        projects: savedProjects,
-        drawings: savedDrawings,
-      }))
+    } catch (e) {
+      console.error('Failed to save project', e)
+      if (typeof alert === 'function') {
+        alert(
+          `Could not save the project — your file was NOT changed.\n\n` +
+          `${e.message || e}\n\n` +
+          `This can happen if an embedded image or attachment is corrupt. ` +
+          `Try removing recently added images/attachments and save again.`
+        )
+      }
+      return false
     }
+
+    // Only now mark everything clean/saved — the write succeeded.
+    set({
+      drawings: get().drawings.map(d => ({ ...d, isDirty: false, lastSaved: now })),
+      projects: get().projects.map(p => ({ ...p, lastSaved: now })),
+    })
+    return true
   },
 
   // Open a .scpro file via native dialog (Tauri) or fall back to browser import
@@ -1085,7 +1175,20 @@ const useSchematicStore = create((set, get) => ({
   async _loadProjectFromPath(path) {
     try {
       const raw = await readTextFile(path)
-      const data = JSON.parse(raw)
+      const parsed = JSON.parse(raw)
+      // Drop malformed images/attachments before they reach the store so one
+      // corrupt payload can't crash the open. Surface a non-fatal warning.
+      const { data, dropped } = sanitizeLoadedProject(parsed)
+      if (dropped.images || dropped.attachments) {
+        console.warn('Dropped malformed entries on load', dropped)
+        if (typeof alert === 'function') {
+          const bits = [
+            dropped.images && `${dropped.images} image${dropped.images > 1 ? 's' : ''}`,
+            dropped.attachments && `${dropped.attachments} attachment${dropped.attachments > 1 ? 's' : ''}`,
+          ].filter(Boolean).join(' and ')
+          alert(`Opened ${basename(path)} but skipped ${bits} that were corrupt or unreadable.`)
+        }
+      }
       // Migrate older (v2) files: backfill new-schema fields so they open unchanged.
       const drawings = (data.drawings || []).map(d => migrateDrawing({ ...d, isDirty: false }))
       const project = migrateProject({

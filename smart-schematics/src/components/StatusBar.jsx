@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import useSchematicStore from '../store/schematicStore'
 import useSimulationStore from '../store/simulationStore'
 import { basename } from '../lib/tauriFs'
+import { projectSize, formatBytes, isOverSizeLimit } from '../lib/projectFile'
 
 function useRelativeTime(ts) {
   const [label, setLabel] = useState('')
@@ -30,6 +31,22 @@ export default function StatusBar({ cursorPos }) {
   const externalChangeDetected = useSchematicStore(s => s.externalChangeDetected)
   const zoom = drawing?.viewState.zoom || 1
   const isRunning = useSimulationStore(s => s.isRunning)
+
+  const projects = useSchematicStore(s => s.projects)
+  const drawings = useSchematicStore(s => s.drawings)
+  const activeProjectId = useSchematicStore(s => s.activeProjectId)
+
+  // Estimated serialized .scpro size (incl. base64 image/attachment payloads).
+  // Recomputed only when the project's drawings/attachments change.
+  const sizeBytes = useMemo(() => {
+    const project = projects.find(p => p.id === activeProjectId)
+    if (!project) return 0
+    const projectDrawings = (project.drawingIds || [])
+      .map(id => drawings.find(d => d.id === id))
+      .filter(Boolean)
+    return projectSize({ version: 3, ...project, drawings: projectDrawings })
+  }, [projects, drawings, activeProjectId])
+  const sizeOver = isOverSizeLimit(sizeBytes)
 
   const lastSaved = drawing?.lastSaved || null
   const savedLabel = useRelativeTime(lastSaved)
@@ -85,6 +102,15 @@ export default function StatusBar({ cursorPos }) {
       )}
       <span>
         Sim: <span className={isRunning ? 'text-green-500' : 'text-gray-500'}>{isRunning ? 'Running' : 'Stopped'}</span>
+      </span>
+      <span
+        title={sizeOver
+          ? `Project file is large (${formatBytes(sizeBytes)}). Consider removing unused images or attachments — large files sync slowly and may hit storage limits.`
+          : `Estimated saved file size: ${formatBytes(sizeBytes)}`}
+      >
+        Size: <span className={sizeOver ? 'text-yellow-500 font-semibold' : 'text-gray-700 dark:text-gray-300'}>
+          {sizeOver && '⚠ '}{formatBytes(sizeBytes)}
+        </span>
       </span>
       {currentFilePath && (
         <span className="ml-auto flex items-center gap-1.5 truncate max-w-xs" title={currentFilePath}>
