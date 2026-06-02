@@ -35,10 +35,10 @@ describe('toolbarConfig', () => {
     }
   })
 
-  it('reserves a disabled slot for the Stage 5 Box tool; Insert Image is live (Stage 3)', () => {
+  it('Insert Image (Stage 3) and Box (Stage 5) are both live (no longer reserved)', () => {
     const byId = Object.fromEntries(allToolbarButtons().map(b => [b.id, b]))
     expect(byId.insertImage.comingSoon).toBeUndefined()
-    expect(byId.box.comingSoon).toBe(true)
+    expect(byId.box.comingSoon).toBeUndefined()
   })
 
   it('reproduces the original tooltips (label + shortcut hint)', () => {
@@ -61,9 +61,9 @@ describe('toolbarConfig', () => {
     expect(buttonTooltip(byId.simOverlay)).toBe('Toggle Simulation Overlay')
   })
 
-  it('marks the still-reserved Box slot as coming soon in the tooltip', () => {
+  it('tooltips for the live Insert Image and Box tools (no coming-soon note)', () => {
     const byId = Object.fromEntries(allToolbarButtons().map(b => [b.id, b]))
     expect(buttonTooltip(byId.insertImage)).toBe('Insert Image')
-    expect(buttonTooltip(byId.box)).toBe('Box — coming soon')
+    expect(buttonTooltip(byId.box)).toBe('Box')
   })
 })

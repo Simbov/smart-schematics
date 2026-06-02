@@ -87,6 +87,7 @@ export default function PropertiesPanel() {
   const updateAnnotation = useSchematicStore(s => s.updateAnnotation)
   const updateImage = useSchematicStore(s => s.updateImage)
   const removeImage = useSchematicStore(s => s.removeImage)
+  const updateBox = useSchematicStore(s => s.updateBox)
 
   const isRunning = useSimulationStore(s => s.isRunning)
   const simCompState = useSimulationStore(s => s.componentStates[selectedIds[0]])
@@ -97,6 +98,7 @@ export default function PropertiesPanel() {
   const [localAnnText, setLocalAnnText] = useState('')
   const [localAnnSize, setLocalAnnSize] = useState(14)
   const [localImg, setLocalImg] = useState({ x: 0, y: 0, width: 0, height: 0, opacity: 1, rotation: 0 })
+  const [localBox, setLocalBox] = useState({ width: 80, height: 60, cornerRadius: 4, fill: '#f1f5f9', stroke: '#334155', W: 1, E: 1, N: 0, S: 0 })
 
   const selected = selectedIds.length === 0 ? null
     : selectedIds.length === 1
@@ -110,6 +112,7 @@ export default function PropertiesPanel() {
   const isImage = selected && selected !== 'multi' && selected.src !== undefined && selected.designator === undefined
   const isAnnotation = selected && selected !== 'multi' && !isImage && (selected.type === 'text' || selected.type === 'callout')
   const isComponent = selected && selected !== 'multi' && !isAnnotation && !isImage && selected.designator !== undefined
+  const isBox = isComponent && selected.type === 'box'
 
   // Sync local state when selection changes
   useEffect(() => {
@@ -141,6 +144,19 @@ export default function PropertiesPanel() {
         height: selected.height ?? 0,
         opacity: selected.opacity ?? 1,
         rotation: selected.rotation ?? 0,
+      })
+    }
+    if (isBox) {
+      const b = selected.box || {}
+      const counts = { W: 0, E: 0, N: 0, S: 0 }
+      for (const p of (selected.pins || [])) if (p.direction in counts) counts[p.direction]++
+      setLocalBox({
+        width: b.width ?? 80,
+        height: b.height ?? 60,
+        cornerRadius: b.cornerRadius ?? 4,
+        fill: b.fill ?? '#f1f5f9',
+        stroke: b.stroke ?? '#334155',
+        ...counts,
       })
     }
   }, [selectedIds[0]])
@@ -213,6 +229,22 @@ export default function PropertiesPanel() {
     pushUndo()
     updateImage(activeDrawingId, selected.id, patch)
   }, [isImage, activeDrawingId, selected?.id])
+
+  // Box style/geometry commit (grid-snapping + pin re-derivation handled by the
+  // store's updateBox). Geometry changes recompute pins; pin-count changes pass a
+  // pinSpec so updateBox rebuilds the edges.
+  const commitBox = useCallback((boxPatch, pinSpec = null) => {
+    if (!isBox) return
+    pushUndo()
+    updateBox(activeDrawingId, selected.id, boxPatch, pinSpec)
+  }, [isBox, activeDrawingId, selected?.id, pushUndo, updateBox])
+
+  const commitBoxPins = useCallback((counts) => {
+    if (!isBox) return
+    const spec = { W: counts.W, E: counts.E, N: counts.N, S: counts.S }
+    pushUndo()
+    updateBox(activeDrawingId, selected.id, {}, spec)
+  }, [isBox, activeDrawingId, selected?.id, pushUndo, updateBox])
 
   const replaceInputRef = useRef(null)
   const onReplaceImage = (e) => {
@@ -427,6 +459,46 @@ export default function PropertiesPanel() {
                 placeholder="Description"
               />
             </div>
+
+            {/* Box geometry / style / pins (Stage 5). Double-click the box on the
+                canvas to edit its rich-text label. */}
+            {isBox && (
+              <div className="space-y-1.5 pt-1 border-t" style={{ borderColor: 'var(--panel-border)' }}>
+                <div className="text-gray-400" style={{ fontSize: 10 }}>Double-click the box to edit its label</div>
+                <div className="grid gap-1.5" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
+                  <Field label="W" type="number" value={localBox.width}
+                    onChange={v => setLocalBox(b => ({ ...b, width: Number(v) }))}
+                    onBlur={() => commitBox({ width: Math.max(10, localBox.width) })} />
+                  <Field label="H" type="number" value={localBox.height}
+                    onChange={v => setLocalBox(b => ({ ...b, height: Number(v) }))}
+                    onBlur={() => commitBox({ height: Math.max(10, localBox.height) })} />
+                  <Field label="Radius" type="number" value={localBox.cornerRadius}
+                    onChange={v => setLocalBox(b => ({ ...b, cornerRadius: Number(v) }))}
+                    onBlur={() => commitBox({ cornerRadius: Math.max(0, localBox.cornerRadius) })} />
+                </div>
+                <div className="flex items-center gap-3 flex-wrap" style={{ fontSize: 11 }}>
+                  <label className="flex items-center gap-1" title="Fill color">
+                    <span className="text-gray-400" style={{ fontSize: 10 }}>Fill</span>
+                    <input type="color" value={localBox.fill}
+                      onChange={e => { setLocalBox(b => ({ ...b, fill: e.target.value })); commitBox({ fill: e.target.value }) }}
+                      style={{ width: 22, height: 20, border: 'none', background: 'transparent', cursor: 'pointer', padding: 0 }} />
+                  </label>
+                  <label className="flex items-center gap-1" title="Stroke color">
+                    <span className="text-gray-400" style={{ fontSize: 10 }}>Stroke</span>
+                    <input type="color" value={localBox.stroke}
+                      onChange={e => { setLocalBox(b => ({ ...b, stroke: e.target.value })); commitBox({ stroke: e.target.value }) }}
+                      style={{ width: 22, height: 20, border: 'none', background: 'transparent', cursor: 'pointer', padding: 0 }} />
+                  </label>
+                </div>
+                <div className="grid gap-1.5" style={{ gridTemplateColumns: '1fr 1fr 1fr 1fr' }}>
+                  {['W', 'E', 'N', 'S'].map(side => (
+                    <Field key={side} label={`${side} pins`} type="number" value={localBox[side]}
+                      onChange={v => setLocalBox(b => ({ ...b, [side]: Math.max(0, Math.round(Number(v) || 0)) }))}
+                      onBlur={() => commitBoxPins({ ...localBox })} />
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Sim params */}
             {hasSimParams && (

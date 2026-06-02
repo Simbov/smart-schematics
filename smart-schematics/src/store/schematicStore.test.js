@@ -85,6 +85,78 @@ describe('rotateComponent reattaches bound wires', () => {
   })
 })
 
+// ─── Stage 5: component box ──────────────────────────────────────────────────
+
+describe('addBox + box wire reattachment on rotate (Stage 5)', () => {
+  let drawingId, boxId
+
+  beforeEach(() => {
+    const store = useSchematicStore.getState()
+    store.newProject('Box Project')
+    drawingId = useSchematicStore.getState().activeDrawingId
+    // Default box at (100,100): 80×60, pins W1 at (60,100) and E1 at (140,100).
+    boxId = useSchematicStore.getState().addBox(drawingId, 100, 100)
+  })
+
+  it('creates a valid type:box component with edge pins', () => {
+    const comp = drawing().components.find(c => c.id === boxId)
+    expect(comp.type).toBe('box')
+    expect(comp.box.width).toBe(80)
+    expect(comp.box.height).toBe(60)
+    const w1 = comp.pins.find(p => p.id === 'W1')
+    const e1 = comp.pins.find(p => p.id === 'E1')
+    expect(w1.absX).toBeCloseTo(60)   // 100 - 40
+    expect(w1.absY).toBeCloseTo(100)
+    expect(e1.absX).toBeCloseTo(140)  // 100 + 40
+    expect(w1.direction).toBe('W')
+    expect(e1.direction).toBe('E')
+  })
+
+  it('reattaches a bound wire to the new pin position after rotation', () => {
+    // Wire bound to pin W1 at its rest position (60,100).
+    const wire = {
+      id: genId(),
+      points: [{ x: 60, y: 100 }, { x: 20, y: 100 }],
+      pinA: { componentId: boxId, pinId: 'W1' },
+      pinB: null,
+    }
+    useSchematicStore.getState().addWire(drawingId, wire)
+
+    useSchematicStore.getState().rotateComponent(drawingId, boxId, 90)
+
+    const comp = drawing().components.find(c => c.id === boxId)
+    const w1 = comp.pins.find(p => p.id === 'W1')
+    // W1 rel(-40,0) rotated 90° about (100,100) → (100, 60).
+    expect(w1.absX).toBeCloseTo(100)
+    expect(w1.absY).toBeCloseTo(60)
+
+    const after = drawing().wires.find(w => w.id === wire.id)
+    expect(after.points[0].x).toBeCloseTo(w1.absX)
+    expect(after.points[0].y).toBeCloseTo(w1.absY)
+    // The far (unbound) endpoint stays put.
+    expect(after.points[1]).toEqual({ x: 20, y: 100 })
+  })
+
+  it('updateBox rebuilds pins and reattaches bound wires on resize', () => {
+    const wire = {
+      id: genId(),
+      points: [{ x: 140, y: 100 }, { x: 200, y: 100 }],
+      pinA: { componentId: boxId, pinId: 'E1' },
+      pinB: null,
+    }
+    useSchematicStore.getState().addWire(drawingId, wire)
+
+    // Widen the box to 120 → E1 now at 100 + 60 = 160.
+    useSchematicStore.getState().updateBox(drawingId, boxId, { width: 120 })
+
+    const comp = drawing().components.find(c => c.id === boxId)
+    const e1 = comp.pins.find(p => p.id === 'E1')
+    expect(e1.absX).toBeCloseTo(160)
+    const after = drawing().wires.find(w => w.id === wire.id)
+    expect(after.points[0].x).toBeCloseTo(160)
+  })
+})
+
 // ─── Stage 1: image elements in the store ────────────────────────────────────
 
 const SAMPLE_SRC = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=='
