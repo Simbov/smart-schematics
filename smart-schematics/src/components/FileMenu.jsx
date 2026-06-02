@@ -238,8 +238,8 @@ export default function FileMenu() {
   return (
     <div ref={menuRef} style={{ position: 'relative' }}>
       <button
-        className="flex items-center gap-1 px-2 h-full text-xs hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
-        style={{ color: 'var(--component-color)', height: 36 }}
+        className="flex items-center gap-1 px-2 h-8 rounded text-xs hover:bg-black/10 dark:hover:bg-white/10 transition-colors flex-shrink-0"
+        style={{ color: 'var(--component-color)' }}
         onClick={() => { setOpen(v => !v); setRecentOpen(false) }}
       >
         <span>File</span>
