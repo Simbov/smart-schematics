@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { computePinAbsPositions } from '../lib/utils'
 import { pruneJunctions } from '../lib/wireUtils'
+import { plainToDoc, docToPlain } from '../lib/richText'
 import {
   isRunningInTauri,
   openFileDialog, saveFileDialog,
@@ -33,6 +34,14 @@ function snapshotDrawing(drawing) {
 function migrateDrawing(d) {
   d.images ??= []
   d.folderId ??= null
+  // Stage 4: text/callout annotations gain a rich-text `doc`. A legacy annotation
+  // that only has a plain `text` string is migrated to `doc = plainToDoc(text)`;
+  // `text` is kept in sync (= docToPlain(doc)) for back-compat search/export.
+  for (const a of (d.annotations || [])) {
+    if ((a.type === 'text' || a.type === 'callout') && !a.doc) {
+      a.doc = plainToDoc(a.text || '')
+    }
+  }
   return d
 }
 
@@ -739,9 +748,14 @@ const useSchematicStore = create((set, get) => ({
         return {
           ...d,
           isDirty: true,
-          annotations: (d.annotations || []).map(a =>
-            a.id !== annotationId ? a : { ...a, ...patch }
-          ),
+          annotations: (d.annotations || []).map(a => {
+            if (a.id !== annotationId) return a
+            const next = { ...a, ...patch }
+            // Keep the plain `text` mirror in sync whenever the rich `doc` changes
+            // so search/export and any legacy `.text` reader stays correct.
+            if (patch.doc) next.text = docToPlain(patch.doc)
+            return next
+          }),
         }
       }),
     }))

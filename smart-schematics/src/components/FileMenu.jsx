@@ -92,6 +92,12 @@ export default function FileMenu() {
   const exportSVG = useCallback(() => {
     const svgEl = getSVGElement()
     if (!svgEl) return
+    // Rich-text annotations render via <foreignObject> + XHTML <div>. We clone
+    // the live SVG as-is, so the foreignObject (and per-run styling) is carried
+    // into the exported .svg — modern viewers render it. AnnotationLayer also
+    // draws an opacity-0 plain <text> fallback behind each foreignObject as a
+    // safety net for rasterizers that drop foreignObject; it ships in the clone
+    // too. We deliberately do not strip either layer here.
     const clone = svgEl.cloneNode(true)
     const gridG = Array.from(clone.children).find(el => el.tagName === 'g' && !el.hasAttribute('transform'))
     if (gridG) clone.removeChild(gridG)

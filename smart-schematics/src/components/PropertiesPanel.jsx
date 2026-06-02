@@ -4,8 +4,20 @@ import useSimulationStore from '../store/simulationStore'
 import { getElectricalDef } from '../lib/components/electrical'
 import { getHydraulicDef } from '../lib/components/hydraulic'
 import { parseValue, formatSI } from '../lib/simulation/parseValue'
+import { plainToDoc, applyDocStyle, setDocAlign, docToPlain } from '../lib/richText'
 
 function getAnyDef(type) { return getElectricalDef(type) || getHydraulicDef(type) }
+
+// Style for a quick-style toggle button in the annotation properties.
+function qsBtn(active) {
+  return {
+    minWidth: 22, height: 20, padding: '0 5px', borderRadius: 3, cursor: 'pointer',
+    fontSize: 12, lineHeight: 1,
+    border: `1px solid ${active ? '#2563eb' : 'var(--panel-border)'}`,
+    background: active ? 'rgba(37,99,235,0.15)' : 'var(--input-bg, rgba(0,0,0,0.06))',
+    color: 'var(--component-color)',
+  }
+}
 
 function fmtVal(v, unit) {
   const abs = Math.abs(v)
@@ -82,7 +94,8 @@ export default function PropertiesPanel() {
 
   const [local, setLocal] = useState({ designator: '', value: '', description: '' })
   const [localSim, setLocalSim] = useState({})
-  const [localAnn, setLocalAnn] = useState({ text: '', fontSize: 14, fontWeight: 'normal', fontStyle: 'normal' })
+  const [localAnnText, setLocalAnnText] = useState('')
+  const [localAnnSize, setLocalAnnSize] = useState(14)
   const [localImg, setLocalImg] = useState({ x: 0, y: 0, width: 0, height: 0, opacity: 1, rotation: 0 })
 
   const selected = selectedIds.length === 0 ? null
@@ -116,12 +129,9 @@ export default function PropertiesPanel() {
       setLocalSim(initSim)
     }
     if (isAnnotation) {
-      setLocalAnn({
-        text: selected.text ?? '',
-        fontSize: selected.fontSize ?? 14,
-        fontWeight: selected.fontWeight ?? 'normal',
-        fontStyle: selected.fontStyle ?? 'normal',
-      })
+      const doc = selected.doc || plainToDoc(selected.text ?? '')
+      setLocalAnnText(docToPlain(doc))
+      setLocalAnnSize(doc.paragraphs?.[0]?.runs?.[0]?.fontSize ?? (selected.fontSize ?? 14))
     }
     if (isImage) {
       setLocalImg({
@@ -155,10 +165,48 @@ export default function PropertiesPanel() {
     updateComponentSimParam(activeDrawingId, selected.id, key, stored)
   }, [isComponent, activeDrawingId, selected?.id, selected?.type])
 
-  const commitAnnotationField = useCallback((field, val) => {
+  // The current doc for the selected annotation (tolerates legacy text-only).
+  const annDoc = isAnnotation ? (selected.doc || plainToDoc(selected.text ?? '')) : null
+
+  // Derive whether a boolean run-attr is uniformly set across all non-empty runs.
+  const docHasAll = useCallback((attr) => {
+    if (!annDoc) return false
+    const runs = annDoc.paragraphs.flatMap(p => p.runs || []).filter(r => r.text)
+    return runs.length > 0 && runs.every(r => r[attr])
+  }, [annDoc])
+
+  // Plain-text edit: rebuild the doc from the textarea, preserving the uniform
+  // style of the first run (so a whole-box-bold box stays bold after a text edit).
+  const commitAnnotationText = useCallback((val) => {
     if (!isAnnotation) return
-    updateAnnotation(activeDrawingId, selected.id, { [field]: val })
-  }, [isAnnotation, activeDrawingId, selected?.id])
+    const firstRun = annDoc?.paragraphs?.[0]?.runs?.[0]
+    let doc = plainToDoc(val)
+    if (firstRun) {
+      const carry = {}
+      if (firstRun.bold) carry.bold = true
+      if (firstRun.italic) carry.italic = true
+      if (firstRun.underline) carry.underline = true
+      if (firstRun.color) carry.color = firstRun.color
+      if (firstRun.fontSize) carry.fontSize = firstRun.fontSize
+      doc = applyDocStyle(doc, carry)
+    }
+    doc = setDocAlign(doc, annDoc?.align || 'left')
+    pushUndo()
+    updateAnnotation(activeDrawingId, selected.id, { doc })
+  }, [isAnnotation, activeDrawingId, selected?.id, annDoc, pushUndo])
+
+  // Whole-box quick style: patch every run.
+  const commitDocStyle = useCallback((patch) => {
+    if (!isAnnotation) return
+    pushUndo()
+    updateAnnotation(activeDrawingId, selected.id, { doc: applyDocStyle(annDoc, patch) })
+  }, [isAnnotation, activeDrawingId, selected?.id, annDoc, pushUndo])
+
+  const commitDocAlign = useCallback((align) => {
+    if (!isAnnotation) return
+    pushUndo()
+    updateAnnotation(activeDrawingId, selected.id, { doc: setDocAlign(annDoc, align) })
+  }, [isAnnotation, activeDrawingId, selected?.id, annDoc, pushUndo])
 
   const commitImageField = useCallback((patch) => {
     if (!isImage) return
@@ -226,12 +274,13 @@ export default function PropertiesPanel() {
           </div>
         )}
 
-        {/* Annotation selected */}
+        {/* Annotation selected — whole-box quick styles; fine per-run styling
+            is done in the floating inline editor (double-click on canvas). */}
         {isAnnotation && (
           <div className="space-y-1.5">
             <div>
               <span className="text-gray-400 block mb-0.5" style={{ fontSize: 10 }}>
-                {selected.type === 'callout' ? 'Callout text (double-click on canvas to edit)' : 'Text (double-click on canvas to edit)'}
+                {selected.type === 'callout' ? 'Callout text (double-click on canvas for rich editing)' : 'Text (double-click on canvas for rich editing)'}
               </span>
               <textarea
                 className="w-full rounded px-1 outline-none resize-y"
@@ -244,47 +293,61 @@ export default function PropertiesPanel() {
                   color: 'var(--component-color)',
                   display: 'block',
                 }}
-                value={localAnn.text}
-                onChange={e => setLocalAnn(a => ({ ...a, text: e.target.value }))}
-                onBlur={() => commitAnnotationField('text', localAnn.text)}
+                value={localAnnText}
+                onChange={e => setLocalAnnText(e.target.value)}
+                onBlur={() => commitAnnotationText(localAnnText)}
               />
             </div>
-            <div className="grid gap-1.5" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
+            <div className="flex items-center gap-2 flex-wrap" style={{ fontSize: 11 }}>
               <Field
                 label="Size"
                 type="number"
-                value={localAnn.fontSize}
-                onChange={v => setLocalAnn(a => ({ ...a, fontSize: Number(v) }))}
-                onBlur={() => commitAnnotationField('fontSize', localAnn.fontSize)}
+                value={localAnnSize}
+                onChange={v => setLocalAnnSize(v)}
+                onBlur={() => {
+                  const n = Number(localAnnSize)
+                  if (n > 0) commitDocStyle({ fontSize: n })
+                }}
               />
-              {selected.type === 'text' && (
-                <>
-                  <div className="flex items-center gap-1">
-                    <span className="text-gray-400 flex-shrink-0" style={{ fontSize: 10 }}>Bold</span>
-                    <input
-                      type="checkbox"
-                      checked={localAnn.fontWeight === 'bold'}
-                      onChange={e => {
-                        const v = e.target.checked ? 'bold' : 'normal'
-                        setLocalAnn(a => ({ ...a, fontWeight: v }))
-                        commitAnnotationField('fontWeight', v)
-                      }}
-                    />
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <span className="text-gray-400 flex-shrink-0" style={{ fontSize: 10 }}>Italic</span>
-                    <input
-                      type="checkbox"
-                      checked={localAnn.fontStyle === 'italic'}
-                      onChange={e => {
-                        const v = e.target.checked ? 'italic' : 'normal'
-                        setLocalAnn(a => ({ ...a, fontStyle: v }))
-                        commitAnnotationField('fontStyle', v)
-                      }}
-                    />
-                  </div>
-                </>
-              )}
+              <button
+                type="button"
+                title="Bold (whole box)"
+                onClick={() => commitDocStyle({ bold: !docHasAll('bold') })}
+                style={qsBtn(docHasAll('bold'))}
+              ><b>B</b></button>
+              <button
+                type="button"
+                title="Italic (whole box)"
+                onClick={() => commitDocStyle({ italic: !docHasAll('italic') })}
+                style={qsBtn(docHasAll('italic'))}
+              ><i>I</i></button>
+              <button
+                type="button"
+                title="Underline (whole box)"
+                onClick={() => commitDocStyle({ underline: !docHasAll('underline') })}
+                style={qsBtn(docHasAll('underline'))}
+              ><u>U</u></button>
+              <label className="flex items-center gap-1" title="Text color (whole box)">
+                <span className="text-gray-400" style={{ fontSize: 10 }}>Color</span>
+                <input
+                  type="color"
+                  value={annDoc?.paragraphs?.[0]?.runs?.[0]?.color || '#000000'}
+                  onChange={e => commitDocStyle({ color: e.target.value })}
+                  style={{ width: 22, height: 20, border: 'none', background: 'transparent', cursor: 'pointer', padding: 0 }}
+                />
+              </label>
+            </div>
+            <div className="flex items-center gap-2" style={{ fontSize: 11 }}>
+              <span className="text-gray-400" style={{ fontSize: 10 }}>Align</span>
+              {['left', 'center', 'right'].map(a => (
+                <button
+                  key={a}
+                  type="button"
+                  title={`Align ${a}`}
+                  onClick={() => commitDocAlign(a)}
+                  style={qsBtn(annDoc?.align === a)}
+                >{a === 'left' ? '⬅' : a === 'center' ? '↔' : '➡'}</button>
+              ))}
             </div>
           </div>
         )}

@@ -16,6 +16,8 @@ import ImageLayer from './ImageLayer'
 import TitleBlock from './TitleBlock'
 import InlineEditor from './InlineEditor'
 import { resizeBox, snapBox, RESIZE_HANDLES } from '../lib/imageUtils'
+import RichTextEditor from './RichTextEditor'
+import { emptyDoc, plainToDoc, isEmptyDoc } from '../lib/richText'
 import { ELECTRICAL_SYMBOL_MAP } from '../lib/symbols/electrical'
 import { HYDRAULIC_SYMBOL_MAP } from '../lib/symbols/HydraulicSymbols'
 import { getElectricalDef } from '../lib/components/electrical'
@@ -94,9 +96,12 @@ export default function Canvas({ onCursorMove }) {
   const resizeRef = useRef(null) // { imageId, handle, startWorld, startBox, keepAspect }
   const [resizeBoxState, setResizeBoxState] = useState(null) // { imageId, box }
 
-  // Inline editor state
+  // Inline editor state (title-block cells only)
   const [inlineEdit, setInlineEdit] = useState(null)
-  // { annotationId?, titleBlockField?, worldX, worldY, value, multiline, isNew? }
+  // { titleBlockField, worldX, worldY, value, multiline, isNew? }
+  // Rich-text editor state (text/callout annotations)
+  const [richEdit, setRichEdit] = useState(null)
+  // { annotationId, worldX, worldY, width?, height?, doc, fixedSize, isNew }
 
   const setWirePts = useCallback((updater) => {
     const next = typeof updater === 'function' ? updater(wirePointsRef.current) : updater
@@ -192,7 +197,9 @@ export default function Canvas({ onCursorMove }) {
   // Keyboard shortcuts
   useEffect(() => {
     const onKeyDown = e => {
-      if (e.target.matches('input,textarea')) return
+      // Ignore canvas shortcuts while typing in any editor (inputs, textareas,
+      // or the contentEditable rich-text box).
+      if (e.target.matches('input,textarea') || e.target.isContentEditable) return
 
       if (e.code === 'Space') { e.preventDefault(); spaceHeld.current = true; return }
 
@@ -499,11 +506,11 @@ export default function Canvas({ onCursorMove }) {
       const y = Math.min(startWorld.y, endWorld.y)
       const W = rawW < 10 ? 120 : rawW
       const H = rawH < 10 ? 60 : rawH
-      const ann = { id: genId(), type: 'callout', x, y, width: W, height: H, text: '', fontSize: 12 }
+      const ann = { id: genId(), type: 'callout', x, y, width: W, height: H, text: '', doc: emptyDoc(), fontSize: 12 }
       pushUndo()
       addAnnotation(activeDrawingId, ann)
       setSelectedIds([ann.id])
-      setInlineEdit({ annotationId: ann.id, worldX: x, worldY: y, value: '', multiline: true, isNew: true })
+      setRichEdit({ annotationId: ann.id, worldX: x, worldY: y, width: W, height: H, doc: ann.doc, fixedSize: true, isNew: true })
       setActiveTool('select')
       mouseDownPos.current = null
       // Leave didDrag.current as-is so onClick bails if a drag occurred
@@ -654,21 +661,18 @@ export default function Canvas({ onCursorMove }) {
         x: snapped.x,
         y: snapped.y,
         text: '',
+        doc: emptyDoc(),
         fontSize: 14,
-        fontWeight: 'normal',
-        fontStyle: 'normal',
       }
       pushUndo()
       addAnnotation(state.activeDrawingId, ann)
       setSelectedIds([ann.id])
-      const { sx: sx2, sy: sy2 } = getSVGPos(e)
-      const vs = useSchematicStore.getState().drawings.find(d => d.id === state.activeDrawingId)?.viewState || { panX: 0, panY: 0, zoom: 1 }
-      setInlineEdit({
+      setRichEdit({
         annotationId: ann.id,
         worldX: snapped.x,
         worldY: snapped.y - 14,
-        value: '',
-        multiline: false,
+        doc: ann.doc,
+        fixedSize: false,
         isNew: true,
       })
       return
@@ -831,15 +835,15 @@ export default function Canvas({ onCursorMove }) {
     const dr = state.drawings.find(d => d.id === activeDrawingId)
     const ann = (dr?.annotations || []).find(a => a.id === id)
     if (!ann) return
-    const vs = dr.viewState
-    const screenX = ann.x * vs.zoom + vs.panX
-    const screenY = (ann.y - (ann.fontSize || 14)) * vs.zoom + vs.panY
-    setInlineEdit({
+    const doc = ann.doc || plainToDoc(ann.text || '')
+    setRichEdit({
       annotationId: id,
       worldX: ann.x,
       worldY: ann.type === 'callout' ? ann.y : ann.y - (ann.fontSize || 14),
-      value: ann.text || '',
-      multiline: ann.type === 'callout',
+      width: ann.type === 'callout' ? (ann.width || 120) : undefined,
+      height: ann.type === 'callout' ? (ann.height || 60) : undefined,
+      doc,
+      fixedSize: ann.type === 'callout',
       isNew: false,
     })
   }, [activeTool, activeDrawingId])
@@ -853,28 +857,39 @@ export default function Canvas({ onCursorMove }) {
     }
   }, [activeTool, setSelectedIds, addToSelection])
 
-  // Inline editor commit / cancel
+  // Title-block inline editor commit / cancel
   const commitInlineEdit = useCallback((newValue) => {
     if (!inlineEdit) return
-    if (inlineEdit.annotationId) {
-      updateAnnotation(activeDrawingId, inlineEdit.annotationId, { text: newValue })
-      // Always return to select after placing/editing an annotation
-      setActiveTool('select')
-    } else if (inlineEdit.titleBlockField) {
+    if (inlineEdit.titleBlockField) {
       updateTitleBlock(activeDrawingId, { [inlineEdit.titleBlockField]: newValue })
     }
     setInlineEdit(null)
-  }, [inlineEdit, activeDrawingId, updateAnnotation, updateTitleBlock, setActiveTool])
+  }, [inlineEdit, activeDrawingId, updateTitleBlock])
 
   const cancelInlineEdit = useCallback(() => {
-    if (!inlineEdit) return
-    if (inlineEdit.isNew && inlineEdit.annotationId) {
-      deleteIds(activeDrawingId, [inlineEdit.annotationId])
-    }
-    // Return to select tool so user doesn't accidentally keep placing
-    if (inlineEdit.annotationId) setActiveTool('select')
     setInlineEdit(null)
-  }, [inlineEdit, activeDrawingId, deleteIds, setActiveTool])
+  }, [])
+
+  // Rich-text editor commit / cancel (text + callout annotations)
+  const commitRichEdit = useCallback((doc) => {
+    if (!richEdit) return
+    // An empty new annotation is discarded (avoids stray invisible boxes).
+    if (richEdit.isNew && isEmptyDoc(doc)) {
+      deleteIds(activeDrawingId, [richEdit.annotationId])
+    } else {
+      // updateAnnotation keeps the plain `text` mirror in sync with `doc`.
+      updateAnnotation(activeDrawingId, richEdit.annotationId, { doc })
+    }
+    setActiveTool('select')
+    setRichEdit(null)
+  }, [richEdit, activeDrawingId, updateAnnotation, deleteIds, setActiveTool])
+
+  const cancelRichEdit = useCallback(() => {
+    if (!richEdit) return
+    if (richEdit.isNew) deleteIds(activeDrawingId, [richEdit.annotationId])
+    setActiveTool('select')
+    setRichEdit(null)
+  }, [richEdit, activeDrawingId, deleteIds, setActiveTool])
 
   const handleTitleBlockEdit = useCallback((field, worldX, worldY, value) => {
     setInlineEdit({ titleBlockField: field, worldX, worldY, value, multiline: false, isNew: false })
@@ -1012,6 +1027,9 @@ export default function Canvas({ onCursorMove }) {
   // Inline editor screen position
   const ieScreenX = inlineEdit ? inlineEdit.worldX * zoom + panX : 0
   const ieScreenY = inlineEdit ? inlineEdit.worldY * zoom + panY : 0
+  // Rich-text editor screen position
+  const reScreenX = richEdit ? richEdit.worldX * zoom + panX : 0
+  const reScreenY = richEdit ? richEdit.worldY * zoom + panY : 0
 
   return (
     <div ref={wrapperRef} style={{ flex: 1, position: 'relative', overflow: 'hidden', minHeight: 0 }}>
@@ -1211,7 +1229,7 @@ export default function Canvas({ onCursorMove }) {
         </g>
       </svg>
 
-      {/* Floating inline editor overlay */}
+      {/* Floating inline editor overlay (title-block cells) */}
       {inlineEdit && (
         <InlineEditor
           x={ieScreenX}
@@ -1221,6 +1239,21 @@ export default function Canvas({ onCursorMove }) {
           multiline={inlineEdit.multiline}
           onCommit={commitInlineEdit}
           onCancel={cancelInlineEdit}
+        />
+      )}
+
+      {/* Floating rich-text editor overlay (text + callout annotations) */}
+      {richEdit && (
+        <RichTextEditor
+          x={reScreenX}
+          y={reScreenY}
+          width={richEdit.width}
+          height={richEdit.height}
+          zoom={zoom}
+          doc={richEdit.doc}
+          fixedSize={richEdit.fixedSize}
+          onCommit={commitRichEdit}
+          onCancel={cancelRichEdit}
         />
       )}
     </div>
