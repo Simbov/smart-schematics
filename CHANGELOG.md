@@ -12,6 +12,37 @@ section with the version and date and starts a fresh Unreleased block.
 
 ## [Unreleased]
 
+### Added
+- **Images on schematics.** Insert PNG/JPG/SVG images onto a drawing as a
+  backdrop — move, resize (with optional aspect-lock), rotate, set opacity, and
+  lock them in place. Images are saved inside the project file.
+- **Rich text in labels.** Text and callout boxes now support full formatting:
+  bold, italic, underline, font size, colour, alignment, and multiple lines —
+  mix styles within a single box.
+- **Component boxes.** Place a labelled box to represent any part: format the
+  text inside it, snap it to the grid, and connect wires to pins on its sides.
+  Boxes are drawing-only and are ignored by the simulator.
+- **Project file tree.** A new left-hand panel shows your project as a tree of
+  folders and drawings. Create nested subfolders, drag drawings between them,
+  and rename, add, or delete from one place.
+- **Project attachments.** Attach files (datasheets, notes, reference images)
+  to a project. They travel inside the project file and can be exported back out.
+
+### Changed
+- **Toolbar moved to the top.** All tools now sit in a single row across the top
+  of the window.
+- **Drawing tabs replaced by the file tree.** The old tab strip is gone; switch
+  and manage drawings from the new file tree, and find the **File** menu in the
+  top toolbar.
+- **Sturdier project files.** Projects now bundle images and attachments; a size
+  indicator warns when a project grows large (past ~25 MB). A failed save no
+  longer overwrites a good file, and damaged images/attachments are skipped when
+  opening instead of blocking the whole project from loading.
+
+### Fixed
+- Dragging a drawing into a folder is now reliable — the whole folder area
+  accepts the drop, not just its single-line label.
+
 ## [0.0.3]
 
 ### Added
