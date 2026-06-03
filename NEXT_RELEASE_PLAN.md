@@ -1,9 +1,10 @@
-# Next Release — Staged Implementation Plan
+# Next Release — Staged Implementation Plan (v0.2.0)
 
 > Hand this file to autonomous agents. Each **Stage** is a self-contained unit of work
-> (≈ one PR) with explicit dependencies, files, implementation detail, and required Vitest
-> specs. Stages are ordered so shared foundations land first. An agent should pick the
-> lowest-numbered stage whose dependencies are all merged.
+> (≈ one PR) with explicit dependencies, files, implementation detail, data-model changes,
+> acceptance criteria, and the exact Vitest specs to add. Stages are ordered so shared
+> foundations land first. An agent should pick the lowest-numbered stage whose dependencies
+> are all merged.
 
 ---
 
@@ -11,484 +12,515 @@
 
 **The app is in the `smart-schematics/` subdirectory**, not the repo root. Run all `npm`
 commands, tests, and find all `src/` from there. The single canonical architecture
-reference is `CODEBASE.md` at the repo root — read it before touching code.
+reference is `CODEBASE.md` at the repo root — **read it before touching code.**
+
+**One worktree per agent.** You are running in your own git worktree. Create your own
+`feat/<stage>` branch off `main` and never touch another agent's branch/checkout.
 
 **Testing is mandatory and enforced.** A blocking `Stop` hook runs `npm run test:run`
-(from `smart-schematics/`); a turn cannot finish while tests fail. Every stage below lists
-the specs you must add. Follow the existing test conventions:
+(from `smart-schematics/`); a turn cannot finish while tests fail. Every stage lists the
+specs you must add. Conventions:
 - Tests live next to source as `*.test.js`, run under Vitest in `environment: 'node'`.
-- Pure logic (store actions, serializers, geometry, rich-text model) is unit-tested
-  directly — **no jsdom/DOM**. Use `useSchematicStore.getState()` / `setState()` to drive
-  the store in tests, mirroring `src/store/schematicStore.test.js`.
-- Use/extend the helpers in `src/test/circuitBuilder.js` where relevant.
-- Do **not** write tests that require a browser. UI behavior that can't be unit-tested is
-  verified by the user manually (see "Verification" below) — keep the React layer thin and
-  push logic into testable pure functions.
+- Pure logic (store actions, serializers, geometry, models) is unit-tested directly —
+  **no jsdom/DOM.** Drive the store via `useSchematicStore.getState()` / `setState()`,
+  mirroring `src/store/schematicStore.test.js` and `schematicSerialization.test.js`.
+- Keep the React layer thin; push logic into pure helpers so the bulk of behavior is
+  covered by Vitest. `document.execCommand`/contentEditable cannot be unit-tested under
+  node — extract and test the pure decision logic, leave the DOM call uncovered.
 
-**Verification preference (from project memory):** no screenshots. Verify via DOM `eval`
-through the preview tools, or hand a short manual-test script to the user. Keep UI logic
-extractable into pure helpers so the bulk of behavior is covered by Vitest.
+**Definition of done for every stage:** `npm run test:run` green **and** `npm run build`
+clean, then push your branch and open a PR with a short **manual-verification checklist**
+(no screenshots — the maintainer verifies UI by hand or via DOM eval). Note in the PR which
+stage you implemented and which stages it depends on.
 
-**Standards (from project memory):** any new schematic symbols/pins are held to IEC/IEEE/ISO
-conventions — leads meet electrodes, pins land exactly on grid, verify arc/arrow directions.
-Applies to Stage 5 (component box pins).
+**Verification preference (project memory):** no screenshots. Verify via DOM `eval` or hand
+the maintainer a short manual-test script.
 
-**Persistence is automatic.** `App.jsx` debounces `saveAll()` 2s after any `isDirty`
-drawing + a 30s interval. Anything you add to the drawing/project shape is serialized for
-free **only if** it lives inside the structures `_buildProjectSnapshot()` walks
-(`project` + its `drawings[]`). New top-level fields need explicit save/load wiring.
+**Symbol standards (project memory):** any new schematic symbols/pins are held to
+IEC/IEEE/ISO conventions — leads meet electrodes, pins land exactly on the grid, verify
+arc/arrow directions. Applies to Stage 4 (connectors) and Stage 8 (resistor variants).
 
-**Two product decisions already made (do not re-litigate):**
-1. **File format:** single bundled `.scpro` JSON. Images and attachments are embedded as
-   base64 data — no external files, no folder-format. Keep it OneDrive-sync friendly.
-2. **Text formatting:** full **per-run rich text** (mixed bold/italic/color/size within one
-   box), not per-box uniform styling. See the shared rich-text spec below.
+**Persistence is automatic** *only if* your data lives inside the structures
+`_buildProjectSnapshot()` walks (`project` + its `drawings[]`). New persisted fields must be
+added to the drawing/project/component/box shapes and covered by a serialization
+round-trip test. New top-level store fields need explicit save/load wiring. **All new
+persisted shape lands in Stage 1** so later UI stages never fight over the save format.
 
----
+**Hot files — keep edits surgical.** `Canvas.jsx` is touched by Stages 7, 9, 10 and
+`schematicStore.js` by Stages 1, 5. Add new render layers as their own components, put new
+handlers in clearly-commented regions, and avoid sweeping reformatting so the maintainer's
+merges stay clean.
 
-## Shared spec: the rich-text model (used by Stages 4 & 5)
-
-Build this **once** as a standalone, fully-unit-tested module and reuse it. It is the
-dependency that lets Stage 4 and Stage 5 proceed without duplicating work.
-
-**File:** `src/lib/richText.js` (+ `src/lib/richText.test.js`)
-
-**Document model (the canonical, serialized form):**
-```js
-// RichDoc — what gets stored on the annotation/component and saved into .scpro
-{
-  align: 'left' | 'center' | 'right',      // block-level, default 'left'
-  paragraphs: [
-    { runs: [ { text: string,
-                bold?: boolean,
-                italic?: boolean,
-                underline?: boolean,
-                color?: string,            // hex; omitted = inherit currentColor
-                fontSize?: number } ] }    // px; omitted = element default
-  ]
-}
-```
-
-**Required exports (all pure, all unit-tested):**
-- `emptyDoc()` → a one-empty-paragraph doc.
-- `plainToDoc(str)` → splits on `\n` into paragraphs of one unstyled run. (Migration path
-  for existing single-string `text` annotations — see Stage 4.)
-- `docToPlain(doc)` → flattens to a `\n`-joined string (for search/export fallback,
-  designator-style display, and SVG-export degradation).
-- `docToHtml(doc)` → sanitized HTML string for the contentEditable editor. Only emits
-  `<div>` (paragraph, with `text-align`), `<span style="...">`, `<b>`, `<i>`, `<u>`. No
-  other tags/attributes ever.
-- `htmlToDoc(html)` → parses the editor's HTML back into a `RichDoc`, dropping anything not
-  in the whitelist (defense against pasted markup). Round-trips with `docToHtml`.
-- `isEmptyDoc(doc)` → true when no run has non-whitespace text.
-
-**Rendering contract:** rich text renders on the SVG canvas via a single
-`<foreignObject>` wrapping a styled HTML `<div>` built from `docToHtml(doc)`
-(`xmlns="http://www.w3.org/1999/xhtml"`). This is the only way to get true per-run styling
-+ alignment + wrapping inside SVG. Two known consequences to handle, not ignore:
-- **SVG/PNG export** (`FileMenu.jsx` clones `svg[data-schematic]`): `foreignObject` may not
-  render in all rasterizers. The export path must detect rich-text elements and, if a
-  foreignObject is present, leave it (modern browsers' canvas drawImage of the SVG handles
-  it) — but add a `docToPlain` `<text>` fallback layer behind it for safety. Document this
-  in the export code with a comment. Cover the fallback choice with a unit test on a small
-  helper `richExportFallback(doc)`.
-- **Editing:** reuse the floating-HTML-overlay pattern from `InlineEditor.jsx` — an
-  absolutely-positioned `contentEditable` div in the Canvas wrapper, seeded with
-  `docToHtml`, committed via `htmlToDoc` on blur/Escape/⌘-Enter.
-
-**Tests for `richText.test.js` (minimum):** `plainToDoc`↔`docToPlain` round-trip incl.
-multi-line; `docToHtml`/`htmlToDoc` round-trip preserving every run attribute; sanitizer
-drops `<script>`/`onclick`/disallowed tags from pasted HTML; `isEmptyDoc` true/false cases;
-`emptyDoc` shape.
+**Four product decisions already made (do not re-litigate):**
+1. **Box fields:** boxes carry flexible property rows `box.fields: [{id,label,value,unit}]`
+   instead of the generic `value` field. One generic model for every module.
+2. **Tables:** a dedicated `drawing.tables[]` element type with its own renderer + plumbing.
+3. **Right panel:** a single right rail shows the **Properties** panel when something is
+   selected and falls back to the **Component Library** when nothing is selected.
+4. **Resistor style:** per-component `component.resistorStyle` override (`'IEC'` | `'IEEE'`)
+   that falls back to the global `settings.resistorStyle` default.
 
 ---
 
-## Stage 1 — Schema & serialization foundation (no UI)
-
-**Goal:** extend the data model for *every* later feature in one place, with migration and
-round-trip tests, so UI stages never fight over the save format. **Touches store + lib only.**
-
-**Depends on:** nothing. **Do this first.**
-
-**Data-model additions:**
-
-1. **Image elements** live in a new per-drawing array `drawing.images[]`:
-   ```js
-   { id, src,            // base64 data URL ("data:image/png;base64,…")
-     x, y, width, height,// world coords + size
-     rotation,           // 0/90/180/270, default 0
-     opacity,            // 0–1, default 1
-     locked }            // bool, default false (locked = not draggable/selectable-through)
-   ```
-   Reasoning: a separate array (not an annotation `type`) keeps base64 blobs out of the hot
-   annotation render path and makes culling/serialization explicit.
-
-2. **Component-box** is a built-in component `type: 'box'` (Stage 5 renders it). It rides
-   the existing `components[]` array so wire-snapping works for free. New optional fields on
-   the component shape, ignored by every other type:
-   ```js
-   { …Component,
-     type: 'box',
-     box: { width, height,           // world size, grid-multiple
-            doc: RichDoc,            // label content (rich text)
-            fill, stroke,           // colors; default panel-ish
-            cornerRadius },
-     pins: Pin[] }                  // user-defined, on the box edges (Stage 5)
-   ```
-   `dcSolver.js` already no-ops unknown types (falls to `default`, no stamp) — confirm with
-   a test that a `box` contributes nothing to the solve.
-
-3. **Folders** for the file tree (Stage 6) live on the **project**:
-   ```js
-   project.folders = [ { id, name, parentId: string|null } ]   // nested; root = parentId null
-   drawing.folderId = string | null                            // which folder a drawing sits in
-   ```
-
-4. **Attachments** ("sub files attached to a project") live on the **project**:
-   ```js
-   project.attachments = [ { id, name, mime, data /* base64 */, addedAt } ]
-   ```
-   Generic embedded files (datasheets, notes, reference images). Surfaced in Stage 6/7.
-
-**Implementation:**
-- Add the new fields to the drawing factory (around `schematicStore.js:26`, the
-  `annotations: drawing.annotations || []` normalizer) and the project factory, all
-  defaulting safely (`images: []`, `folders: []`, `attachments: []`, `folderId: null`).
-- **Migration on load:** `_loadProjectFromPath` and `loadFromStorage` must backfill the new
-  fields on old files (`d.images ??= []`, `p.folders ??= []`, etc.) so existing `.scpro`
-  files open unchanged. Bump snapshot `version` 2 → 3; keep reading v2.
-- `_buildProjectSnapshot` already spreads `...project` and `drawings`, so folders /
-  attachments / images / box serialize automatically once they exist on those objects —
-  **verify** this rather than assuming, and add a guard that base64 `src`/`data` survive
-  `JSON.stringify`→`parse` intact.
-- Extend `snapshotDrawing` (undo) to deep-clone `images` alongside components/wires/
-  junctions/annotations.
-- Extend `moveItems`, `deleteIds`, `copyToClipboard`, `pasteFromClipboard`,
-  rubber-band/selection paths to accept image ids (add an `imageIds` param to `moveItems`,
-  mirror the `annotationIds` plumbing). Box, being a component, needs no new selection
-  plumbing.
-- New store actions: `addImage`, `updateImage`, `removeImage`; `addFolder`, `renameFolder`,
-  `deleteFolder` (re-parent or orphan its drawings to root), `moveDrawingToFolder`;
-  `addAttachment`, `removeAttachment`. All set `isDirty` where they mutate a drawing.
-
-**Acceptance:** old `.scpro`/localStorage files load with no errors and gain empty
-new-field defaults; a round-trip (`_buildProjectSnapshot` → stringify → parse → reload)
-preserves images (incl. base64), folders, attachments, and a `box` component byte-for-byte.
-
-**Tests — `src/store/schematicStore.test.js` (extend) + new `schematicSerialization.test.js`:**
-- v2 file (no new fields) migrates to v3 with empty defaults; no throw.
-- Add image → snapshot → reparse → image identical incl. `src`.
-- Folder CRUD: create nested folder, move drawing into it, delete folder re-parents its
-  drawings to root (no orphaned `folderId`).
-- Attachment add/remove round-trips base64.
-- Undo snapshot includes/restores images.
-- `moveItems` with `imageIds` translates images; `deleteIds` removes them; paste remaps ids.
-- (Solver) a `box` component added to an otherwise-valid circuit changes no node voltage.
-
----
-
-## Stage 2 — Toolbar to top row + left-rail chassis (UI only)
-
-**Goal:** move the vertical left toolbar to a horizontal top row, and free the left rail to
-host the Stage 6 file tree. Pure layout/reflow; no behavior change to tools themselves.
-
-**Depends on:** nothing (can run in parallel with Stage 1). **Coordinate with Stage 6**,
-which fills the left rail — land Stage 2 first.
-
-**Files:** `src/components/App.jsx`, `src/components/Toolbar.jsx`, possibly
-`src/components/DrawingManager.jsx`/`SimulationControls.jsx` for vertical-space budget.
-
-**Implementation:**
-- In `App.jsx` (current layout at `App.jsx:119`), restructure the flex tree:
-  - **Top region (stacked, flex-column):** existing title bar (36px) → a new **horizontal
-    Toolbar row** → DrawingManager tabs → SimulationControls. Consider merging the title bar
-    and toolbar into one 40–44px row to conserve vertical space (title/theme on the left,
-    tool buttons inline) — agent's discretion, but keep total top chrome ≤ ~3 rows.
-  - **Main region (flex-row, flex-1):** `[ LeftSidebar shell ] [ Canvas + PropertiesPanel ] [ ComponentLibrary ]`.
-- Rewrite `Toolbar.jsx` from a 48px vertical strip to a horizontal flex bar: same buttons
-  (Undo/Redo, Select V, Wire W, Text T, Callout B, Title Block, Delete, Rotate R, Flip X/Y,
-  Zoom In/Out/Fit, Toggle Grid, Toggle Sim Overlay) + reserve a slot for the new
-  **Insert Image** (Stage 3) and **Box** tool (Stage 5) buttons. Group with vertical
-  dividers. Keep all `title=` tooltips and keyboard-shortcut hints.
-- Add a **collapsible left sidebar shell** component `src/components/SidebarLeft.jsx`:
-  mirror `ComponentLibrary.jsx`'s collapse pattern (~220px, collapse to a thin rail with a
-  toggle). For this stage it renders an empty placeholder ("Files" header + empty body);
-  Stage 6 fills it. Mount it as the first child of the main row in `App.jsx`.
-- Ensure responsive behavior: top toolbar wraps/scrolls horizontally rather than overflowing
-  on a narrow window (min window 900px per `tauri.conf.json`).
-
-**Acceptance:** all toolbar actions still work from their new horizontal home; keyboard
-shortcuts unchanged; canvas fills remaining space; left sidebar collapses/expands; no
-console errors; min-width window doesn't clip toolbar.
-
-**Tests:** layout is React/CSS — not unit-testable headless. Add a tiny pure helper if any
-logic emerges (e.g. a `toolbarGroups` config array) and snapshot-test that. Otherwise this
-stage's verification is a **manual checklist handed to the user** (toolbar on top, every
-button fires its action, shortcuts work, sidebar toggles). Do not fake a passing test.
-
----
-
-## Stage 3 — Insert & manipulate images
-
-**Goal:** insert an image onto a drawing, move/resize/rotate/delete it, snapped to grid; it
-saves with the project (Stage 1 already stores it).
-
-**Depends on:** Stage 1 (image schema + actions), Stage 2 (toolbar slot for the button).
-
-**Files:** `src/components/FileMenu.jsx` (or Toolbar "Insert Image"), `src/lib/tauriFs.js`
-(read image as base64), `src/components/Canvas.jsx` (render + interaction), new
-`src/components/ImageLayer.jsx`, `src/lib/imageUtils.js` (+ test).
-
-**Implementation:**
-- **Insert:** add "Insert Image…" to the toolbar/FileMenu.
-  - Tauri: `openFileDialog([{ name:'Images', extensions:['png','jpg','jpeg','gif','svg','webp'] }])`
-    → read bytes → base64 data URL. Add a `readBinaryFile`/`readImageAsDataUrl` helper to
-    `tauriFs.js` behind the `isRunningInTauri()` guard.
-  - Browser: hidden `<input type="file" accept="image/*">` → `FileReader.readAsDataURL`.
-  - Compute natural dimensions; place centered in the current viewport; snap origin to grid;
-    cap initial size (e.g. fit within 400 world-units, preserve aspect). Put helpers
-    (aspect-fit math, grid-snap of a box, default placement point) in `imageUtils.js`.
-  - Call `addImage` (Stage 1).
-- **Render:** `ImageLayer.jsx` renders `drawing.images` as `<image href={src} …>` inside the
-  world `<g>` in `Canvas.jsx`, **behind** components/wires (images are backdrops). Apply
-  `transform` for rotation about center, `opacity`. Respect viewport culling like components
-  (reuse the culling margin pattern).
-- **Select/move:** images participate in selection. Clicking selects (unless `locked`);
-  drag uses the existing `dragRef`/`dragDelta`/`effective*` system — add
-  `effectiveImages` mirroring `effectiveComponents`, and pass `imageIds` to `moveItems`.
-  Snap to grid on commit.
-- **Resize:** when a single image is selected, render 8 resize handles (corner/edge) in the
-  Canvas overlay (screen-space, counter-scaled by `1/zoom` like `InteractiveControl`).
-  Dragging a handle updates width/height (Shift = preserve aspect); commit via `updateImage`
-  + `pushUndo`. Keep the handle/resize math in `imageUtils.js` (`resizeBox(box, handle, dx,
-  dy, keepAspect)`) so it's unit-testable.
-- **Properties:** add an image section to `PropertiesPanel.jsx` (x/y/w/h, opacity, rotation,
-  lock toggle, replace-image, delete).
-- **Rotate/flip/delete/copy-paste:** wire images into the existing R/X/Y/Del/⌘C/⌘V handlers.
-
-**Acceptance:** insert PNG/JPG/SVG; it renders behind the schematic; move snaps to grid;
-resize handles work with/without aspect lock; rotate 90° steps; opacity/lock/delete work;
-save → reopen restores the image pixel-for-pixel; locked images don't drag.
-
-**Tests — `src/lib/imageUtils.test.js`:** aspect-fit clamps oversize images preserving
-ratio; `resizeBox` for each handle (incl. Shift aspect-lock, and min-size floor);
-grid-snap of placement point; default-placement centering math. Store-level move/delete/
-copy of images is covered by Stage 1's specs — extend if Stage 1 didn't add image paste.
-
----
-
-## Stage 4 — Improved text-box creation & rich-text editing
-
-**Goal:** replace the single-line text-annotation editor with a true rich-text box: create
-by click (or drag for a sized box), edit with bold/italic/underline/size/color/alignment,
-multi-line. Applies to the existing `text` (and optionally `callout`) annotation.
-
-**Depends on:** Shared `richText.js` spec (build it here if not already), Stage 2 (toolbar).
-
-**Files:** `src/lib/richText.js` (+ test) — **the shared module**; `src/components/
-AnnotationLayer.jsx`; `src/components/InlineEditor.jsx` (or a new `RichTextEditor.jsx`);
-`src/components/Canvas.jsx` (text tool flow); `src/components/PropertiesPanel.jsx`;
-`src/store/schematicStore.js` (annotation migration).
-
-**Implementation:**
-- **Model migration:** text/callout annotations currently store a plain `text` string
-  (`AnnotationLayer.jsx:36–79`). Add an optional `doc: RichDoc` field. On load (Stage 1
-  migration hook), if an annotation has `text` but no `doc`, set `doc = plainToDoc(text)`.
-  Keep writing `text = docToPlain(doc)` alongside `doc` so search/export and any code still
-  reading `.text` keeps working. New annotations get a `doc`.
-- **Render:** in `AnnotationLayer.jsx`, render `doc` via the `<foreignObject>` + `docToHtml`
-  contract from the shared spec, replacing the current `<text>`/`<tspan>` block. Keep the
-  selection highlight rect and transparent hit-area. Size: text grows to content; callout
-  keeps its fixed `width/height` with the div clipped/scrolled. Keep an off-screen plain
-  `<text>` fallback per the export note.
-- **Create flow (Canvas, `text` tool):** click places an empty rich box and opens the
-  editor; (nice-to-have) click-drag pre-sizes a fixed-width box. Snap origin to grid.
-- **Editor:** `RichTextEditor.jsx` — a floating `contentEditable` HTML div positioned over
-  the annotation (extend `InlineEditor.jsx`'s overlay positioning). A small **formatting
-  toolbar** (popover above the box) with Bold/Italic/Underline (⌘B/⌘I/⌘U via
-  `document.execCommand` or a manual range-style applier), font-size select, color swatch,
-  and L/C/R align. Seed from `docToHtml(doc)`; commit `htmlToDoc(html)` on blur/Escape/
-  ⌘-Enter via `updateAnnotation`. Sanitize on commit.
-- **Properties:** when a text/callout is selected (not editing), show font-size, B/I/U,
-  color, alignment controls in `PropertiesPanel.jsx` that patch the whole `doc` (or the
-  current selection if you support it) — keep it simple: whole-box quick styles here, fine
-  per-run styling in the inline editor.
-
-**Acceptance:** create text, type multiple lines, make one word bold + another red + change
-a line's size, center-align — all persist through save/reopen and undo/redo; old drawings'
-plain text still render (migrated to `doc`); paste from a browser strips disallowed markup.
-
-**Tests:** primarily `richText.test.js` (see shared spec — round-trips, sanitizer, plain
-migration). Add a store test: creating a text annotation stores a valid `doc`; updating its
-`doc` round-trips through a save snapshot; legacy `text`-only annotation gains a `doc` on
-load via the migration hook.
-
----
-
-## Stage 5 — Component box (connectable, formatted, grid-snapped, no sim)
-
-**Goal:** a built-in "box" you place to represent an arbitrary component: a rectangle with
-rich-text label inside, snaps to grid sizes, resizable, and **wires connect to pins on its
-sides** — but it has no simulation model.
-
-**Depends on:** Stage 1 (`box` component schema), Stage 4/shared `richText.js` (label
-formatting), Stage 2 (toolbar "Box" tool button). Stage 3's `resizeBox` helper is reusable.
-
-**Files:** new `src/lib/symbols/BoxSymbol.jsx` (or render inline in PlacedComponent); new
-`src/lib/boxComponent.js` (factory + pin geometry, + test); `src/components/
-PlacedComponent.jsx`; `src/components/Canvas.jsx` (box placement tool + resize + pin edit);
-`src/components/PropertiesPanel.jsx`; touch `src/lib/electrical.js` *only* to register a def
-lookup, or special-case `type==='box'` in `getAnyDef` — **do not** give it `simParams`.
-
-**Design (IEC/IEEE-consistent, per memory standards):**
-- A box is a `Component` with `type:'box'` and a `box:{ width,height,doc,fill,stroke,
-  cornerRadius }` payload (Stage 1). Default size a clean grid multiple (e.g. 80×60 at
-  grid 10). Resizing snaps W/H to grid multiples (reuse `resizeBox` + grid-snap).
-- **Pins:** user-configurable, sitting exactly on the box edges and on grid. Default e.g. 2
-  pins (left/right) so it behaves like a 2-terminal block; user can add pins per side via
-  the properties panel. Pin geometry: `boxPins(box, spec)` in `boxComponent.js` computes
-  `relX/relY` on the edge midpoints/even spacing, with `direction` = the edge normal
-  (`W`/`E`/`N`/`S`). `absX/absY` come from the existing `computePinAbsPositions` on
-  place/move/rotate/flip — so **wire snapping, rotation, and flip all work for free** via
-  the existing `findNearestPin`/`_reattachWires` machinery. Verify leads/pins land on grid.
-- **No sim:** `box` is absent from every Set in `electricalSim.js` and every stamp in
-  `dcSolver.js` (already no-ops). Add a solver test asserting a box is inert.
-- **Render:** `BoxSymbol` draws the rounded rect (`fill`/`stroke`/`cornerRadius`) + the rich
-  label via the shared `foreignObject`/`docToHtml` renderer, clipped to the box. Pin stubs +
-  dots drawn by the existing Canvas pin-rendering path (Canvas is the single source of truth
-  for pin dots — don't render them in the symbol).
-- **Place:** add a "Box" tool (or place via the library) — clicking drops a default box,
-  snapped to grid. Double-click opens the rich-text editor from Stage 4. Resize handles when
-  selected (reuse Stage 3 overlay).
-- **Properties:** width/height (grid-snapped numeric), per-side pin counts, fill/stroke/
-  corner radius, and the label quick-styles. Designator/value/description still apply
-  (it's a component) so it can be labeled like a real part.
-
-**Acceptance:** place a box; it snaps to grid; type a formatted multi-line label; add pins
-to each side; draw a wire and have it snap to a box pin; rotate/flip the box and wires stay
-attached; resize snaps to grid; running the simulation ignores the box entirely (no glow, no
-effect on the circuit); save/reopen restores box + pins + label.
-
-**Tests — `src/lib/boxComponent.test.js`:** factory produces a valid `Component` with
-`type:'box'`, grid-multiple size, and pins on edges with correct `direction`; `boxPins`
-spacing for N pins per side lands on grid and on the edge line; `resizeBox` snaps to grid
-multiples and respects a min size. **Solver test** (`dcSolver.test.js` extend): a box placed
-across a live circuit draws no current and changes no node voltage; its pins create no net
-short. **Store test:** rotating a box re-attaches bound wires to the new pin positions
-(reuse the existing rotate/flip reattachment spec pattern).
-
----
-
-## Stage 6 — File tree sidebar with subfolders
-
-**Goal:** a persistent left-side file tree (in Stage 2's `SidebarLeft` shell): Projects →
-nested Folders → Drawings, with create/rename/delete/drag-to-reorganize. Replaces the modal
-`ProjectBrowser` as the primary navigation (keep the modal or fold its actions in).
-
-**Depends on:** Stage 1 (folders model + actions), Stage 2 (sidebar shell).
-
-**Files:** `src/components/SidebarLeft.jsx` (fill it), new `src/components/FileTree.jsx` +
-`src/components/FileTreeNode.jsx`, `src/lib/fileTree.js` (+ test) for the pure tree-building
-logic, `src/store/schematicStore.js` (folder actions from Stage 1).
-
-**Implementation:**
-- **Pure tree builder** `src/lib/fileTree.js`: `buildTree(project, drawings)` →
-  a nested node array `{ type:'folder'|'drawing', id, name, children? }` from the flat
-  `project.folders[]` (with `parentId`) + `drawings[]` (with `folderId`). Handle: drawings
-  with `folderId:null` at root; nested folders to arbitrary depth; cycle-safety
-  (a folder can't be its own ancestor — guard `moveFolder`). All logic here is unit-tested;
-  the React components are thin renderers.
-- **FileTree UI:** expand/collapse folders (persist expansion in component state or
-  `settings`); click a drawing → `setActiveDrawing`; context actions per node (rename inline,
-  delete with confirm, new folder, new drawing-in-folder). Show the active project; allow
-  switching projects at the top (or list all projects as top-level roots).
-- **Drag & drop:** drag a drawing into a folder → `moveDrawingToFolder`; drag a folder into
-  another → re-parent via a `moveFolder(id, newParentId)` action (add it; reject cycles).
-  Use HTML5 DnD; keep the validity check (`canMove(tree, dragId, dropId)`) pure + tested.
-- **Attachments (from Stage 1)**: show a project-level "Attachments" node listing
-  `project.attachments`; "Add file…" (base64-embed via the Stage 3 binary reader) and remove.
-  This is the visible half of feature "sub files attached to a project".
-- Keep `DrawingManager.jsx` tabs working in tandem (tabs = open drawings; tree = full
-  hierarchy). Deleting/renaming in the tree reflects in tabs.
-
-**Acceptance:** tree shows nested folders and drawings; create/rename/delete folder; move a
-drawing between folders by drag; deleting a folder re-parents its drawings to root (no
-orphans); switching drawings from the tree works; attachments list adds/removes files; all
-survive save/reopen; can't drop a folder into its own descendant.
-
-**Tests — `src/lib/fileTree.test.js`:** `buildTree` nests correctly incl. deep nesting and
-root-level drawings; `canMove` rejects self/descendant drops, allows valid ones; moving a
-drawing updates `folderId`; deleting a folder re-parents children (mirror the Stage 1 folder
-action test, but assert tree shape). Store-level folder CRUD is covered in Stage 1.
-
----
-
-## Stage 7 — Project-file & attachment UX polish ("sub files attached to a project")
-
-**Goal:** finish the file-saving improvements: make the single-bundled `.scpro` robust with
-the new payloads, surface attachments/images in save, and tighten autosave/feedback. Most of
-the *format* work is in Stage 1; this stage is the **UX + safety net** around it.
-
-**Depends on:** Stage 1 (format), Stage 6 (attachments UI), Stage 3 (images).
-
-**Files:** `src/store/schematicStore.js` (save/load hardening), `src/components/
-FileMenu.jsx`, `src/components/StatusBar.jsx`, `src/lib/tauriFs.js`.
-
-**Implementation:**
-- **Size awareness:** base64 images/attachments bloat `.scpro`. Add a computed project size
-  indicator (StatusBar or FileMenu) and warn past a threshold (e.g. >25 MB) suggesting the
-  user delete unused images/attachments. Keep the size calc a pure helper + test.
-- **Save integrity:** wrap `saveAll` writes so a serialization error (e.g. a corrupt image)
-  surfaces a dialog instead of silently losing data; never overwrite a good file with a
-  failed snapshot. Add a load-time validation that drops malformed images/attachments with a
-  warning rather than crashing the open.
-- **Attachments management** in `FileMenu.jsx`: "Attach File…", "Export Attachment…",
-  "Manage Attachments…" (list + remove) — complementing the Stage 6 tree view. Export writes
-  an attachment's base64 back out to disk via a `saveFileDialog` + binary write helper.
-- **Version & migration:** finalize snapshot `version:3`; ensure v2 → v3 migration covers
-  images/folders/attachments/box and is covered by a test using a realistic v2 fixture.
-- **Recent files / window title / watcher** already exist — just confirm they still behave
-  with the larger payloads and the new fields (no regressions).
-
-**Acceptance:** a project with images + attachments + nested folders saves and reopens
-identically (Tauri *and* browser/localStorage paths); a deliberately corrupt image is
-dropped with a warning, not a crash; size warning appears past threshold; attachment export
-writes a usable file; v2 fixtures still open.
-
-**Tests:** `projectSize(snapshot)` pure helper test; v2→v3 migration test against a checked-in
-v2 fixture JSON (`src/test/fixtures/project_v2.scpro.json`) asserting all new fields default
-and existing content is intact; malformed-image pruning helper test
-(`sanitizeLoadedProject(data)` drops bad entries, keeps good ones).
-
----
-
-## Suggested execution order & parallelism
+## Waves & dependency graph
 
 ```
-Stage 1 (schema)  ─┬─────────────────────────────► Stage 7 (file UX)  ◄─┐
-                   │                                                     │
-Stage 2 (layout) ──┼─► Stage 6 (file tree) ─────────────────────────────┘
-                   │
-   richText.js ────┼─► Stage 4 (text boxes)
-   (build in 4)    │
-                   ├─► Stage 3 (images) ──────────► (resizeBox reused by 5)
-                   └─► Stage 5 (component box)  [needs richText + Stage 1]
+WAVE 1 (no dependencies — start immediately, in parallel):
+  Stage 1  Schema & serialization foundation        ← blocks 6,7,8,9,10
+  Stage 2  Image paste / reliable selection / unlock
+  Stage 3  Rich-text fixes: font size + active-format highlight
+  Stage 4  Connector symbol library
+  Stage 5  Grid sizing + save-on-open prompt
+
+WAVE 2 (start once Stage 1 is merged — all four depend only on Stage 1):
+  Stage 6  Properties panel: relocate to right rail + new editors
+  Stage 7  Component-box rendering: pin labels, image, single-pin centering
+  Stage 8  Resistor symbol variants (IEC/IEEE) wired to component.resistorStyle
+  Stage 9  Tables: renderer + insert tool + cell editing
+  Stage 10 Resizable text boxes + bigger ref label
 ```
 
-- **Stage 1** and **Stage 2** have no deps → can start immediately, in parallel.
-- **Stage 4** builds the shared `richText.js`; **Stage 5** consumes it → run 4 before 5 (or
-  have whoever starts first build `richText.js` to the shared spec).
-- **Stage 3** and **Stage 4** are independent once 1 & 2 land.
-- **Stage 6** needs 1 (folders) + 2 (sidebar). **Stage 7** is last — needs 1, 3, 6.
+---
 
-## Definition of done (every stage)
+# WAVE 1
 
-1. `npm run test:run` green (the Stop hook enforces this).
-2. New specs from the stage's "Tests" section added and passing.
-3. No regression in existing specs (`dcSolver`, `parseValue`, `labelPlacement`,
-   `wireUtils`, `updater`, `schematicStore`).
-4. `CODEBASE.md` updated for any new file/store-field/action (there is a Stop hook that
-   maintains codebase docs — let it run, then sanity-check the diff).
-5. For UI-heavy stages with no headless test, a short manual-verification checklist handed
-   to the user (no screenshots; DOM-eval or manual per project memory).
-```
+## Stage 1 — Schema & serialization foundation
+
+**Goal:** Define every new persisted field for this release, the pure helpers that operate
+on them, the store actions, and the v3→v4 migration — with no UI. This unblocks the Wave-2
+stages so they never touch the save format.
+
+**Data-model changes (bump snapshot `version` to 4; keep reading v3):**
+
+- **`Pin.label: string`** — optional human label for a pin (default `''`). Added to the
+  `Pin` shape; serialized via the existing pins array.
+- **Component box** gains, under `component.box`:
+  - `fields: [{ id, label, value, unit }]` — flexible property rows (replaces generic
+    `value` for boxes). `value` on a box component is no longer authoritative.
+  - `image: string | null` — base64 data URL assigned to the box (default `null`).
+  - `info: string` — free-text notes/details (default `''`).
+- **Component** gains:
+  - `resistorStyle?: 'IEC' | 'IEEE'` — per-component override; absent = use global default.
+  - `labelScale?: number` — designator/ref font size multiplier (default `1`).
+- **Text annotation** gains optional `width?`/`height?` (px, world) — `null`/absent =
+  autosize (current behavior). Callouts already have width/height; this extends `type:'text'`.
+- **Drawing** gains **`tables: Table[]`** (default `[]`). `Table` shape:
+  ```js
+  {
+    id: string,
+    x: number, y: number,        // world coords of top-left
+    rows: number, cols: number,
+    colWidths: number[],         // length === cols, world px
+    rowHeights: number[],        // length === rows, world px
+    cells: RichDoc[][],          // [row][col] rich-text doc (reuse richText.js)
+    borderColor: string,         // default '#334155'
+    borderWidth: number,         // default 1
+    headerRow: boolean,          // default false (bold/tinted first row)
+  }
+  ```
+  Tables reuse the existing `RichDoc` model from `richText.js` for cell content — **do not
+  fork it.**
+
+**Files:**
+- `src/lib/boxComponent.js` — extend `createBox`/`boxPins` for pin labels + the
+  single-pin-centering rule (below). Add `DEFAULT_BOX_FIELDS` / field helpers, or a new
+  `src/lib/boxFields.js` (pure: `createField`, `addField`, `updateField`, `removeField`).
+- `src/lib/tableModel.js` (new, pure) — `createTable(opts)`, `setCell(table,r,c,doc)`,
+  `addRow/addCol/removeRow/removeCol`, `resizeCol(table,c,w)`, `resizeRow(table,r,h)`,
+  `tableSize(table)` → `{width,height}`. No DOM. Snap dimensions to grid.
+- `src/store/schematicStore.js` — store actions + migration:
+  - `addTable(drawingId, table)`, `updateTable(drawingId, id, patch)`,
+    `removeTable(drawingId, id)`.
+  - `moveItems(...)` extended to translate `tableIds` (append a final default-`[]` arg so
+    existing callers keep working, mirroring how `imageIds` was added).
+  - `deleteIds` filters `tables` too; `snapshotDrawing` deep-clones `tables` (undo/redo).
+  - `copyToClipboard`/`pasteFromClipboard` carry tables (clone with fresh ids, offset 20).
+  - `updateBox` accepts `fields`/`image`/`info` non-geometry patches (leave pins untouched);
+    `pinSpec` may now carry per-pin labels.
+  - `migrateDrawing`: backfill `tables: []`; backfill `pin.label = ''` where missing; leave
+    box `fields`/`image`/`info` absent-tolerant (default at read).
+  - `_buildProjectSnapshot`: stamp `version: 4`.
+
+**Single-bottom-pin centering rule (in `boxPins`):** when a side has exactly one pin it
+must sit at the **center of that edge**, and after grid-snap it must remain exactly on the
+edge line (snap the off-axis coordinate to the edge, snap the on-axis coordinate to the
+nearest grid multiple from center). Even spacing already centers a lone pin; make this
+explicit and grid-stable so a 1-pin bottom edge is dead-center and on a grid line.
+
+**Dependencies:** none.
+
+**BACKWARD COMPATIBILITY IS A HARD REQUIREMENT (do not regress existing files):**
+- Every new field is **optional with a safe default applied at read time**, never required.
+- `migrateDrawing`/`migrateProject` must be **purely additive** — backfill missing fields,
+  never rename, drop, or reshape existing ones. A v1/v2/v3 file (localStorage *or* `.scpro`)
+  must open and render identically to before, then gain empty defaults.
+- All consumers must tolerate the field being absent (`drawing.tables ?? []`,
+  `box.fields ?? []`, `pin.label ?? ''`, `component.labelScale ?? 1`) so a half-migrated or
+  hand-edited file never crashes a render or a save.
+- The `value` field stays on the component object untouched for non-box types; for boxes it
+  is simply no longer read (kept for forward/backward tolerance, not deleted).
+- Do **not** raise the minimum readable version — keep reading v2 and v3 exactly as today;
+  only the *written* snapshot bumps to v4.
+
+**Acceptance criteria:**
+- `npm run test:run` green, `npm run build` clean.
+- A v3 `.scpro` (no `tables`, no box `fields`) loads without throwing and gains `tables: []`.
+- A **realistic legacy fixture** — a v2 and a v3 project JSON containing components (incl. a
+  box), wires, annotations, images, junctions, and a title block — round-trips through load →
+  snapshot → reload with **zero data loss** and identical components/wires/annotations.
+- Round-trip (`_buildProjectSnapshot` → stringify → parse → `importProjectJSON`) preserves
+  tables, box `fields`/`image`/`info`, `pin.label`, `resistorStyle`, `labelScale`, and text
+  annotation `width`/`height`.
+
+**Vitest specs to add:**
+- `src/lib/tableModel.test.js` — `createTable` shape + defaults; `setCell` stores a RichDoc;
+  add/remove row & col keep `colWidths`/`rowHeights`/`cells` rectangular; `resizeCol`/`resizeRow`
+  snap to grid and floor at a min; `tableSize` = sums of widths/heights.
+- `src/lib/boxComponent.test.js` (extend existing if present) — pin labels flow through
+  `createBox`/`boxPins`; **single bottom pin is centered on the edge and grid-aligned**;
+  multi-pin edges stay evenly spaced + grid-snapped.
+- `src/lib/boxFields.test.js` — field CRUD helpers (add/update/remove; unique ids).
+- `src/store/schematicSerialization.test.js` (extend) — v3→v4 migration backfills `tables:[]`
+  and `pin.label`; full round-trip of every new field listed above; snapshot `version:4`;
+  **a legacy v2 and v3 fixture (with components incl. a box, wires, annotations, images,
+  junctions, title block) loads with zero data loss and re-saves cleanly.**
+- `src/store/schematicStore.test.js` (extend) — `addTable`/`updateTable`/`removeTable`;
+  `moveItems` translates `tableIds`; `deleteIds` drops a table; undo restores a deleted table;
+  copy/paste clones a table with a new id.
+
+---
+
+## Stage 2 — Image paste, reliable selection, unlock
+
+**Goal:** Paste images from the clipboard, fix flaky image selection, and give locked images
+a way back (unlock).
+
+**Files:**
+- `src/lib/imageUtils.js` — add a pure `imageHitTest(image, wx, wy)` (point-in-rect honoring
+  rotation) and `topImageAt(images, wx, wy, { includeLocked })` (z-order-correct pick). The
+  flaky-selection bug is almost certainly inconsistent hit-testing / z-order between Canvas
+  click handling and the rendered rect — centralize it here and make Canvas use it.
+- `src/components/Canvas.jsx` — (a) install a `paste` listener (on the wrapper / window while
+  canvas focused) that reads `ClipboardEvent.clipboardData` image items, converts to a data
+  URL, and calls `addImage` placed at the last cursor/world point; (b) route image selection
+  through `topImageAt`; (c) **Alt/Option-click** (or right-click) selects a *locked* image so
+  it can be unlocked, since locked images are normally select-through.
+- `src/components/PropertiesPanel.jsx` — the existing image section already has a Lock
+  checkbox; ensure once a locked image is selected (via Alt-click) the user can untick it.
+  (If Stage 6 has merged, coordinate; otherwise this is a 2-line touch.)
+
+**Data-model changes:** none (image `locked` already exists).
+
+**Dependencies:** none. (Light touch on `PropertiesPanel.jsx` — keep it to the lock control.)
+
+**Acceptance criteria:** paste of a clipboard image adds it to the drawing; clicking an
+unlocked image selects it every time; a locked image can be re-selected (Alt-click) and
+unlocked. Tests green, build clean.
+
+**Vitest specs to add:**
+- `src/lib/imageUtils.test.js` (extend) — `imageHitTest` inside/outside incl. a rotated
+  image; `topImageAt` returns the topmost hit, skips locked unless `includeLocked`, returns
+  null on a miss.
+
+---
+
+## Stage 3 — Rich-text fixes: font size + active-format highlight
+
+**Goal:** Make the font-size control in the floating editor actually work, and highlight the
+active B/I/U/alignment buttons based on the current selection.
+
+**Files:**
+- `src/components/RichTextEditor.jsx` — replace the brittle `setFontSize` (it relies on
+  `querySelectorAll('font[size="7"]')`, which misses in many cases) with a robust
+  selection-wrapping approach: wrap the current Range's contents in a `<span style="font-size:Npx">`
+  (or apply to the collapsed caret's typing context). On `selectionchange`/`keyup`/`mouseup`
+  while focused, read `document.queryCommandState('bold'|'italic'|'underline')` and the
+  current block alignment, and set an `active` state used to style the toolbar buttons
+  (mirror `qsBtn` active styling from `PropertiesPanel`). Show the current font size in the
+  size dropdown rather than always resetting to the "Size" placeholder.
+- `src/lib/richTextEditing.js` (new, pure) — extract the testable decision logic. Given a
+  `RichDoc`, `uniformFontSize(doc)` / `activeMarks(doc)` →
+  `{bold,italic,underline,align,fontSize|null}` (a value when uniform across runs, else
+  `null`/false). Wire the toolbar's initial highlight off the seeded doc via these, and
+  refresh from `queryCommandState` for live selection.
+
+**Data-model changes:** none.
+
+**Dependencies:** none. (Touches only `RichTextEditor.jsx` + a new pure module — no conflict
+with the annotation schema, which is unchanged here.)
+
+**Acceptance criteria:** choosing a size in the floating editor changes the selected text's
+size and round-trips through `htmlToDoc`; B/I/U and alignment buttons visibly reflect the
+caret's current formatting. Tests green, build clean.
+
+**Vitest specs to add:**
+- `src/lib/richTextEditing.test.js` — `uniformFontSize`/`activeMarks` over docs with uniform
+  vs mixed runs (returns the shared value or `null`/false when mixed); alignment reported
+  from `doc.align`.
+
+---
+
+## Stage 4 — Connector symbol library (Deutsch DT / A-code, etc.)
+
+**Goal:** Add a set of basic connector components (Deutsch DT family, A-code style, generic
+n-way headers) to the electrical library under a new **Connectors** category.
+
+**Files:**
+- `src/lib/components/electrical.js` — add a `Connectors` category with new defs:
+  e.g. `conn_dt_2`, `conn_dt_3`, `conn_dt_4`, `conn_acode_3`, `conn_acode_4`, plus a generic
+  `conn_header_2`/`conn_header_4`. Each def: width/height, `pins[]` with grid-aligned
+  `relX/relY` + `direction` + sensible default labels, `category: 'Connectors'`. No DC-solver
+  model (interface/terminal symbols — the solver no-ops unknown types).
+- `src/lib/symbols/electrical/ConnectorSymbols.jsx` (new) — IEC/IEEE-faithful connector
+  glyphs (housing outline + numbered pin cavities + on-line leads meeting the pins). Use
+  `stroke="currentColor"`.
+- `src/lib/symbols/electrical/index.js` — register the new symbols in
+  `ELECTRICAL_SYMBOL_MAP`.
+- `src/components/ComponentLibrary.jsx` — the Electrical tab groups by `def.category`, so the
+  new category surfaces automatically; update any hardcoded category counts/labels.
+
+**Data-model changes:** none (new defs only; instances ride the existing component shape).
+
+**Dependencies:** none.
+
+**Acceptance criteria:** the Connectors category appears in the Electrical tab; placing a
+connector drops a component with grid-aligned, labeled pins that accept wires; pins meet
+their leads. Tests green, build clean.
+
+**Vitest specs to add:**
+- `src/lib/components/connectors.test.js` — every new connector def has a unique `type`,
+  `category:'Connectors'`, ≥2 pins, all pin `relX/relY` on the grid multiple, unique pin ids,
+  and a registered entry in `ELECTRICAL_SYMBOL_MAP`. (If a spec already enumerates electrical
+  defs, extend it instead.)
+
+---
+
+## Stage 5 — Grid sizing + save-on-open prompt
+
+**Goal:** Let the user change the grid size, and prompt to save unsaved work before opening a
+different project/file.
+
+**Files:**
+- `src/lib/gridOptions.js` (new, pure) — `GRID_SIZES = [5,10,20,25,50]`, `clampGridSize(n)`
+  → nearest valid option. Keep this pure + tested.
+- `src/components/StatusBar.jsx` (or a tiny `GridSizeControl`) — a small dropdown bound to
+  `settings.gridSize` via `updateSettings({ gridSize })`. Grid render + snap already read
+  `settings.gridSize`, so changing it live re-tiles `GridOverlay` and re-snaps new placements.
+- `src/store/schematicStore.js` — guard the open-file paths: `openProjectFile()` /
+  `_loadProjectFromPath()` should, when any drawing `isDirty`, surface a save-or-discard
+  prompt before replacing the project. Extract the decision into a pure helper
+  `hasUnsavedWork(drawings)` so it's testable; the actual prompt (Tauri `ask` / `confirm`) is
+  the thin DOM edge. Keep the store touch localized (clearly commented region) to ease the
+  merge with Stage 1.
+
+**Data-model changes:** none (`settings.gridSize` already exists).
+
+**Dependencies:** none. (Shares `schematicStore.js` with Stage 1 — keep edits surgical.)
+
+**Acceptance criteria:** changing grid size updates the dot grid and snapping immediately;
+opening a project while there are unsaved changes prompts the user first. Tests green, build
+clean.
+
+**Vitest specs to add:**
+- `src/lib/gridOptions.test.js` — `clampGridSize` maps arbitrary inputs to the nearest valid
+  option; valid options pass through.
+- `src/store/schematicStore.test.js` (extend) — `hasUnsavedWork` true when any drawing is
+  dirty, false otherwise.
+
+---
+
+# WAVE 2 — all depend on Stage 1 (start once Stage 1 is merged)
+
+## Stage 6 — Properties panel: relocate to right rail + new editors
+
+**Goal:** Move the Properties panel from the sticky bottom to the **right rail**, where it
+shows when something is selected and falls back to the Component Library when nothing is
+selected. Add the new per-selection editors enabled by Stage 1.
+
+**Files:**
+- `src/components/App.jsx` — remove `PropertiesPanel` from under the canvas; render a single
+  right rail that conditionally shows `PropertiesPanel` (when `selectedIds.length > 0`) or
+  `ComponentLibrary` (when empty). Keep the existing collapse behavior; widen to ~280px.
+- `src/components/PropertiesPanel.jsx` — restyle from a short bottom strip to a tall vertical
+  right-rail panel (sections stacked, scrollable). Add:
+  - **Component box editors:** flexible **property rows** (`box.fields`) — add/edit/remove
+    rows (label, value, unit) via the Stage-1 `boxFields` helpers + `updateBox({fields})`;
+    an **image assign/replace/remove** control (`updateBox({image})`, file input → data URL);
+    an **info/details** textarea (`updateBox({info})`). The generic "Value" field is hidden
+    for `type:'box'`.
+  - **Resistor style selector** for resistor components: a select bound to
+    `component.resistorStyle` (`IEC`/`IEEE`/"Default") via `updateComponent`.
+  - **Ref size** control: numeric `labelScale` (or S/M/L) bound via `updateComponent`.
+- Keep all commits blur/undo-based per the existing PropertiesPanel convention.
+
+**Data-model changes:** none beyond Stage 1 (consumes `box.fields/image/info`,
+`resistorStyle`, `labelScale`).
+
+**Dependencies:** **Stage 1.** Owns `PropertiesPanel.jsx` + the right-rail region of
+`App.jsx` for this release — other stages must not restructure those.
+
+**Acceptance criteria:** selecting a component shows Properties on the right; deselecting
+shows the Library; a box's property rows, image, and info edit + persist; resistor style and
+ref size edit + persist. Tests green, build clean.
+
+**Vitest specs to add:** logic is mostly in Stage-1 helpers/store. Add
+`src/store/boxProperties.test.js` — `updateBox({fields})` persists rows and round-trips;
+`updateBox({image})`/`updateBox({info})` persist; `updateComponent({resistorStyle})` and
+`updateComponent({labelScale})` persist + round-trip. (Drive the store directly — no DOM.)
+
+---
+
+## Stage 7 — Component-box rendering: pin labels, image, single-pin centering
+
+**Goal:** Render the new box data: pin labels on the canvas, the assigned image inside the
+box, and the visually-centered single bottom pin.
+
+**Files:**
+- `src/lib/symbols/BoxSymbol.jsx` — render `box.image` clipped inside the rounded rect
+  (layered sensibly with the rich-text label), still gated by the existing clip-path. Keep
+  pin dots out of here (Canvas owns them).
+- `src/components/Canvas.jsx` — where pin dots/labels render, draw each pin's `pin.label`
+  next to its dot for boxes (small text, sizing consistent with existing pin rendering). Keep
+  the edit surgical (new, clearly-commented block).
+- Pin geometry (centering, grid-snap) already lands in Stage 1's `boxComponent.js`; this
+  stage only renders it. Ensure a box with an assigned image is clickable (not
+  select-through) so selecting it pulls its info into the Properties panel (Stage 6).
+
+**Data-model changes:** none beyond Stage 1.
+
+**Dependencies:** **Stage 1.** (Renders Stage-6 data too, but reads the box shape directly so
+it doesn't require Stage 6 to build.) Shares `Canvas.jsx` with Stages 9/10 — isolate edits.
+
+**Acceptance criteria:** a box with pin labels shows them; a box with an assigned image shows
+it inside the box; a lone bottom pin renders dead-center on the edge. Tests green, build
+clean.
+
+**Vitest specs to add:** rendering is DOM; cover the pure side in Stage 1. If any label-layout
+math is added here, put it in a pure helper (`boxPinLabelPos`) with a small unit test.
+
+---
+
+## Stage 8 — Resistor symbol variants (IEC/IEEE) wired to component.resistorStyle
+
+**Goal:** Render the resistor in the chosen style — IEC (rectangular box) or IEEE/ANSI
+(zig-zag) — driven by `component.resistorStyle` with a fallback to `settings.resistorStyle`.
+
+**Files:**
+- `src/lib/symbols/electrical/PassiveSymbols.jsx` — add the second resistor body variant
+  (whichever isn't already drawn) and select between them by a `style` prop.
+- `src/components/PlacedComponent.jsx` — resolve the effective style
+  (`component.resistorStyle ?? settings.resistorStyle ?? 'IEC'`) and pass it to the resistor
+  symbol. Use the pure helper below for resolution.
+- `src/lib/resistorStyle.js` (new, pure) — `resolveResistorStyle(component, settings)` →
+  `'IEC' | 'IEEE'`.
+
+**Data-model changes:** none beyond Stage 1.
+
+**Dependencies:** **Stage 1** (defines `component.resistorStyle`). Independent of Stage 6 (the
+selector); until Stage 6 ships, the style still resolves from the global default.
+
+**Acceptance criteria:** a resistor renders IEC vs IEEE per its `resistorStyle`; with no
+override it follows the global setting. Tests green, build clean.
+
+**Vitest specs to add:**
+- `src/lib/resistorStyle.test.js` — override wins; absent override falls back to global;
+  unknown values default to `'IEC'`.
+
+---
+
+## Stage 9 — Tables: renderer + insert tool + cell editing
+
+**Goal:** Insert and edit tables on the canvas.
+
+**Files:**
+- `src/components/TableLayer.jsx` (new) — render `drawing.tables[]`: a grid of cells
+  (`<line>`s for borders + a `<foreignObject>` rich-text cell per cell via `docToHtml`,
+  matching the AnnotationLayer/BoxSymbol contract), header-row styling, selection highlight +
+  transparent hit area. Rendered inside the world `<g>` in `Canvas.jsx`.
+- `src/components/Canvas.jsx` — add a `table` tool mode (click or click-drag to place a
+  default table via `tableModel.createTable` → `addTable`); selection/move/delete plumbing for
+  tables (they ride `selectedIds`, `moveItems` with `tableIds`, `deleteIds`); double-click a
+  cell opens the existing `RichTextEditor` overlay seeded with that cell's doc, commit →
+  `updateTable` via `tableModel.setCell`. Keep edits in a clearly-commented region.
+- `src/lib/toolbarConfig.js` + `src/components/Toolbar.jsx` — add an **Insert Table** button
+  (new tool id, icon). Update `toolbarConfig.test.js`.
+- Optionally surface row/col add-remove + border toggle in `PropertiesPanel` when a table is
+  selected (coordinate with Stage 6's panel; additive section).
+
+**Data-model changes:** none beyond Stage 1 (`drawing.tables[]` + `tableModel`).
+
+**Dependencies:** **Stage 1.** Shares `Canvas.jsx` with Stages 7/10 — isolate edits.
+
+**Acceptance criteria:** insert a table, type into cells (rich text), move/select/delete it,
+add/remove rows & columns; it saves and reloads. Tests green, build clean.
+
+**Vitest specs to add:**
+- `src/lib/toolbarConfig.test.js` (extend) — Insert Table button present with id/label/icon,
+  no duplicate ids.
+- `src/store/tableEditing.test.js` — integration: place → `setCell` via `updateTable` →
+  round-trip preserves cell docs (the `tableModel` itself is covered by Stage 1).
+
+---
+
+## Stage 10 — Resizable text boxes + bigger ref label
+
+**Goal:** Let text annotations be resized with handles, and let the component designator
+("ref") be scaled up.
+
+**Files:**
+- `src/components/Canvas.jsx` — add resize handles for a single selected `type:'text'`
+  annotation (mirror the existing box/image resize-handle gesture: 8 handles, screen-space
+  sizing via `8/zoom`, commit `width`/`height` via `updateAnnotation` on mouseup).
+- `src/components/AnnotationLayer.jsx` — honor optional `width`/`height` on text annotations
+  (clip/wrap within the box, like callouts do); absent = autosize as today.
+- `src/components/PlacedComponent.jsx` — apply `component.labelScale` to the designator
+  label's font size (the "make the ref size bigger" feature; pairs with Stage 6's control).
+  Default `labelScale` to 1 so this is inert until set.
+- Extract any new resize math into a pure helper (reuse `imageUtils.resizeBox`) with a test.
+
+**Data-model changes:** none beyond Stage 1 (text `width`/`height`, `labelScale`).
+
+**Dependencies:** **Stage 1.** Shares `Canvas.jsx` with Stages 7/9 — isolate edits.
+
+**Acceptance criteria:** a text box can be dragged to a fixed size and wraps within it; a
+component's ref label can be enlarged via `labelScale`. Tests green, build clean.
+
+**Vitest specs to add:**
+- A resize-math unit test (if a new helper is added). Annotation width/height persistence is
+  covered by Stage 1's serialization spec; add a focused store test for any new behavior.
+
+---
+
+## Release wrap-up (maintainer)
+
+After all stages merge in dependency order (Wave 1 — Stage 1 first within it — then Wave 2),
+run the full suite + `npm run build` after each merge. Then write user-facing notes under
+`## [Unreleased]` in `CHANGELOG.md` and run `npm run release -- minor` (this is a feature
+release). Watch CI to completion and confirm the signed GitHub Release published with its
+updater artifacts.
+
+---
+
+## Feature → Stage traceability
+
+| Requested feature | Stage(s) |
+|---|---|
+| Properties panel opens on the right when a component is clicked | 6 |
+| Assign image + details/properties/info to component box | 1 (schema), 6 (UI), 7 (render) |
+| Add pins with labels to component boxes | 1 (model), 7 (render) |
+| Remove generic "Value"; use specific fields (resistance, …) | 1 (model), 6 (UI) |
+| Pins on boxes always snap to grid | 1 |
+| Single bottom pin centered + on a line | 1 |
+| Assign pictures to boxes → click for more info | 1, 6, 7 |
+| Choice of resistor symbol in properties | 1 (field), 6 (selector), 8 (render) |
+| Basic connectors (Deutsch DT, A-code, …) | 4 |
+| Paste images in | 2 |
+| Fix: selecting images unreliable | 2 |
+| Unlock a picture after locking | 2 |
+| Fix: font size setting not working | 3 |
+| Highlight active selections (B/I/U/centering) | 3 |
+| Resize text boxes | 1 (fields), 10 |
+| Make the ref size bigger | 1 (field), 6 (control), 10 (render) |
+| Change grid sizing | 5 |
+| Insert tables | 1 (model), 9 (UI) |
+| Autosave + prompt to save when opening a new directory | 5 |
