@@ -64,9 +64,9 @@ describe('Stage 1 — v2 → v3 migration', () => {
     expect(d.folderId).toBeNull()
   })
 
-  it('builds snapshots at version 3', () => {
-    store().newProject('V3 Project')
-    expect(store()._buildProjectSnapshot().version).toBe(3)
+  it('builds snapshots at version 4', () => {
+    store().newProject('V4 Project')
+    expect(store()._buildProjectSnapshot().version).toBe(4)
   })
 })
 
@@ -177,8 +177,8 @@ describe('Stage 1 — box component round-trip', () => {
         fill: '#eef', stroke: '#333', cornerRadius: 4,
       },
       pins: [
-        { id: 'P1', relX: -40, relY: 0, absX: 60, absY: 100, direction: 'W' },
-        { id: 'P2', relX: 40, relY: 0, absX: 140, absY: 100, direction: 'E' },
+        { id: 'P1', relX: -40, relY: 0, absX: 60, absY: 100, direction: 'W', label: '' },
+        { id: 'P2', relX: 40, relY: 0, absX: 140, absY: 100, direction: 'E', label: '' },
       ],
       simParams: {},
       simState: {},
@@ -196,5 +196,162 @@ describe('Stage 1 — box component round-trip', () => {
     const after = drawing.components.find(c => c.id === 'box_1')
     expect(after).toEqual(before)
     expect(after.box.doc.paragraphs[0].runs[0].text).toBe('MCU')
+  })
+})
+
+// ─── Stage 1 (v0.2.0): v3 → v4 schema foundation ────────────────────────────
+
+describe('Stage 1 — v3 → v4 migration & snapshot version', () => {
+  it('backfills tables:[] and pin.label on a v3 file, snapshot stamps version 4', () => {
+    const v3 = JSON.stringify({
+      version: 3,
+      id: 'p_v3', name: 'V3 Project',
+      drawingIds: ['d_v3'], activeDrawingId: 'd_v3',
+      folders: [], attachments: [],
+      drawings: [{
+        id: 'd_v3', name: 'V3 Drawing', type: 'electrical',
+        components: [{
+          id: 'c1', type: 'resistor', designator: 'R1', value: '1k',
+          x: 0, y: 0, rotation: 0, flipH: false, flipV: false,
+          pins: [{ id: 'A', relX: -20, relY: 0, absX: -20, absY: 0, direction: 'W' }],
+          simParams: {}, simState: {}, labelOffset: { x: 0, y: -15 },
+        }],
+        wires: [], junctions: [], annotations: [], images: [], folderId: null,
+        titleBlock: { title: 'V3', visible: false },
+        viewState: { panX: 0, panY: 0, zoom: 1 },
+      }],
+    })
+    expect(() => store().importProjectJSON(v3)).not.toThrow()
+    const d = activeDrawing()
+    expect(d.tables).toEqual([])                       // backfilled
+    expect(d.components[0].pins[0].label).toBe('')      // backfilled
+    expect(store()._buildProjectSnapshot().version).toBe(4)
+  })
+
+  it('round-trips every new v0.2.0 field with zero loss', () => {
+    store().newProject('v4 fields')
+    const did = store().activeDrawingId
+
+    // A box carrying flexible fields + an image + info, a resistor with a style
+    // override + label scale, a text annotation with explicit width/height, and
+    // a table with a populated cell — injected directly to test serialization.
+    useSchematicStore.setState(s => ({
+      drawings: s.drawings.map(d => d.id !== did ? d : {
+        ...d,
+        components: [
+          {
+            id: 'box_f', type: 'box', designator: 'M1', value: '', description: '',
+            x: 10, y: 10, rotation: 0, flipH: false, flipV: false,
+            box: {
+              width: 80, height: 60, doc: { align: 'left', paragraphs: [{ runs: [] }] },
+              fill: '#fff', stroke: '#000', cornerRadius: 4,
+              fields: [{ id: 'f1', label: 'Resistance', value: '4.7k', unit: 'Ω' }],
+              image: PNG_SRC, info: 'Datasheet rev B',
+            },
+            pins: [{ id: 'S1', relX: 0, relY: 30, absX: 10, absY: 40, direction: 'S', label: 'OUT' }],
+            simParams: {}, simState: {}, labelOffset: { x: 0, y: -15 },
+          },
+          {
+            id: 'r1', type: 'resistor', designator: 'R1', value: '1k', description: '',
+            x: 200, y: 0, rotation: 0, flipH: false, flipV: false,
+            resistorStyle: 'IEEE', labelScale: 2,
+            pins: [{ id: 'A', relX: -20, relY: 0, absX: 180, absY: 0, direction: 'W', label: '' }],
+            simParams: {}, simState: {}, labelOffset: { x: 0, y: -15 },
+          },
+        ],
+        annotations: [{
+          id: 't1', type: 'text', x: 0, y: 100,
+          doc: { align: 'left', paragraphs: [{ runs: [{ text: 'note' }] }] },
+          text: 'note', fontSize: 14, width: 160, height: 48,
+        }],
+        tables: [{
+          id: 'tbl1', x: 0, y: 200, rows: 1, cols: 2,
+          colWidths: [80, 80], rowHeights: [30],
+          cells: [[
+            { align: 'left', paragraphs: [{ runs: [{ text: 'Pin' }] }] },
+            { align: 'left', paragraphs: [{ runs: [{ text: 'Net' }] }] },
+          ]],
+          borderColor: '#334155', borderWidth: 1, headerRow: true,
+        }],
+      }),
+    }))
+
+    const before = activeDrawing()
+    const { drawing } = roundTrip()
+
+    const box = drawing.components.find(c => c.id === 'box_f')
+    expect(box.box.fields).toEqual([{ id: 'f1', label: 'Resistance', value: '4.7k', unit: 'Ω' }])
+    expect(box.box.image).toBe(PNG_SRC)
+    expect(box.box.info).toBe('Datasheet rev B')
+    expect(box.pins[0].label).toBe('OUT')
+
+    const r = drawing.components.find(c => c.id === 'r1')
+    expect(r.resistorStyle).toBe('IEEE')
+    expect(r.labelScale).toBe(2)
+
+    const t = drawing.annotations.find(a => a.id === 't1')
+    expect(t.width).toBe(160)
+    expect(t.height).toBe(48)
+
+    expect(drawing.tables).toHaveLength(1)
+    expect(drawing.tables[0]).toEqual(before.tables[0])
+    expect(drawing.tables[0].cells[0][0].paragraphs[0].runs[0].text).toBe('Pin')
+  })
+})
+
+describe('Stage 1 — legacy fixtures load with zero data loss', () => {
+  // A full v3 file: components (incl. a box), wires, annotations, images,
+  // junctions, and a title block. Must survive load → re-save with nothing lost.
+  function fullV3() {
+    return JSON.stringify({
+      version: 3,
+      id: 'p_full', name: 'Full', drawingIds: ['d_full'], activeDrawingId: 'd_full',
+      folders: [], attachments: [],
+      drawings: [{
+        id: 'd_full', name: 'Full Drawing', type: 'electrical', folderId: null,
+        components: [
+          {
+            id: 'r1', type: 'resistor', designator: 'R1', value: '1k',
+            x: 0, y: 0, rotation: 0, flipH: false, flipV: false,
+            pins: [{ id: 'A', relX: -20, relY: 0, absX: -20, absY: 0, direction: 'W' }],
+            simParams: {}, simState: {}, labelOffset: { x: 0, y: -15 },
+          },
+          {
+            id: 'b1', type: 'box', designator: 'U1', value: '',
+            x: 100, y: 0, rotation: 0, flipH: false, flipV: false,
+            box: { width: 80, height: 60, doc: { align: 'left', paragraphs: [{ runs: [{ text: 'IC' }] }] }, fill: '#eef', stroke: '#333', cornerRadius: 4 },
+            pins: [{ id: 'P1', relX: -40, relY: 0, absX: 60, absY: 0, direction: 'W' }],
+            simParams: {}, simState: {}, labelOffset: { x: 0, y: -15 },
+          },
+        ],
+        wires: [{ id: 'w1', points: [{ x: -20, y: 0 }, { x: 60, y: 0 }], netName: '', style: 'solid', weight: 1, pinA: { componentId: 'r1', pinId: 'A' }, pinB: { componentId: 'b1', pinId: 'P1' } }],
+        junctions: [{ id: 'j1', x: 60, y: 0 }],
+        annotations: [{ id: 'a1', type: 'text', x: 0, y: 80, doc: { align: 'left', paragraphs: [{ runs: [{ text: 'hi' }] }] }, text: 'hi', fontSize: 14 }],
+        images: [{ id: 'im1', src: PNG_SRC, x: 0, y: 150, width: 40, height: 40, rotation: 0, opacity: 1, locked: false }],
+        titleBlock: { title: 'Full', visible: true },
+        viewState: { panX: 0, panY: 0, zoom: 1 },
+      }],
+    })
+  }
+
+  it('loads a full v3 file and re-saves it without losing any element', () => {
+    expect(() => store().importProjectJSON(fullV3())).not.toThrow()
+    const d0 = activeDrawing()
+    expect(d0.components).toHaveLength(2)
+    expect(d0.wires).toHaveLength(1)
+    expect(d0.junctions).toHaveLength(1)
+    expect(d0.annotations).toHaveLength(1)
+    expect(d0.images).toHaveLength(1)
+
+    const { drawing } = roundTrip()
+    expect(drawing.components).toHaveLength(2)
+    expect(drawing.wires).toHaveLength(1)
+    expect(drawing.wires[0].pinA.componentId).toBe('r1')
+    expect(drawing.junctions).toHaveLength(1)
+    expect(drawing.annotations[0].text).toBe('hi')
+    expect(drawing.images[0].src).toBe(PNG_SRC)
+    expect(drawing.components.find(c => c.id === 'b1').box.doc.paragraphs[0].runs[0].text).toBe('IC')
+    // new field backfilled, nothing dropped
+    expect(drawing.tables).toEqual([])
   })
 })

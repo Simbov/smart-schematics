@@ -37,20 +37,33 @@ function snapshotDrawing(drawing) {
     junctions: drawing.junctions,
     annotations: drawing.annotations || [],
     images: drawing.images || [],
+    // v0.2.0: tables undo/redo (deep-cloned so cell RichDocs are independent).
+    tables: drawing.tables || [],
   }))
 }
 
-// Backfill new-schema fields on a drawing loaded from an older file (v2 → v3).
-// Mutates and returns the drawing so old `.scpro`/localStorage files open unchanged.
+// Backfill new-schema fields on a drawing loaded from an older file. PURELY
+// ADDITIVE: every new field is backfilled with a safe default and no existing
+// field is ever renamed, dropped, or reshaped — so a v1/v2/v3 file (localStorage
+// AND .scpro) opens and renders identically, then gains empty defaults.
+// Mutates and returns the drawing.
 function migrateDrawing(d) {
   d.images ??= []
   d.folderId ??= null
+  // v0.2.0 (v3 → v4): drawings gain a `tables` array.
+  d.tables ??= []
   // Stage 4: text/callout annotations gain a rich-text `doc`. A legacy annotation
   // that only has a plain `text` string is migrated to `doc = plainToDoc(text)`;
   // `text` is kept in sync (= docToPlain(doc)) for back-compat search/export.
   for (const a of (d.annotations || [])) {
     if ((a.type === 'text' || a.type === 'callout') && !a.doc) {
       a.doc = plainToDoc(a.text || '')
+    }
+  }
+  // v0.2.0 (v3 → v4): every pin gains an optional `label` (default '').
+  for (const c of (d.components || [])) {
+    for (const p of (c.pins || [])) {
+      p.label ??= ''
     }
   }
   return d
@@ -72,6 +85,7 @@ const createBlankDrawing = (name = 'Drawing 1') => ({
   junctions: [],
   annotations: [],
   images: [],            // image elements (base64 data URLs) — drawn behind components
+  tables: [],            // free-floating rich-text grids (v0.2.0)
   folderId: null,        // file-tree folder this drawing sits in (null = root)
   titleBlock: {
     title: name,
@@ -623,9 +637,9 @@ const useSchematicStore = create((set, get) => ({
     })
   },
 
-  // `imageIds` is appended last (default []) so existing 6-arg callers keep working;
-  // Stage 3 passes image ids to translate selected images alongside everything else.
-  moveItems(drawingId, compIds, wireIds, annotationIds, dx, dy, imageIds = []) {
+  // `imageIds` was appended (default []) so existing 6-arg callers keep working;
+  // `tableIds` is appended last (default []) for the same reason (v0.2.0).
+  moveItems(drawingId, compIds, wireIds, annotationIds, dx, dy, imageIds = [], tableIds = []) {
     get().pushUndo()
     set(state => ({
       drawings: state.drawings.map(d => {
@@ -653,6 +667,9 @@ const useSchematicStore = create((set, get) => ({
           ),
           images: (d.images || []).map(img =>
             (imageIds || []).includes(img.id) ? { ...img, x: img.x + dx, y: img.y + dy } : img
+          ),
+          tables: (d.tables || []).map(t =>
+            (tableIds || []).includes(t.id) ? { ...t, x: t.x + dx, y: t.y + dy } : t
           ),
         }
       }),
@@ -733,6 +750,7 @@ const useSchematicStore = create((set, get) => ({
           ),
           annotations: (d.annotations || []).filter(a => !ids.includes(a.id)),
           images: (d.images || []).filter(img => !ids.includes(img.id)),
+          tables: (d.tables || []).filter(t => !ids.includes(t.id)),
         }
       }),
       selectedIds: [],
@@ -748,14 +766,15 @@ const useSchematicStore = create((set, get) => ({
     const wires = drawing.wires.filter(w => ids.includes(w.id))
     const annotations = (drawing.annotations || []).filter(a => ids.includes(a.id))
     const images = (drawing.images || []).filter(img => ids.includes(img.id))
-    set({ clipboard: JSON.parse(JSON.stringify({ components, wires, annotations, images })) })
+    const tables = (drawing.tables || []).filter(t => ids.includes(t.id))
+    set({ clipboard: JSON.parse(JSON.stringify({ components, wires, annotations, images, tables })) })
   },
 
   pasteFromClipboard(drawingId) {
     const { clipboard } = get()
     if (!clipboard) return
-    const { components = [], wires = [], annotations = [], images = [] } = clipboard
-    if (!components.length && !wires.length && !annotations.length && !images.length) return
+    const { components = [], wires = [], annotations = [], images = [], tables = [] } = clipboard
+    if (!components.length && !wires.length && !annotations.length && !images.length && !tables.length) return
     get().pushUndo()
     const OFFSET = 20
     const idMap = {}
@@ -779,11 +798,13 @@ const useSchematicStore = create((set, get) => ({
     }))
     const newAnnotations = annotations.map(a => ({ ...a, id: genId(), x: a.x + OFFSET, y: a.y + OFFSET }))
     const newImages = images.map(img => ({ ...img, id: genId(), x: img.x + OFFSET, y: img.y + OFFSET }))
+    const newTables = tables.map(t => ({ ...t, id: genId(), x: t.x + OFFSET, y: t.y + OFFSET }))
     const newIds = [
       ...newComps.map(c => c.id),
       ...newWires.map(w => w.id),
       ...newAnnotations.map(a => a.id),
       ...newImages.map(img => img.id),
+      ...newTables.map(t => t.id),
     ]
     set(state => ({
       drawings: state.drawings.map(d =>
@@ -796,6 +817,7 @@ const useSchematicStore = create((set, get) => ({
               wires: [...d.wires, ...newWires],
               annotations: [...(d.annotations || []), ...newAnnotations],
               images: [...(d.images || []), ...newImages],
+              tables: [...(d.tables || []), ...newTables],
             }
       ),
       selectedIds: newIds,
@@ -882,6 +904,49 @@ const useSchematicStore = create((set, get) => ({
           ...d,
           isDirty: true,
           images: (d.images || []).filter(img => img.id !== imageId),
+        }
+      ),
+    }))
+  },
+
+  // ─── Tables (v0.2.0) ──────────────────────────────────────────────────────
+  // Free-floating rich-text grids in drawing.tables[]. Table objects are built
+  // by the pure tableModel.js helpers; the store just owns the array + dirty flag.
+
+  addTable(drawingId, table) {
+    const t = { ...table, id: table.id || genId() }
+    set(state => ({
+      drawings: state.drawings.map(d =>
+        d.id === drawingId
+          ? { ...d, tables: [...(d.tables || []), t], isDirty: true }
+          : d
+      ),
+    }))
+    return t.id
+  },
+
+  updateTable(drawingId, tableId, patch) {
+    set(state => ({
+      drawings: state.drawings.map(d => {
+        if (d.id !== drawingId) return d
+        return {
+          ...d,
+          isDirty: true,
+          tables: (d.tables || []).map(t =>
+            t.id !== tableId ? t : { ...t, ...patch }
+          ),
+        }
+      }),
+    }))
+  },
+
+  removeTable(drawingId, tableId) {
+    set(state => ({
+      drawings: state.drawings.map(d =>
+        d.id !== drawingId ? d : {
+          ...d,
+          isDirty: true,
+          tables: (d.tables || []).filter(t => t.id !== tableId),
         }
       ),
     }))
@@ -1071,7 +1136,7 @@ const useSchematicStore = create((set, get) => ({
     const projectDrawings = project.drawingIds
       .map(id => drawings.find(d => d.id === id))
       .filter(Boolean)
-    return { version: 3, ...project, drawings: projectDrawings }
+    return { version: 4, ...project, drawings: projectDrawings }
   },
 
   // saveAll — writes to file (Tauri) or localStorage (browser).
@@ -1099,7 +1164,7 @@ const useSchematicStore = create((set, get) => ({
         // Browser fallback: localStorage. Build the payload before writing so a
         // serialization error doesn't clobber the previously-stored project.
         const payload = JSON.stringify({
-          version: 3,
+          version: 4,
           projects: savedProjects,
           drawings: savedDrawings,
         })

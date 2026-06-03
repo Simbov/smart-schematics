@@ -38,11 +38,31 @@ const SIDE_DIRECTION = { W: 'W', E: 'E', N: 'N', S: 'S' }
 // to the grid so leads land on grid. With n pins the span is divided into n+1
 // gaps and pins sit at gap boundaries (1..n)/(n+1) — centered and symmetric.
 // Returns offsets measured from the start of the span.
+//
+// SINGLE-PIN CENTERING RULE: when a side has exactly one pin it must sit at the
+// CENTER of that edge. We snap the *on-axis* coordinate to the nearest grid
+// multiple measured FROM THE CENTER (not from the span start), so the lone pin
+// stays exactly centered and grid-stable regardless of the edge length's parity.
+// The off-axis coordinate (the edge line itself) is handled by the caller, which
+// always pins relX/relY to ±width/2 or ±height/2 — so the pin can never drift
+// off the edge line.
 function spacedOffsets(n, len, grid) {
+  const center = len / 2
+  if (n === 1) {
+    // Snap the offset-from-center to grid, then re-add the center. This keeps the
+    // pin at the edge midpoint and on a grid line relative to the box center
+    // (relX/relY = off - len/2, so a centered, grid-snapped offset ⇒ relX/relY is
+    // a clean grid multiple too).
+    const snappedFromCenter = grid > 0 ? snap(0, grid) : 0 // 0 ⇒ exact center
+    return [center + snappedFromCenter]
+  }
   const out = []
   for (let i = 1; i <= n; i++) {
     const raw = (len * i) / (n + 1)
-    out.push(grid > 0 ? snap(raw, grid) : raw)
+    // Snap each interior pin relative to the center so spacing stays symmetric
+    // and grid-aligned about the edge midpoint.
+    const off = grid > 0 ? center + snap(raw - center, grid) : raw
+    out.push(off)
   }
   return out
 }
@@ -51,18 +71,23 @@ function spacedOffsets(n, len, grid) {
 //
 //   box  — { width, height } (origin is the box CENTER, like every component;
 //           relX/relY are offsets from that center).
-//   spec — { W, E, N, S } pin counts per side (missing side ⇒ 0).
+//   spec — { W, E, N, S } pin counts per side (missing side ⇒ 0). May ALSO carry
+//          an optional `labels` map keyed by pin id (e.g. { W1:'VCC', E1:'GND' })
+//          so callers can name pins; absent label ⇒ '' (the v0.2.0 Pin.label
+//          default).
 //   grid — grid size to snap pin offsets to (0 ⇒ no snap).
 //
 // Pins sit EXACTLY on the edge line (relX/relY at ±width/2 or ±height/2) and are
-// evenly spaced along the edge, each snapped to grid. `direction` = the edge
-// normal so wires approach the box squarely.
+// evenly spaced along the edge, each snapped to grid. A side with exactly one pin
+// is centered on its edge (see spacedOffsets). `direction` = the edge normal so
+// wires approach the box squarely. Each pin carries `label: string` (default '').
 export function boxPins(box, spec = DEFAULT_PIN_SPEC, grid = 10) {
   const w = box.width
   const h = box.height
   const hw = w / 2
   const hh = h / 2
   const counts = { W: 0, E: 0, N: 0, S: 0, ...spec }
+  const labels = spec.labels || {}
   const pins = []
 
   // West / East edges: pins spaced vertically (offset measured top→bottom).
@@ -70,11 +95,13 @@ export function boxPins(box, spec = DEFAULT_PIN_SPEC, grid = 10) {
     const n = Math.max(0, Math.round(counts[side] || 0))
     const offs = spacedOffsets(n, h, grid)
     offs.forEach((off, i) => {
+      const id = `${side}${i + 1}`
       pins.push({
-        id: `${side}${i + 1}`,
+        id,
         relX: side === 'W' ? -hw : hw,
         relY: off - hh,
         direction: SIDE_DIRECTION[side],
+        label: labels[id] ?? '',
       })
     })
   }
@@ -83,11 +110,13 @@ export function boxPins(box, spec = DEFAULT_PIN_SPEC, grid = 10) {
     const n = Math.max(0, Math.round(counts[side] || 0))
     const offs = spacedOffsets(n, w, grid)
     offs.forEach((off, i) => {
+      const id = `${side}${i + 1}`
       pins.push({
-        id: `${side}${i + 1}`,
+        id,
         relX: off - hw,
         relY: side === 'N' ? -hh : hh,
         direction: SIDE_DIRECTION[side],
+        label: labels[id] ?? '',
       })
     })
   }
@@ -142,6 +171,11 @@ export function createBox({
       fill,
       stroke,
       cornerRadius,
+      // v0.2.0 box additions — flexible property rows replace the generic
+      // `value` for boxes; an optional embedded image; free-form info text.
+      fields: [],
+      image: null,
+      info: '',
     },
     simParams: {},
     simState: {},

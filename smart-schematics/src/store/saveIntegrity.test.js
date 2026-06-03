@@ -48,7 +48,7 @@ describe('Stage 7 — saveAll integrity (browser/localStorage path)', () => {
     expect(activeDrawing().isDirty).toBe(false)
     expect(localStorage.getItem('schematic_projects')).toBeTruthy()
     const stored = JSON.parse(localStorage.getItem('schematic_projects'))
-    expect(stored.version).toBe(3)
+    expect(stored.version).toBe(4)
   })
 
   it('does not mark drawings clean when the write throws', async () => {

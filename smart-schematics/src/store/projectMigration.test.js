@@ -83,8 +83,8 @@ describe('Stage 7 — v2 fixture migrates to v3', () => {
     expect(d.name).toBe('Power Supply')
   })
 
-  it('a migrated v2 project re-saves as version 3', () => {
+  it('a migrated v2 project re-saves as version 4', () => {
     store().importProjectJSON(v2Json)
-    expect(store()._buildProjectSnapshot().version).toBe(3)
+    expect(store()._buildProjectSnapshot().version).toBe(4)
   })
 })

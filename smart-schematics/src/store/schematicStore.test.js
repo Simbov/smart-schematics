@@ -235,3 +235,78 @@ describe('image store actions', () => {
     expect(images[1].y).toBe(40)
   })
 })
+
+// ─── Stage 1 (v0.2.0): table store actions ──────────────────────────────────
+import { createTable, setCell } from '../lib/tableModel.js'
+import { plainToDoc, docToPlain } from '../lib/richText.js'
+
+function setupDrawingWithTable() {
+  const store = useSchematicStore.getState()
+  store.newProject('Table Project')
+  const drawingId = useSchematicStore.getState().activeDrawingId
+  const table = createTable({ x: 50, y: 60, rows: 2, cols: 2, grid: 10 })
+  const id = useSchematicStore.getState().addTable(drawingId, table)
+  return { drawingId, tableId: id }
+}
+
+const tdrawing = () => {
+  const s = useSchematicStore.getState()
+  return s.drawings.find(d => d.id === s.activeDrawingId)
+}
+
+describe('table store actions (v0.2.0)', () => {
+  it('addTable appends a table with a generated id and marks dirty', () => {
+    const { tableId } = setupDrawingWithTable()
+    expect(tdrawing().tables).toHaveLength(1)
+    expect(tdrawing().tables[0].id).toBe(tableId)
+    expect(tdrawing().isDirty).toBe(true)
+  })
+
+  it('updateTable patches a table (e.g. a cell doc)', () => {
+    const { drawingId, tableId } = setupDrawingWithTable()
+    const t = tdrawing().tables[0]
+    const next = setCell(t, 0, 1, plainToDoc('Hi'))
+    useSchematicStore.getState().updateTable(drawingId, tableId, { cells: next.cells })
+    expect(docToPlain(tdrawing().tables[0].cells[0][1])).toBe('Hi')
+  })
+
+  it('removeTable drops a table', () => {
+    const { drawingId, tableId } = setupDrawingWithTable()
+    useSchematicStore.getState().removeTable(drawingId, tableId)
+    expect(tdrawing().tables).toHaveLength(0)
+  })
+
+  it('moveItems translates a table by tableIds', () => {
+    const { drawingId, tableId } = setupDrawingWithTable()
+    useSchematicStore.getState().moveItems(drawingId, [], [], [], 15, 25, [], [tableId])
+    const t = tdrawing().tables[0]
+    expect(t.x).toBe(65)
+    expect(t.y).toBe(85)
+  })
+
+  it('deleteIds removes a table', () => {
+    const { drawingId, tableId } = setupDrawingWithTable()
+    useSchematicStore.getState().deleteIds(drawingId, [tableId])
+    expect(tdrawing().tables).toHaveLength(0)
+  })
+
+  it('undo restores a deleted table (snapshot includes tables)', () => {
+    const { drawingId, tableId } = setupDrawingWithTable()
+    useSchematicStore.getState().deleteIds(drawingId, [tableId])
+    expect(tdrawing().tables).toHaveLength(0)
+    useSchematicStore.getState().undo()
+    expect(tdrawing().tables).toHaveLength(1)
+    expect(tdrawing().tables[0].id).toBe(tableId)
+  })
+
+  it('copy/paste clones a table with a new id', () => {
+    const { drawingId, tableId } = setupDrawingWithTable()
+    useSchematicStore.getState().copyToClipboard(drawingId, [tableId])
+    useSchematicStore.getState().pasteFromClipboard(drawingId)
+    const tables = tdrawing().tables
+    expect(tables).toHaveLength(2)
+    expect(tables[1].id).not.toBe(tableId)
+    expect(tables[1].x).toBe(70) // 50 + OFFSET(20)
+    expect(tables[1].y).toBe(80)
+  })
+})
