@@ -88,6 +88,16 @@ export {
   PLCAnalogInputSymbol,
 } from './PLCSymbols'
 
+export {
+  ConnDT2Symbol,
+  ConnDT3Symbol,
+  ConnDT4Symbol,
+  ConnACode3Symbol,
+  ConnACode4Symbol,
+  ConnHeader2Symbol,
+  ConnHeader4Symbol,
+} from './ConnectorSymbols'
+
 import {
   ResistorSymbol,
   CapacitorSymbol,
@@ -178,6 +188,16 @@ import {
   PLCAnalogInputSymbol,
 } from './PLCSymbols'
 
+import {
+  ConnDT2Symbol,
+  ConnDT3Symbol,
+  ConnDT4Symbol,
+  ConnACode3Symbol,
+  ConnACode4Symbol,
+  ConnHeader2Symbol,
+  ConnHeader4Symbol,
+} from './ConnectorSymbols'
+
 export const ELECTRICAL_SYMBOL_MAP = {
   resistor: ResistorSymbol,
   capacitor: CapacitorSymbol,
@@ -245,4 +265,11 @@ export const ELECTRICAL_SYMBOL_MAP = {
   plc_pwm_output: PLCPWMOutputSymbol,
   plc_digital_input: PLCDigitalInputSymbol,
   plc_analog_input: PLCAnalogInputSymbol,
+  conn_dt_2: ConnDT2Symbol,
+  conn_dt_3: ConnDT3Symbol,
+  conn_dt_4: ConnDT4Symbol,
+  conn_acode_3: ConnACode3Symbol,
+  conn_acode_4: ConnACode4Symbol,
+  conn_header_2: ConnHeader2Symbol,
+  conn_header_4: ConnHeader4Symbol,
 }
