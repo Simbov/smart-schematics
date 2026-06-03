@@ -12,6 +12,8 @@ section with the version and date and starts a fresh Unreleased block.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-03
+
 ### Added
 - **Properties panel.** Select any component, wire, image, text box, or box and
   its settings open in a panel on the right; deselect and the component library
