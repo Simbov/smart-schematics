@@ -35,6 +35,15 @@ describe('toolbarConfig', () => {
     }
   })
 
+  it('Insert Table (Stage 9) is present and live', () => {
+    const byId = Object.fromEntries(allToolbarButtons().map(b => [b.id, b]))
+    expect(byId.table).toBeTruthy()
+    expect(byId.table.label).toBe('Insert Table')
+    expect(byId.table.icon).toBe('Table')
+    expect(byId.table.comingSoon).toBeUndefined()
+    expect(buttonTooltip(byId.table)).toBe('Insert Table')
+  })
+
   it('Insert Image (Stage 3) and Box (Stage 5) are both live (no longer reserved)', () => {
     const byId = Object.fromEntries(allToolbarButtons().map(b => [b.id, b]))
     expect(byId.insertImage.comingSoon).toBeUndefined()

@@ -20,6 +20,8 @@ import { boxPinLabelPos } from '../lib/boxComponent'
 import RichTextEditor from './RichTextEditor'
 import { emptyDoc, plainToDoc, isEmptyDoc, docToPlain } from '../lib/richText'
 import { textOuterBox, outerBoxToAnnotation } from '../lib/annotationLayout'
+import { createTable, setCell } from '../lib/tableModel'
+import TableLayer from './TableLayer'
 import { ELECTRICAL_SYMBOL_MAP } from '../lib/symbols/electrical'
 import { HYDRAULIC_SYMBOL_MAP } from '../lib/symbols/HydraulicSymbols'
 import { getElectricalDef } from '../lib/components/electrical'
@@ -154,6 +156,8 @@ export default function Canvas({ onCursorMove }) {
   const addWire = useSchematicStore(s => s.addWire)
   const addJunction = useSchematicStore(s => s.addJunction)
   const addAnnotation = useSchematicStore(s => s.addAnnotation)
+  const addTable = useSchematicStore(s => s.addTable)
+  const updateTable = useSchematicStore(s => s.updateTable)
   const updateAnnotation = useSchematicStore(s => s.updateAnnotation)
   const updateTitleBlock = useSchematicStore(s => s.updateTitleBlock)
   const pushUndo = useSchematicStore(s => s.pushUndo)
@@ -603,7 +607,8 @@ export default function Canvas({ onCursorMove }) {
             dragRef.current.wireIds,
             dragRef.current.annotationIds || [],
             dx, dy,
-            dragRef.current.imageIds || []
+            dragRef.current.imageIds || [],
+            dragRef.current.tableIds || []
           )
         }
       }
@@ -710,6 +715,18 @@ export default function Canvas({ onCursorMove }) {
       return
     }
 
+    if (tool === 'table') {
+      if (e.detail === 1 && state.activeDrawingId) {
+        const grid = state.settings.snapToGrid ? state.settings.gridSize : 0
+        pushUndo()
+        const table = createTable({ x: snapped.x, y: snapped.y, rows: 2, cols: 2, grid })
+        const id = addTable(state.activeDrawingId, table)
+        if (id) setSelectedIds([id])
+        setActiveTool('select')
+      }
+      return
+    }
+
     if (tool === 'wire') {
       const snap = snapTargetRef.current || { type: 'grid', x: snapped.x, y: snapped.y }
       const target = { x: snap.x, y: snap.y }
@@ -777,7 +794,7 @@ export default function Canvas({ onCursorMove }) {
       if (topImageAt(dr?.images || [], wpt.x, wpt.y, { includeLocked: e.altKey })) return
       clearSelection()
     }
-  }, [activeDrawingId, getSVGPos, toWorld, addComponent, addBox, setActiveTool, setSelectedIds, finishWire, clearSelection, pushUndo, addAnnotation])
+  }, [activeDrawingId, getSVGPos, toWorld, addComponent, addBox, addTable, setActiveTool, setSelectedIds, finishWire, clearSelection, pushUndo, addAnnotation])
 
   // Unified drag starter for components, wires, annotations, and images
   const startDrag = useCallback((id, e, alwaysDraggable = false) => {
@@ -808,8 +825,9 @@ export default function Canvas({ onCursorMove }) {
     const wireIds = (dr?.wires || []).filter(w => dragIds.includes(w.id)).map(w => w.id)
     const annotationIds = (dr?.annotations || []).filter(a => dragIds.includes(a.id)).map(a => a.id)
     const imageIds = (dr?.images || []).filter(im => dragIds.includes(im.id)).map(im => im.id)
+    const tableIds = (dr?.tables || []).filter(t => dragIds.includes(t.id)).map(t => t.id)
 
-    dragRef.current = { compIds, wireIds, annotationIds, imageIds, startWorld: worldStart }
+    dragRef.current = { compIds, wireIds, annotationIds, imageIds, tableIds, startWorld: worldStart }
     isDraggingItems.current = true
     mouseDownPos.current = { x: e.clientX, y: e.clientY }
     didDrag.current = false
@@ -832,6 +850,28 @@ export default function Canvas({ onCursorMove }) {
     if (e?.shiftKey) addToSelection(id)
     else setSelectedIds([id])
   }, [setActiveTool, setSelectedIds, addToSelection])
+
+  // Tables (Stage 9): drag like an annotation; click selects; double-click a cell
+  // opens the rich-text editor seeded with that cell's doc.
+  const handleTableMouseDown = useCallback((id, e) => startDrag(id, e, true), [startDrag])
+  const handleTableClick = useCallback((id, e) => {
+    if (isDraggingItems.current) return
+    setActiveTool('select')
+    if (e?.shiftKey) addToSelection(id)
+    else setSelectedIds([id])
+  }, [setActiveTool, setSelectedIds, addToSelection])
+  const handleTableCellDoubleClick = useCallback((tableId, row, col, cellBox) => {
+    setRichEdit({
+      tableId, row, col,
+      worldX: cellBox.x + 2,
+      worldY: cellBox.y + 2,
+      width: cellBox.width - 4,
+      height: cellBox.height - 4,
+      doc: cellBox.doc || emptyDoc(),
+      fixedSize: true,
+      isNew: false,
+    })
+  }, [])
 
   // Begin dragging an image resize handle. Math lives in imageUtils.resizeBox;
   // here we only translate pointer movement into world dx/dy and snap on commit.
@@ -1080,7 +1120,16 @@ export default function Canvas({ onCursorMove }) {
   // Rich-text editor commit / cancel (text + callout annotations)
   const commitRichEdit = useCallback((doc) => {
     if (!richEdit) return
-    if (richEdit.boxId) {
+    if (richEdit.tableId) {
+      // Table cell edit — store the doc into cells[row][col].
+      const dr = useSchematicStore.getState().drawings.find(d => d.id === activeDrawingId)
+      const tbl = (dr?.tables || []).find(t => t.id === richEdit.tableId)
+      if (tbl) {
+        pushUndo()
+        const next = setCell(tbl, richEdit.row, richEdit.col, doc)
+        updateTable(activeDrawingId, richEdit.tableId, { cells: next.cells })
+      }
+    } else if (richEdit.boxId) {
       // Box label edit — store the doc on the box payload.
       pushUndo()
       updateBox(activeDrawingId, richEdit.boxId, { doc })
@@ -1093,7 +1142,7 @@ export default function Canvas({ onCursorMove }) {
     }
     setActiveTool('select')
     setRichEdit(null)
-  }, [richEdit, activeDrawingId, updateAnnotation, updateBox, deleteIds, pushUndo, setActiveTool])
+  }, [richEdit, activeDrawingId, updateAnnotation, updateBox, updateTable, deleteIds, pushUndo, setActiveTool])
 
   const cancelRichEdit = useCallback(() => {
     if (!richEdit) return
@@ -1193,6 +1242,13 @@ export default function Canvas({ onCursorMove }) {
       return { ...im, x: im.x + dragDelta.dx, y: im.y + dragDelta.dy }
     }
     return im
+  })
+  // Tables carry the drag offset (Stage 9).
+  const effectiveTables = (drawing?.tables || []).map(t => {
+    if (isDraggingNow && dragRef.current?.tableIds?.includes(t.id)) {
+      return { ...t, x: t.x + dragDelta.dx, y: t.y + dragDelta.dy }
+    }
+    return t
   })
 
   // Resolve each component's designator side so labels dodge wires. Recomputes
@@ -1395,6 +1451,15 @@ export default function Canvas({ onCursorMove }) {
             onAnnotationClick={handleAnnotationClick}
             onAnnotationMouseDown={handleAnnotationMouseDown}
             onAnnotationDoubleClick={handleAnnotationDoubleClick}
+          />
+
+          <TableLayer
+            tables={effectiveTables}
+            selectedIds={selectedIds}
+            zoom={zoom}
+            onTableClick={handleTableClick}
+            onTableMouseDown={handleTableMouseDown}
+            onCellDoubleClick={handleTableCellDoubleClick}
           />
 
           {activeTool === 'place' && placingComponentType && ghostPoint && (

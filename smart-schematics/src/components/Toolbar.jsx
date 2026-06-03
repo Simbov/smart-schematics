@@ -4,7 +4,7 @@ import {
   ZoomIn, ZoomOut, Maximize2, Grid3X3,
   Undo2, Redo2, Activity,
   Trash2, RotateCw, FlipHorizontal, FlipVertical,
-  Image, Square,
+  Image, Square, Table,
 } from 'lucide-react'
 import useSchematicStore from '../store/schematicStore'
 import { TOOLBAR_GROUPS, buttonTooltip } from '../lib/toolbarConfig'
@@ -13,7 +13,7 @@ import { isRunningInTauri, openFileDialog, readImageAsDataUrl } from '../lib/tau
 
 // Maps the string icon names in toolbarConfig to their lucide components.
 const ICONS = {
-  Undo2, Redo2, MousePointer2, Pencil, Type, MessageSquare, Image, Square,
+  Undo2, Redo2, MousePointer2, Pencil, Type, MessageSquare, Image, Square, Table,
   LayoutTemplate, Trash2, RotateCw, FlipHorizontal, FlipVertical,
   ZoomIn, ZoomOut, Maximize2, Grid3X3, Activity,
 }
@@ -137,6 +137,7 @@ export default function Toolbar() {
     callout: { onClick: () => setActiveTool('callout'), active: activeTool === 'callout' },
     insertImage: { onClick: handleInsertImage, disabled: !drawing },
     box: { onClick: () => setActiveTool('box'), active: activeTool === 'box', disabled: !drawing },
+    table: { onClick: () => setActiveTool('table'), active: activeTool === 'table', disabled: !drawing },
     titleBlock: {
       active: drawing?.titleBlock?.visible,
       onClick: () => {
