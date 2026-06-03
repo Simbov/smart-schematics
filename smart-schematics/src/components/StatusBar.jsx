@@ -3,6 +3,7 @@ import useSchematicStore from '../store/schematicStore'
 import useSimulationStore from '../store/simulationStore'
 import { basename } from '../lib/tauriFs'
 import { projectSize, formatBytes, isOverSizeLimit } from '../lib/projectFile'
+import { GRID_SIZES, clampGridSize } from '../lib/gridOptions'
 
 function useRelativeTime(ts) {
   const [label, setLabel] = useState('')
@@ -31,6 +32,8 @@ export default function StatusBar({ cursorPos }) {
   const externalChangeDetected = useSchematicStore(s => s.externalChangeDetected)
   const zoom = drawing?.viewState.zoom || 1
   const isRunning = useSimulationStore(s => s.isRunning)
+  const gridSize = useSchematicStore(s => s.settings.gridSize)
+  const updateSettings = useSchematicStore(s => s.updateSettings)
 
   const projects = useSchematicStore(s => s.projects)
   const drawings = useSchematicStore(s => s.drawings)
@@ -91,6 +94,21 @@ export default function StatusBar({ cursorPos }) {
         {' '}Y: <span className="text-gray-700 dark:text-gray-300">{cursorPos?.y ?? 0}</span>
       </span>
       <span>Zoom: <span className="text-gray-700 dark:text-gray-300">{Math.round(zoom * 100)}%</span></span>
+      <span className="flex items-center gap-1">
+        Grid:
+        <select
+          aria-label="Grid size"
+          title="Grid size (affects snapping and the dot grid)"
+          value={clampGridSize(gridSize)}
+          onChange={e => updateSettings({ gridSize: clampGridSize(Number(e.target.value)) })}
+          className="bg-transparent text-gray-700 dark:text-gray-300 outline-none cursor-pointer"
+          style={{ fontSize: 'inherit' }}
+        >
+          {GRID_SIZES.map(s => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+      </span>
       <span>Components: <span className="text-gray-700 dark:text-gray-300">{componentCount}</span></span>
       <span>Nets: <span className="text-gray-700 dark:text-gray-300">{netCount}</span></span>
       {selectedIds.length > 0 && (

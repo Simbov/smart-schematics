@@ -310,3 +310,15 @@ describe('table store actions (v0.2.0)', () => {
     expect(tables[1].y).toBe(80)
   })
 })
+
+// ─── Stage 5 (v0.2.0): unsaved-work guard ───────────────────────────────────
+import { hasUnsavedWork } from './schematicStore'
+
+describe('hasUnsavedWork', () => {
+  it('is true when any drawing is dirty, false otherwise', () => {
+    expect(hasUnsavedWork([{ isDirty: false }, { isDirty: true }])).toBe(true)
+    expect(hasUnsavedWork([{ isDirty: false }, { isDirty: false }])).toBe(false)
+    expect(hasUnsavedWork([])).toBe(false)
+    expect(hasUnsavedWork(null)).toBe(false)
+  })
+})

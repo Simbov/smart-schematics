@@ -8,9 +8,16 @@ import {
   openFileDialog, saveFileDialog,
   readTextFile, writeTextFile, writeBinaryFile, base64ToBytes,
   getRecentFiles, addRecentFile, removeRecentFile,
-  basename,
+  basename, askConfirm,
 } from '../lib/tauriFs'
 import { sanitizeLoadedProject } from '../lib/projectFile'
+
+// ─── Stage 5: unsaved-work guard ──────────────────────────────────────────────
+// Pure, testable decision helper: true when any drawing has unsaved edits.
+// The actual prompt (Tauri ask / browser confirm) is the thin DOM edge below.
+export function hasUnsavedWork(drawings) {
+  return Array.isArray(drawings) && drawings.some(d => d && d.isDirty)
+}
 
 let idCounter = 0
 export const genId = () => {
@@ -1193,6 +1200,13 @@ const useSchematicStore = create((set, get) => ({
 
   // Open a .scpro file via native dialog (Tauri) or fall back to browser import
   async openProjectFile() {
+    // Stage 5: guard unsaved work before replacing the open project.
+    if (hasUnsavedWork(get().drawings)) {
+      const proceed = await askConfirm(
+        'You have unsaved changes. Opening another project will discard them. Continue?'
+      )
+      if (!proceed) return
+    }
     if (!isRunningInTauri()) {
       // Trigger hidden file input in FileMenu — signal via a store flag
       set({ _triggerBrowserOpen: Date.now() })

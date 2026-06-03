@@ -25,6 +25,16 @@ export async function saveFileDialog(defaultPath, filters = []) {
   return save({ defaultPath, filters })
 }
 
+// Confirmation dialog (Stage 5 — unsaved-work guard). Returns true to proceed,
+// false to abort. Tauri: native `ask`; browser: window.confirm.
+export async function askConfirm(message, title = 'Smart Schematics') {
+  if (!isRunningInTauri()) {
+    return typeof confirm === 'function' ? confirm(message) : true
+  }
+  const { ask } = await import('@tauri-apps/plugin-dialog')
+  return ask(message, { title, kind: 'warning' })
+}
+
 // ─── File system ─────────────────────────────────────────────────────────────
 
 export async function readTextFile(path) {
