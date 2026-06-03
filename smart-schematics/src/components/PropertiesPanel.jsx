@@ -5,6 +5,8 @@ import { getElectricalDef } from '../lib/components/electrical'
 import { getHydraulicDef } from '../lib/components/hydraulic'
 import { parseValue, formatSI } from '../lib/simulation/parseValue'
 import { plainToDoc, applyDocStyle, setDocAlign, docToPlain } from '../lib/richText'
+import { addField, updateField, removeField } from '../lib/boxFields'
+import { RESISTOR_STYLES } from '../lib/resistorStyle'
 
 function getAnyDef(type) { return getElectricalDef(type) || getHydraulicDef(type) }
 
@@ -93,7 +95,9 @@ export default function PropertiesPanel() {
   const simCompState = useSimulationStore(s => s.componentStates[selectedIds[0]])
   const simWireState = useSimulationStore(s => s.wireStates[selectedIds[0]])
 
-  const [local, setLocal] = useState({ designator: '', value: '', description: '' })
+  const [local, setLocal] = useState({ designator: '', value: '', description: '', labelScale: 1, resistorStyle: '' })
+  const [localBoxInfo, setLocalBoxInfo] = useState('')
+  const [localFields, setLocalFields] = useState([])
   const [localSim, setLocalSim] = useState({})
   const [localAnnText, setLocalAnnText] = useState('')
   const [localAnnSize, setLocalAnnSize] = useState(14)
@@ -121,6 +125,8 @@ export default function PropertiesPanel() {
         designator: selected.designator ?? '',
         value: selected.value ?? '',
         description: selected.description ?? '',
+        labelScale: selected.labelScale ?? 1,
+        resistorStyle: selected.resistorStyle ?? '',
       })
       const def = getAnyDef(selected.type)
       const initSim = { ...(selected.simParams ?? {}) }
@@ -158,6 +164,8 @@ export default function PropertiesPanel() {
         stroke: b.stroke ?? '#334155',
         ...counts,
       })
+      setLocalBoxInfo(b.info ?? '')
+      setLocalFields(b.fields ?? [])
     }
   }, [selectedIds[0]])
 
@@ -256,6 +264,25 @@ export default function PropertiesPanel() {
     reader.readAsDataURL(file)
   }
 
+  // Box image assignment (Stage 6): read a file as a data URL into box.image.
+  const boxImageInputRef = useRef(null)
+  const onAssignBoxImage = (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || !isBox) return
+    const reader = new FileReader()
+    reader.onload = () => commitBox({ image: reader.result })
+    reader.readAsDataURL(file)
+  }
+
+  // Commit a single box pin's label without rebuilding the pin layout.
+  const commitPinLabel = useCallback((pinId, label) => {
+    if (!isBox) return
+    const pins = (selected.pins || []).map(p => p.id === pinId ? { ...p, label } : p)
+    pushUndo()
+    updateComponent(activeDrawingId, selected.id, { pins })
+  }, [isBox, activeDrawingId, selected, pushUndo, updateComponent])
+
   const def = isComponent ? getAnyDef(selected.type) : null
   const simParamDefs = def?.simParams ?? {}
   const hasSimParams = Object.keys(simParamDefs).length > 0
@@ -263,13 +290,13 @@ export default function PropertiesPanel() {
 
   return (
     <div
-      className="border-t flex-shrink-0"
+      className="border-l flex-shrink-0 flex flex-col"
       style={{
         background: 'var(--panel-bg)',
         borderColor: 'var(--panel-border)',
         overflowY: 'auto',
-        maxHeight: 200,
-        minHeight: 90,
+        width: 280,
+        height: '100%',
       }}
     >
       <div
@@ -434,7 +461,7 @@ export default function PropertiesPanel() {
         {isComponent && (
           <div className="space-y-1.5">
             {/* Basic fields row */}
-            <div className="grid gap-1.5" style={{ gridTemplateColumns: hasPrimaryParam ? '1fr 1.5fr' : '1fr 1fr 1.5fr' }}>
+            <div className="grid gap-1.5" style={{ gridTemplateColumns: (hasPrimaryParam || isBox) ? '1fr 1.5fr' : '1fr 1fr 1.5fr' }}>
               <Field
                 label="Ref"
                 value={local.designator}
@@ -442,7 +469,9 @@ export default function PropertiesPanel() {
                 onBlur={() => commitField('designator', local.designator)}
                 placeholder="R1"
               />
-              {!hasPrimaryParam && (
+              {/* Generic Value is hidden for boxes (they use flexible fields) and
+                  for components with a primary sim param (e.g. resistance). */}
+              {!hasPrimaryParam && !isBox && (
                 <Field
                   label="Value"
                   value={local.value}
@@ -458,6 +487,38 @@ export default function PropertiesPanel() {
                 onBlur={() => commitField('description', local.description)}
                 placeholder="Description"
               />
+            </div>
+
+            {/* Ref label size + (resistors) symbol style */}
+            <div className="grid gap-1.5 items-center" style={{ gridTemplateColumns: selected.type === 'resistor' ? '1fr 1fr' : '1fr' }}>
+              <Field
+                label="Ref size"
+                type="number"
+                value={local.labelScale}
+                onChange={v => setLocal(l => ({ ...l, labelScale: v }))}
+                onBlur={() => {
+                  const n = Number(local.labelScale)
+                  if (n > 0) commitField('labelScale', n)
+                }}
+              />
+              {selected.type === 'resistor' && (
+                <div className="flex items-center gap-1 min-w-0">
+                  <span className="text-gray-400 flex-shrink-0" style={{ fontSize: 10 }}>Symbol</span>
+                  <select
+                    className="flex-1 min-w-0 rounded px-1 outline-none"
+                    style={{ fontSize: 11, height: 18, background: 'var(--input-bg, rgba(0,0,0,0.06))', border: '1px solid var(--panel-border)', color: 'var(--component-color)' }}
+                    value={local.resistorStyle}
+                    onChange={e => {
+                      const v = e.target.value
+                      setLocal(l => ({ ...l, resistorStyle: v }))
+                      commitField('resistorStyle', v || undefined)
+                    }}
+                  >
+                    <option value="">Default</option>
+                    {RESISTOR_STYLES.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+              )}
             </div>
 
             {/* Box geometry / style / pins (Stage 5). Double-click the box on the
@@ -496,6 +557,80 @@ export default function PropertiesPanel() {
                       onChange={v => setLocalBox(b => ({ ...b, [side]: Math.max(0, Math.round(Number(v) || 0)) }))}
                       onBlur={() => commitBoxPins({ ...localBox })} />
                   ))}
+                </div>
+
+                {/* Pin labels — uncontrolled inputs (commit on blur). Keyed by
+                    pinId so the defaultValue re-seeds when the selection changes. */}
+                {(selected.pins || []).length > 0 && (
+                  <div className="space-y-1">
+                    <div className="text-gray-400" style={{ fontSize: 10 }}>Pin labels</div>
+                    <div className="grid gap-1" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                      {(selected.pins || []).map(p => (
+                        <div key={`${selected.id}-${p.id}`} className="flex items-center gap-1 min-w-0">
+                          <span className="text-gray-400 flex-shrink-0" style={{ fontSize: 10 }}>{p.id}</span>
+                          <input
+                            className="flex-1 min-w-0 rounded px-1 outline-none"
+                            style={{ fontSize: 11, height: 18, background: 'var(--input-bg, rgba(0,0,0,0.06))', border: '1px solid var(--panel-border)', color: 'var(--component-color)', minWidth: 0 }}
+                            placeholder="label"
+                            defaultValue={p.label ?? ''}
+                            onBlur={e => commitPinLabel(p.id, e.target.value)}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Image */}
+                <div className="space-y-1 pt-1 border-t" style={{ borderColor: 'var(--panel-border)' }}>
+                  <input ref={boxImageInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={onAssignBoxImage} />
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-400" style={{ fontSize: 10 }}>Image</span>
+                    <button className="rounded px-2 py-0.5" style={{ fontSize: 11, border: '1px solid var(--panel-border)', color: 'var(--component-color)' }}
+                      onClick={() => boxImageInputRef.current?.click()}>
+                      {selected.box?.image ? 'Replace…' : 'Assign…'}
+                    </button>
+                    {selected.box?.image && (
+                      <button className="rounded px-2 py-0.5 text-red-500" style={{ fontSize: 11, border: '1px solid var(--panel-border)' }}
+                        onClick={() => commitBox({ image: null })}>Remove</button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Properties (flexible field rows) */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400" style={{ fontSize: 10 }}>Properties</span>
+                    <button className="rounded px-2 py-0.5" style={{ fontSize: 11, border: '1px solid var(--panel-border)', color: 'var(--component-color)' }}
+                      onClick={() => { const next = addField(localFields, {}); setLocalFields(next); commitBox({ fields: next }) }}>+ Add</button>
+                  </div>
+                  {localFields.map(f => (
+                    <div key={f.id} className="grid gap-1 items-center" style={{ gridTemplateColumns: '1.2fr 1.2fr 0.7fr auto' }}>
+                      <input className="rounded px-1 outline-none" style={{ fontSize: 11, height: 18, background: 'var(--input-bg, rgba(0,0,0,0.06))', border: '1px solid var(--panel-border)', color: 'var(--component-color)' }}
+                        placeholder="Resistance" defaultValue={f.label}
+                        onBlur={e => { const next = updateField(localFields, f.id, { label: e.target.value }); setLocalFields(next); commitBox({ fields: next }) }} />
+                      <input className="rounded px-1 outline-none" style={{ fontSize: 11, height: 18, background: 'var(--input-bg, rgba(0,0,0,0.06))', border: '1px solid var(--panel-border)', color: 'var(--component-color)' }}
+                        placeholder="4.7k" defaultValue={f.value}
+                        onBlur={e => { const next = updateField(localFields, f.id, { value: e.target.value }); setLocalFields(next); commitBox({ fields: next }) }} />
+                      <input className="rounded px-1 outline-none" style={{ fontSize: 11, height: 18, background: 'var(--input-bg, rgba(0,0,0,0.06))', border: '1px solid var(--panel-border)', color: 'var(--component-color)' }}
+                        placeholder="Ω" defaultValue={f.unit}
+                        onBlur={e => { const next = updateField(localFields, f.id, { unit: e.target.value }); setLocalFields(next); commitBox({ fields: next }) }} />
+                      <button className="text-red-500" style={{ fontSize: 12 }} title="Remove field"
+                        onClick={() => { const next = removeField(localFields, f.id); setLocalFields(next); commitBox({ fields: next }) }}>×</button>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Info / details */}
+                <div className="space-y-0.5">
+                  <span className="text-gray-400 block" style={{ fontSize: 10 }}>Details / info</span>
+                  <textarea
+                    className="w-full rounded px-1 outline-none resize-y"
+                    style={{ fontSize: 11, minHeight: 40, maxHeight: 120, background: 'var(--input-bg, rgba(0,0,0,0.06))', border: '1px solid var(--panel-border)', color: 'var(--component-color)', display: 'block' }}
+                    value={localBoxInfo}
+                    onChange={e => setLocalBoxInfo(e.target.value)}
+                    onBlur={() => commitBox({ info: localBoxInfo })}
+                  />
                 </div>
               </div>
             )}

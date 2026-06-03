@@ -18,6 +18,7 @@ import { checkForUpdates } from '../lib/updater'
 
 export default function App() {
   const theme = useSchematicStore(s => s.theme)
+  const hasSelection = useSchematicStore(s => s.selectedIds.length > 0)
   const toggleTheme = useSchematicStore(s => s.toggleTheme)
   const loadFromStorage = useSchematicStore(s => s.loadFromStorage)
   const saveAll = useSchematicStore(s => s.saveAll)
@@ -177,11 +178,11 @@ export default function App() {
           <ErrorBoundary name="Canvas">
             <Canvas onCursorMove={setCursorPos} />
           </ErrorBoundary>
-          <PropertiesPanel />
         </div>
 
-        {/* Right component library */}
-        <ComponentLibrary />
+        {/* Right rail: Properties when something is selected, else the component
+            library (Stage 6). One rail, no bottom strip. */}
+        {hasSelection ? <PropertiesPanel /> : <ComponentLibrary />}
       </div>
 
       {/* Status bar */}
