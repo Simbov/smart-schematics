@@ -8,6 +8,8 @@ import {
   MIN_IMAGE_SIZE,
   DEFAULT_MAX_SIZE,
   RESIZE_HANDLES,
+  imageHitTest,
+  topImageAt,
 } from './imageUtils.js'
 
 describe('aspectFitSize', () => {
@@ -158,5 +160,87 @@ describe('resizeBox', () => {
     expect(RESIZE_HANDLES).toHaveLength(8)
     expect(RESIZE_HANDLES).toContain('nw')
     expect(RESIZE_HANDLES).toContain('se')
+  })
+})
+
+describe('imageHitTest', () => {
+  // 200x100 box at (100,100) → spans x[100,300] y[100,200], center (200,150).
+  const img = { x: 100, y: 100, width: 200, height: 100, rotation: 0 }
+
+  it('hits a point inside an un-rotated image', () => {
+    expect(imageHitTest(img, 200, 150)).toBe(true) // center
+    expect(imageHitTest(img, 110, 110)).toBe(true) // near top-left corner
+  })
+
+  it('misses a point outside an un-rotated image', () => {
+    expect(imageHitTest(img, 50, 150)).toBe(false)  // left of box
+    expect(imageHitTest(img, 200, 250)).toBe(false) // below box
+  })
+
+  it('treats edges/corners as inside (inclusive bounds)', () => {
+    expect(imageHitTest(img, 100, 100)).toBe(true) // top-left corner
+    expect(imageHitTest(img, 300, 200)).toBe(true) // bottom-right corner
+  })
+
+  it('hits inside a 90°-rotated image (rotated box footprint)', () => {
+    // Rotating the 200x100 box 90° about center (200,150) sweeps the footprint
+    // to x[150,250] y[50,250]. A point at (200,60) is OUTSIDE the un-rotated box
+    // but INSIDE the rotated one.
+    const r = { ...img, rotation: 90 }
+    expect(imageHitTest(r, 200, 60)).toBe(true)
+    expect(imageHitTest(r, 200, 240)).toBe(true)
+    // A point that was inside the un-rotated wide box is now outside.
+    expect(imageHitTest(r, 290, 150)).toBe(false)
+  })
+
+  it('180° rotation has the same footprint as 0°', () => {
+    const r = { ...img, rotation: 180 }
+    expect(imageHitTest(r, 110, 110)).toBe(true)
+    expect(imageHitTest(r, 50, 150)).toBe(false)
+  })
+
+  it('returns false for a null image', () => {
+    expect(imageHitTest(null, 0, 0)).toBe(false)
+  })
+})
+
+describe('topImageAt', () => {
+  // Two overlapping images; later in the array = on top.
+  const bottom = { id: 'bottom', x: 0, y: 0, width: 100, height: 100 }
+  const top = { id: 'top', x: 50, y: 50, width: 100, height: 100 }
+
+  it('returns the topmost image when several overlap', () => {
+    // (60,60) is inside both; the later one (top) wins.
+    expect(topImageAt([bottom, top], 60, 60)?.id).toBe('top')
+  })
+
+  it('falls through to a lower image where the top one misses', () => {
+    // (10,10) is only inside `bottom`.
+    expect(topImageAt([bottom, top], 10, 10)?.id).toBe('bottom')
+  })
+
+  it('returns null when the point hits no image', () => {
+    expect(topImageAt([bottom, top], 500, 500)).toBeNull()
+  })
+
+  it('skips locked images by default', () => {
+    const locked = { ...top, id: 'top', locked: true }
+    // (60,60) is inside both; locked top is skipped → bottom selected.
+    expect(topImageAt([bottom, locked], 60, 60)?.id).toBe('bottom')
+  })
+
+  it('returns null when the only hit is locked and includeLocked is false', () => {
+    const locked = { id: 'only', x: 0, y: 0, width: 100, height: 100, locked: true }
+    expect(topImageAt([locked], 50, 50)).toBeNull()
+  })
+
+  it('includes locked images when includeLocked is set', () => {
+    const locked = { ...top, id: 'top', locked: true }
+    expect(topImageAt([bottom, locked], 60, 60, { includeLocked: true })?.id).toBe('top')
+  })
+
+  it('returns null for empty / missing input', () => {
+    expect(topImageAt([], 0, 0)).toBeNull()
+    expect(topImageAt(null, 0, 0)).toBeNull()
   })
 })

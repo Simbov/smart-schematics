@@ -46,6 +46,55 @@ export function snapBox(box, grid) {
   return { ...box, x: snap(box.x, grid), y: snap(box.y, grid) }
 }
 
+// Point-in-image hit test honoring the image's rotation (0/90/180/270 only).
+//
+// An image is an axis-aligned box {x, y, width, height} that may be rotated in
+// 90° steps about its own center. Rather than rotate the box, we rotate the
+// query point by -rotation about the center back into the box's un-rotated
+// frame, then do a plain rect containment test. This is the SINGLE source of
+// truth for "is this world point inside this image" — both Canvas click
+// handling and any future hit-testing must use it so picking and the rendered
+// rect can never disagree (the old per-<image> onClick path was the source of
+// the flaky selection bug).
+export function imageHitTest(image, wx, wy) {
+  if (!image) return false
+  const { x, y, width, height } = image
+  const cx = x + width / 2
+  const cy = y + height / 2
+  // Normalize rotation to 0/90/180/270. Anything else is treated as its nearest
+  // right-angle (images only ever rotate in 90° steps in this app).
+  const rot = ((Math.round((image.rotation || 0) / 90) * 90) % 360 + 360) % 360
+
+  // Rotate the query point by -rot about the center, into the box's local frame.
+  let dx = wx - cx
+  let dy = wy - cy
+  let lx, ly
+  switch (rot) {
+    case 90:  lx =  dy; ly = -dx; break   // inverse of +90°
+    case 180: lx = -dx; ly = -dy; break
+    case 270: lx = -dy; ly =  dx; break
+    default:  lx =  dx; ly =  dy; break    // 0°
+  }
+  // The un-rotated box is centered at the origin in local coords.
+  return Math.abs(lx) <= width / 2 && Math.abs(ly) <= height / 2
+}
+
+// Z-order-correct image pick: returns the TOPMOST image under a world point, or
+// null on a miss. Images later in the array render on top (see Canvas/ImageLayer
+// draw order), so we scan back-to-front. Locked images are select-through and
+// skipped unless `includeLocked` is set (Alt/right-click path, so a locked image
+// can be re-selected to unlock it).
+export function topImageAt(images, wx, wy, { includeLocked = false } = {}) {
+  if (!images) return null
+  for (let i = images.length - 1; i >= 0; i--) {
+    const img = images[i]
+    if (!img) continue
+    if (img.locked && !includeLocked) continue
+    if (imageHitTest(img, wx, wy)) return img
+  }
+  return null
+}
+
 // The eight resize-handle ids. Corners resize two sides; edges resize one.
 export const RESIZE_HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 

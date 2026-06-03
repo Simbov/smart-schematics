@@ -15,7 +15,7 @@ import AnnotationLayer from './AnnotationLayer'
 import ImageLayer from './ImageLayer'
 import TitleBlock from './TitleBlock'
 import InlineEditor from './InlineEditor'
-import { resizeBox, snapBox, RESIZE_HANDLES } from '../lib/imageUtils'
+import { resizeBox, snapBox, RESIZE_HANDLES, topImageAt, aspectFitSize, defaultPlacement } from '../lib/imageUtils'
 import RichTextEditor from './RichTextEditor'
 import { emptyDoc, plainToDoc, isEmptyDoc } from '../lib/richText'
 import { ELECTRICAL_SYMBOL_MAP } from '../lib/symbols/electrical'
@@ -69,6 +69,9 @@ export default function Canvas({ onCursorMove }) {
   const spaceHeld = useRef(false)
   const mouseDownPos = useRef(null)
   const didDrag = useRef(false)
+  // Last known cursor position in world coords — used as the paste anchor for
+  // clipboard images. Updated on every mouse move over the canvas.
+  const lastWorldPoint = useRef(null)
 
   // Wire tool state
   const wirePointsRef = useRef([])
@@ -155,6 +158,7 @@ export default function Canvas({ onCursorMove }) {
   const copyToClipboard = useSchematicStore(s => s.copyToClipboard)
   const pasteFromClipboard = useSchematicStore(s => s.pasteFromClipboard)
   const updateImage = useSchematicStore(s => s.updateImage)
+  const addImage = useSchematicStore(s => s.addImage)
   const addBox = useSchematicStore(s => s.addBox)
   const updateBox = useSchematicStore(s => s.updateBox)
   const updateComponent = useSchematicStore(s => s.updateComponent)
@@ -329,6 +333,56 @@ export default function Canvas({ onCursorMove }) {
     }
   }, [activeTool, wirePoints, undo, redo, deleteIds, copyToClipboard, pasteFromClipboard, rotateComponent, flipComponent, zoomToSelection, pushUndo, updateImage])
 
+  // Paste an image from the clipboard onto the drawing (v0.2.0). Anchored at the
+  // last cursor world point, else the viewport center; sized via aspectFitSize.
+  // Ignored while editing text (contentEditable / inputs) so it never steals a
+  // normal text paste. Mirrors Toolbar.insertImageFromDataUrl.
+  useEffect(() => {
+    function onPaste(e) {
+      const state = useSchematicStore.getState()
+      const did = state.activeDrawingId
+      if (!did) return
+      const t = e.target
+      if (t && (t.isContentEditable || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return
+      const items = e.clipboardData?.items
+      if (!items) return
+      let file = null
+      for (const it of items) {
+        if (it.type && it.type.startsWith('image/')) { file = it.getAsFile(); break }
+      }
+      if (!file) return
+      e.preventDefault()
+      const reader = new FileReader()
+      reader.onload = () => {
+        const src = reader.result
+        const probe = new window.Image()
+        probe.onload = () => {
+          const s2 = useSchematicStore.getState()
+          const size = aspectFitSize(probe.naturalWidth, probe.naturalHeight)
+          const grid = s2.settings.snapToGrid ? s2.settings.gridSize : 0
+          let cx, cy
+          if (lastWorldPoint.current) {
+            cx = lastWorldPoint.current.x; cy = lastWorldPoint.current.y
+          } else {
+            const dr = s2.drawings.find(d => d.id === did)
+            const { panX, panY, zoom } = dr?.viewState || { panX: 0, panY: 0, zoom: 1 }
+            cx = (window.innerWidth / 2 - panX) / zoom
+            cy = (window.innerHeight / 2 - panY) / zoom
+          }
+          const origin = defaultPlacement(cx, cy, size, grid)
+          pushUndo()
+          const id = addImage(did, { src, x: origin.x, y: origin.y, width: size.width, height: size.height })
+          setSelectedIds([id])
+          setActiveTool('select')
+        }
+        probe.src = src
+      }
+      reader.readAsDataURL(file)
+    }
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+  }, [addImage, pushUndo, setSelectedIds, setActiveTool])
+
   const zoomAt = useCallback((factor, cx, cy) => {
     if (!activeDrawingId) return
     const vs = useSchematicStore.getState().drawings.find(d => d.id === activeDrawingId)?.viewState || { panX: 0, panY: 0, zoom: 1 }
@@ -482,6 +536,9 @@ export default function Canvas({ onCursorMove }) {
     const snapped = toWorld(sx, sy, true)
     setGhostPoint(snapped)
     onCursorMove?.(snapped)
+    // Remember the raw (un-snapped) world point so a clipboard paste lands under
+    // the cursor.
+    lastWorldPoint.current = toWorld(sx, sy, false)
 
     const tool = useSchematicStore.getState().activeTool
     if (tool === 'wire') {
@@ -703,7 +760,13 @@ export default function Canvas({ onCursorMove }) {
     }
 
     if (tool === 'select') {
-      // Click on empty canvas — clear selection
+      // Click on empty canvas — clear selection. Images are pointer-transparent
+      // (ImageLayer), so a click that landed on an image bubbles here; the
+      // mousedown image-pick already set the selection, so don't clear it. Match
+      // the mousedown pick exactly (incl. Alt = include locked).
+      const wpt = toWorld(sx, sy, false)
+      const dr = state.drawings.find(d => d.id === state.activeDrawingId)
+      if (topImageAt(dr?.images || [], wpt.x, wpt.y, { includeLocked: e.altKey })) return
       clearSelection()
     }
   }, [activeDrawingId, getSVGPos, toWorld, addComponent, addBox, setActiveTool, setSelectedIds, finishWire, clearSelection, pushUndo, addAnnotation])
@@ -1011,14 +1074,28 @@ export default function Canvas({ onCursorMove }) {
     }
 
     if (tool !== 'select') return
-    // Only start rubber band if clicking on background (not on a component)
-    // Components fire stopPropagation on their mousedown, so this fires for background
+    // Only start rubber band if clicking on background (not on a component).
+    // Components/annotations fire stopPropagation on their own mousedown, so this
+    // fires for the background and for images (images are pointer-transparent —
+    // picking is centralized here via topImageAt).
     const { sx, sy } = getSVGPos(e)
     const worldStart = toWorld(sx, sy, false)
+
+    // Image pick (z-order-correct). Alt/Option-click includes locked images so a
+    // locked image can be re-selected (and then unlocked in the Properties panel);
+    // locked images are otherwise select-through.
+    const dr = useSchematicStore.getState().drawings.find(d => d.id === activeDrawingId)
+    const hit = topImageAt(dr?.images || [], worldStart.x, worldStart.y, { includeLocked: e.altKey })
+    if (hit) {
+      // Reuse the unified drag starter (selects + begins a move gesture).
+      startDrag(hit.id, e, true)
+      return
+    }
+
     isRubberBanding.current = true
     rubberBandRef.current = { startWorld: worldStart, endWorld: worldStart }
     setRubberBand({ startWorld: worldStart, endWorld: worldStart })
-  }, [onMouseDown, getSVGPos, toWorld])
+  }, [onMouseDown, getSVGPos, toWorld, activeDrawingId, startDrag])
 
   // Cursor style
   useEffect(() => {
