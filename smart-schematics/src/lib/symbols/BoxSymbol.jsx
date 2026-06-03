@@ -20,6 +20,7 @@ export default function BoxSymbol({ box = {}, instanceId }) {
   const fill = box.fill || '#f1f5f9'
   const stroke = box.stroke || '#334155'
   const doc = box.doc
+  const image = box.image || null
   const clipId = `boxclip_${instanceId || (_clipSeq++)}`
   const PAD = 4
 
@@ -42,6 +43,18 @@ export default function BoxSymbol({ box = {}, instanceId }) {
         strokeWidth="1.5"
         vectorEffect="non-scaling-stroke"
       />
+      {image && (
+        <image
+          href={image}
+          x={-w / 2 + PAD}
+          y={-h / 2 + PAD}
+          width={w - PAD * 2}
+          height={h - PAD * 2}
+          clipPath={`url(#${clipId})`}
+          preserveAspectRatio="xMidYMid meet"
+          style={{ pointerEvents: 'none' }}
+        />
+      )}
       {doc && !isEmptyDoc(doc) && (
         <foreignObject
           x={-w / 2 + PAD}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { createBox, boxPins } from './boxComponent.js'
+import { createBox, boxPins, boxPinLabelPos } from './boxComponent.js'
 
 const GRID = 10
 
@@ -52,6 +52,23 @@ describe('boxPins — single bottom pin is centered + on a grid line', () => {
     const ys = pins.map(p => p.relY).sort((a, b) => a - b)
     expect(ys[0]).toBe(-ys[1]) // symmetric about the centre
     for (const y of ys) expect(Math.abs(y % GRID)).toBe(0)
+  })
+})
+
+describe('boxPinLabelPos — labels sit inside the box from the pin', () => {
+  it('insets toward the box interior with the right anchor per edge', () => {
+    expect(boxPinLabelPos({ absX: -40, absY: 0, direction: 'W' }, 8))
+      .toMatchObject({ x: -32, y: 0, anchor: 'start' })
+    expect(boxPinLabelPos({ absX: 40, absY: 0, direction: 'E' }, 8))
+      .toMatchObject({ x: 32, y: 0, anchor: 'end' })
+    expect(boxPinLabelPos({ absX: 0, absY: -30, direction: 'N' }, 8))
+      .toMatchObject({ x: 0, y: -22, anchor: 'middle' })
+    expect(boxPinLabelPos({ absX: 0, absY: 30, direction: 'S' }, 8))
+      .toMatchObject({ x: 0, y: 22, anchor: 'middle' })
+  })
+
+  it('falls back to relX/relY when abs coords are absent', () => {
+    expect(boxPinLabelPos({ relX: -40, relY: 0, direction: 'W' }, 8).x).toBe(-32)
   })
 })
 

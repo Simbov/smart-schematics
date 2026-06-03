@@ -16,6 +16,7 @@ import ImageLayer from './ImageLayer'
 import TitleBlock from './TitleBlock'
 import InlineEditor from './InlineEditor'
 import { resizeBox, snapBox, RESIZE_HANDLES, topImageAt, aspectFitSize, defaultPlacement } from '../lib/imageUtils'
+import { boxPinLabelPos } from '../lib/boxComponent'
 import RichTextEditor from './RichTextEditor'
 import { emptyDoc, plainToDoc, isEmptyDoc } from '../lib/richText'
 import { ELECTRICAL_SYMBOL_MAP } from '../lib/symbols/electrical'
@@ -1362,6 +1363,28 @@ export default function Canvas({ onCursorMove }) {
                   strokeWidth="0.5"
                   style={{ pointerEvents: 'none' }}
                 />
+              )
+            })
+          )}
+
+          {/* Box pin labels (Stage 7) — always visible, drawn just inside the
+              box from each labelled pin. Boxes only. */}
+          {drawing.components.filter(c => c.type === 'box').map(comp =>
+            (comp.pins || []).filter(p => p.label).map(pin => {
+              const lp = boxPinLabelPos(pin)
+              return (
+                <text
+                  key={`plabel-${comp.id}-${pin.id}`}
+                  x={lp.x}
+                  y={lp.y}
+                  textAnchor={lp.anchor}
+                  dominantBaseline={lp.baseline}
+                  fontSize={8}
+                  fill="var(--component-color)"
+                  style={{ pointerEvents: 'none', userSelect: 'none' }}
+                >
+                  {pin.label}
+                </text>
               )
             })
           )}

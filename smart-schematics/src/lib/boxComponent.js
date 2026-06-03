@@ -123,6 +123,22 @@ export function boxPins(box, spec = DEFAULT_PIN_SPEC, grid = 10) {
   return pins
 }
 
+// Pure placement for a box pin's label text (Stage 7). Given a pin's absolute
+// world coords + edge direction, returns where to draw its `label` so it sits
+// just INSIDE the box from the pin, with the matching SVG text-anchor /
+// dominant-baseline. `inset` is in world units. No DOM.
+export function boxPinLabelPos(pin, inset = 8) {
+  const x = pin.absX ?? pin.relX ?? 0
+  const y = pin.absY ?? pin.relY ?? 0
+  switch (pin.direction) {
+    case 'W': return { x: x + inset, y, anchor: 'start',  baseline: 'middle' }
+    case 'E': return { x: x - inset, y, anchor: 'end',    baseline: 'middle' }
+    case 'N': return { x, y: y + inset, anchor: 'middle', baseline: 'hanging' }
+    case 'S': return { x, y: y - inset, anchor: 'middle', baseline: 'auto' }
+    default:  return { x, y, anchor: 'middle', baseline: 'middle' }
+  }
+}
+
 // Build a valid box Component (type:'box'). The store's addComponent path is not
 // used for boxes because a box has no library def; the Canvas calls this factory
 // directly and hands the result to a generic add. The origin (x,y) is the box
