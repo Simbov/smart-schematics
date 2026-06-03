@@ -175,6 +175,7 @@ describe('Stage 1 — box component round-trip', () => {
         width: 80, height: 60,
         doc: { align: 'left', paragraphs: [{ runs: [{ text: 'MCU' }] }] },
         fill: '#eef', stroke: '#333', cornerRadius: 4,
+        images: [], // v0.2.0: migration backfills panel-only reference images
       },
       pins: [
         { id: 'P1', relX: -40, relY: 0, absX: 60, absY: 100, direction: 'W', label: '' },
@@ -281,7 +282,10 @@ describe('Stage 1 — v3 → v4 migration & snapshot version', () => {
 
     const box = drawing.components.find(c => c.id === 'box_f')
     expect(box.box.fields).toEqual([{ id: 'f1', label: 'Resistance', value: '4.7k', unit: 'Ω' }])
-    expect(box.box.image).toBe(PNG_SRC)
+    expect(box.box.image).toBe(PNG_SRC) // legacy field preserved (additive)
+    // v0.2.0: the legacy single image folds into the panel-only images array.
+    expect(box.box.images).toHaveLength(1)
+    expect(box.box.images[0].src).toBe(PNG_SRC)
     expect(box.box.info).toBe('Datasheet rev B')
     expect(box.pins[0].label).toBe('OUT')
 

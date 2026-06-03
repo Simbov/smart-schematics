@@ -73,10 +73,10 @@ describe('boxPinLabelPos — labels sit inside the box from the pin', () => {
 })
 
 describe('createBox — v0.2.0 box payload', () => {
-  it('seeds empty fields, null image and empty info', () => {
+  it('seeds empty fields, empty images and empty info', () => {
     const b = createBox({ grid: GRID })
     expect(b.box.fields).toEqual([])
-    expect(b.box.image).toBeNull()
+    expect(b.box.images).toEqual([])
     expect(b.box.info).toBe('')
   })
 })

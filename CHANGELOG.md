@@ -12,6 +12,43 @@ section with the version and date and starts a fresh Unreleased block.
 
 ## [Unreleased]
 
+### Added
+- **Properties panel.** Select any component, wire, image, text box, or box and
+  its settings open in a panel on the right; deselect and the component library
+  returns. The panel is organised into clear sections so it's easy to scan.
+- **Richer component boxes.** Boxes now carry a flexible list of **properties**
+  (name / value / unit rows you can add and remove), free-form **details**, and
+  per-pin **labels**. A box with a single pin on a side now sits centred on that
+  edge.
+- **Reference images on a box.** Attach one or more pictures (photo, pinout,
+  datasheet snippet) to a box as documentation. They show only in the Properties
+  panel — each under its own heading — and never change the schematic itself.
+- **Resistor symbol style.** Choose IEC (rectangle) or IEEE (zig-zag) per
+  resistor, or set a default for the whole drawing.
+- **Connector library.** New connector symbols: Deutsch DT (2/3/4-way), M12
+  A-coded (3/4-pin), and pin headers (2/4-pin).
+- **Tables.** Insert a table onto a drawing and edit each cell as rich text —
+  handy for pin maps and wiring legends.
+- **Resizable text boxes** with eight drag handles, plus an adjustable reference
+  label size on components.
+- **Grid sizing.** Pick the grid spacing (5, 10, 20, 25, or 50) from the status
+  bar; the canvas re-tiles and snapping follows.
+
+### Changed
+- **Paste images.** Copy an image anywhere and paste it straight onto the canvas
+  at your cursor.
+- **Unsaved-work prompt.** Opening another project now warns you first if the
+  current one has unsaved changes.
+- The text formatting toolbar now highlights the active bold/italic/underline
+  and alignment state for what you've selected.
+
+### Fixed
+- **Reliable image selection.** Clicking an image now selects it every time, and
+  a locked image can be unlocked again from the Properties panel.
+- **Font size** in the text editor now applies correctly to a selection.
+- **Dragging a drawing into a subfolder now works on Windows.** The desktop
+  webview was intercepting the drag; the file tree handles it directly now.
+
 ## [0.1.1] - 2026-06-02
 
 ### Fixed

@@ -188,9 +188,10 @@ export function createBox({
       stroke,
       cornerRadius,
       // v0.2.0 box additions — flexible property rows replace the generic
-      // `value` for boxes; an optional embedded image; free-form info text.
+      // `value` for boxes; reference pictures shown only in the Properties panel
+      // (NOT drawn on the canvas); free-form info text.
       fields: [],
-      image: null,
+      images: [],
       info: '',
     },
     simParams: {},

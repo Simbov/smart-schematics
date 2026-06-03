@@ -6,9 +6,19 @@ import { getHydraulicDef } from '../lib/components/hydraulic'
 import { parseValue, formatSI } from '../lib/simulation/parseValue'
 import { plainToDoc, applyDocStyle, setDocAlign, docToPlain } from '../lib/richText'
 import { addField, updateField, removeField } from '../lib/boxFields'
+import { addBoxImage, updateBoxImage, removeBoxImage, normalizeBoxImages } from '../lib/boxImages'
 import { RESISTOR_STYLES } from '../lib/resistorStyle'
 
 function getAnyDef(type) { return getElectricalDef(type) || getHydraulicDef(type) }
+
+// Shared compact input styling (used by the box property/image rows).
+const INPUT_CLASS = 'rounded px-1 outline-none w-full'
+const INPUT_STYLE = {
+  fontSize: 11, height: 20,
+  background: 'var(--input-bg, rgba(0,0,0,0.06))',
+  border: '1px solid var(--panel-border)',
+  color: 'var(--component-color)', minWidth: 0,
+}
 
 // Style for a quick-style toggle button in the annotation properties.
 function qsBtn(active) {
@@ -79,6 +89,47 @@ function SelectField({ label, value, options, onChange }) {
   )
 }
 
+// A titled section with a top divider and an optional right-aligned action
+// button (e.g. "+ Add"). Groups related controls so the narrow vertical panel
+// reads as a clean, scannable stack rather than one dense run of inputs.
+function Section({ title, action, children }) {
+  return (
+    <div className="pt-2 mt-2 border-t first:border-t-0 first:pt-0 first:mt-0" style={{ borderColor: 'var(--panel-border)' }}>
+      <div className="flex items-center justify-between mb-1 min-h-[18px]">
+        <span className="text-gray-400 font-semibold uppercase" style={{ fontSize: 9, letterSpacing: '0.06em' }}>{title}</span>
+        {action}
+      </div>
+      <div className="space-y-1.5">{children}</div>
+    </div>
+  )
+}
+
+// Small bordered "+ Add" style button used for section actions.
+function MiniButton({ children, onClick, title }) {
+  return (
+    <button
+      type="button"
+      className="rounded px-2 py-0.5 hover:bg-black/5 dark:hover:bg-white/10"
+      style={{ fontSize: 11, border: '1px solid var(--panel-border)', color: 'var(--component-color)', lineHeight: 1.2 }}
+      onClick={onClick}
+      title={title}
+    >{children}</button>
+  )
+}
+
+// Square red remove button with a guaranteed-visible hit area.
+function RemoveButton({ onClick, title }) {
+  return (
+    <button
+      type="button"
+      className="flex items-center justify-center rounded text-red-500 hover:bg-red-500/15 flex-shrink-0"
+      style={{ width: 22, height: 22, border: '1px solid var(--panel-border)', fontSize: 15, lineHeight: 1 }}
+      onClick={onClick}
+      title={title}
+    >×</button>
+  )
+}
+
 export default function PropertiesPanel() {
   const selectedIds = useSchematicStore(s => s.selectedIds)
   const activeDrawingId = useSchematicStore(s => s.activeDrawingId)
@@ -98,6 +149,7 @@ export default function PropertiesPanel() {
   const [local, setLocal] = useState({ designator: '', value: '', description: '', labelScale: 1, resistorStyle: '' })
   const [localBoxInfo, setLocalBoxInfo] = useState('')
   const [localFields, setLocalFields] = useState([])
+  const [localBoxImages, setLocalBoxImages] = useState([])
   const [localSim, setLocalSim] = useState({})
   const [localAnnText, setLocalAnnText] = useState('')
   const [localAnnSize, setLocalAnnSize] = useState(14)
@@ -166,6 +218,7 @@ export default function PropertiesPanel() {
       })
       setLocalBoxInfo(b.info ?? '')
       setLocalFields(b.fields ?? [])
+      setLocalBoxImages(normalizeBoxImages(b))
     }
   }, [selectedIds[0]])
 
@@ -264,15 +317,30 @@ export default function PropertiesPanel() {
     reader.readAsDataURL(file)
   }
 
-  // Box image assignment (Stage 6): read a file as a data URL into box.image.
+  // Box reference images (v0.2.0): panel-only documentation pictures. Reading a
+  // file appends it to box.images (NOT drawn on the canvas). Multiple images are
+  // supported, each filed under an editable heading.
   const boxImageInputRef = useRef(null)
+  const commitBoxImages = useCallback((next) => {
+    if (!isBox) return
+    setLocalBoxImages(next)
+    commitBox({ images: next })
+  }, [isBox, commitBox])
   const onAssignBoxImage = (e) => {
-    const file = e.target.files?.[0]
+    const files = Array.from(e.target.files || [])
     e.target.value = ''
-    if (!file || !isBox) return
-    const reader = new FileReader()
-    reader.onload = () => commitBox({ image: reader.result })
-    reader.readAsDataURL(file)
+    if (!files.length || !isBox) return
+    // Read all chosen files, then append them in one commit.
+    Promise.all(files.map(file => new Promise(resolve => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result)
+      reader.onerror = () => resolve(null)
+      reader.readAsDataURL(file)
+    }))).then(srcs => {
+      let next = localBoxImages
+      for (const src of srcs) if (src) next = addBoxImage(next, { src, heading: '' })
+      commitBoxImages(next)
+    })
   }
 
   // Commit a single box pin's label without rebuilding the pin layout.
@@ -295,6 +363,7 @@ export default function PropertiesPanel() {
         background: 'var(--panel-bg)',
         borderColor: 'var(--panel-border)',
         overflowY: 'auto',
+        overflowX: 'hidden',
         width: 280,
         height: '100%',
       }}
@@ -521,118 +590,135 @@ export default function PropertiesPanel() {
               )}
             </div>
 
-            {/* Box geometry / style / pins (Stage 5). Double-click the box on the
-                canvas to edit its rich-text label. */}
+            {/* Box editor (Stage 5 + v0.2.0): grouped into scannable sections so
+                the narrow vertical rail stays readable. */}
             {isBox && (
-              <div className="space-y-1.5 pt-1 border-t" style={{ borderColor: 'var(--panel-border)' }}>
-                <div className="text-gray-400" style={{ fontSize: 10 }}>Double-click the box to edit its label</div>
-                <div className="grid gap-1.5" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
-                  <Field label="W" type="number" value={localBox.width}
-                    onChange={v => setLocalBox(b => ({ ...b, width: Number(v) }))}
-                    onBlur={() => commitBox({ width: Math.max(10, localBox.width) })} />
-                  <Field label="H" type="number" value={localBox.height}
-                    onChange={v => setLocalBox(b => ({ ...b, height: Number(v) }))}
-                    onBlur={() => commitBox({ height: Math.max(10, localBox.height) })} />
-                  <Field label="Radius" type="number" value={localBox.cornerRadius}
-                    onChange={v => setLocalBox(b => ({ ...b, cornerRadius: Number(v) }))}
-                    onBlur={() => commitBox({ cornerRadius: Math.max(0, localBox.cornerRadius) })} />
-                </div>
-                <div className="flex items-center gap-3 flex-wrap" style={{ fontSize: 11 }}>
-                  <label className="flex items-center gap-1" title="Fill color">
-                    <span className="text-gray-400" style={{ fontSize: 10 }}>Fill</span>
-                    <input type="color" value={localBox.fill}
-                      onChange={e => { setLocalBox(b => ({ ...b, fill: e.target.value })); commitBox({ fill: e.target.value }) }}
-                      style={{ width: 22, height: 20, border: 'none', background: 'transparent', cursor: 'pointer', padding: 0 }} />
-                  </label>
-                  <label className="flex items-center gap-1" title="Stroke color">
-                    <span className="text-gray-400" style={{ fontSize: 10 }}>Stroke</span>
-                    <input type="color" value={localBox.stroke}
-                      onChange={e => { setLocalBox(b => ({ ...b, stroke: e.target.value })); commitBox({ stroke: e.target.value }) }}
-                      style={{ width: 22, height: 20, border: 'none', background: 'transparent', cursor: 'pointer', padding: 0 }} />
-                  </label>
-                </div>
-                <div className="grid gap-1.5" style={{ gridTemplateColumns: '1fr 1fr 1fr 1fr' }}>
-                  {['W', 'E', 'N', 'S'].map(side => (
-                    <Field key={side} label={`${side} pins`} type="number" value={localBox[side]}
-                      onChange={v => setLocalBox(b => ({ ...b, [side]: Math.max(0, Math.round(Number(v) || 0)) }))}
-                      onBlur={() => commitBoxPins({ ...localBox })} />
-                  ))}
-                </div>
+              <>
+                {/* Appearance — geometry + colours. */}
+                <Section title="Appearance">
+                  <div className="text-gray-400" style={{ fontSize: 10 }}>Double-click the box on the canvas to edit its label.</div>
+                  <div className="grid gap-1.5" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
+                    <Field label="W" type="number" value={localBox.width}
+                      onChange={v => setLocalBox(b => ({ ...b, width: Number(v) }))}
+                      onBlur={() => commitBox({ width: Math.max(10, localBox.width) })} />
+                    <Field label="H" type="number" value={localBox.height}
+                      onChange={v => setLocalBox(b => ({ ...b, height: Number(v) }))}
+                      onBlur={() => commitBox({ height: Math.max(10, localBox.height) })} />
+                    <Field label="R" type="number" value={localBox.cornerRadius}
+                      onChange={v => setLocalBox(b => ({ ...b, cornerRadius: Number(v) }))}
+                      onBlur={() => commitBox({ cornerRadius: Math.max(0, localBox.cornerRadius) })} />
+                  </div>
+                  <div className="flex items-center gap-4" style={{ fontSize: 11 }}>
+                    <label className="flex items-center gap-1" title="Fill color">
+                      <span className="text-gray-400" style={{ fontSize: 10 }}>Fill</span>
+                      <input type="color" value={localBox.fill}
+                        onChange={e => { setLocalBox(b => ({ ...b, fill: e.target.value })); commitBox({ fill: e.target.value }) }}
+                        style={{ width: 28, height: 20, border: 'none', background: 'transparent', cursor: 'pointer', padding: 0 }} />
+                    </label>
+                    <label className="flex items-center gap-1" title="Stroke color">
+                      <span className="text-gray-400" style={{ fontSize: 10 }}>Stroke</span>
+                      <input type="color" value={localBox.stroke}
+                        onChange={e => { setLocalBox(b => ({ ...b, stroke: e.target.value })); commitBox({ stroke: e.target.value }) }}
+                        style={{ width: 28, height: 20, border: 'none', background: 'transparent', cursor: 'pointer', padding: 0 }} />
+                    </label>
+                  </div>
+                </Section>
 
-                {/* Pin labels — uncontrolled inputs (commit on blur). Keyed by
-                    pinId so the defaultValue re-seeds when the selection changes. */}
-                {(selected.pins || []).length > 0 && (
-                  <div className="space-y-1">
-                    <div className="text-gray-400" style={{ fontSize: 10 }}>Pin labels</div>
-                    <div className="grid gap-1" style={{ gridTemplateColumns: '1fr 1fr' }}>
-                      {(selected.pins || []).map(p => (
-                        <div key={`${selected.id}-${p.id}`} className="flex items-center gap-1 min-w-0">
-                          <span className="text-gray-400 flex-shrink-0" style={{ fontSize: 10 }}>{p.id}</span>
-                          <input
-                            className="flex-1 min-w-0 rounded px-1 outline-none"
-                            style={{ fontSize: 11, height: 18, background: 'var(--input-bg, rgba(0,0,0,0.06))', border: '1px solid var(--panel-border)', color: 'var(--component-color)', minWidth: 0 }}
-                            placeholder="label"
-                            defaultValue={p.label ?? ''}
-                            onBlur={e => commitPinLabel(p.id, e.target.value)}
-                          />
-                        </div>
-                      ))}
+                {/* Pins — per-side counts + per-pin labels. */}
+                <Section title="Pins">
+                  <div className="grid gap-1.5" style={{ gridTemplateColumns: '1fr 1fr 1fr 1fr' }}>
+                    {['W', 'E', 'N', 'S'].map(side => (
+                      <Field key={side} label={side} type="number" value={localBox[side]}
+                        onChange={v => setLocalBox(b => ({ ...b, [side]: Math.max(0, Math.round(Number(v) || 0)) }))}
+                        onBlur={() => commitBoxPins({ ...localBox })} />
+                    ))}
+                  </div>
+                  {(selected.pins || []).length > 0 && (
+                    <div className="space-y-1">
+                      <div className="text-gray-400" style={{ fontSize: 10 }}>Pin labels</div>
+                      <div className="grid gap-1" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                        {(selected.pins || []).map(p => (
+                          <div key={`${selected.id}-${p.id}`} className="flex items-center gap-1 min-w-0">
+                            <span className="text-gray-400 flex-shrink-0" style={{ fontSize: 10, width: 18 }}>{p.id}</span>
+                            <input className={INPUT_CLASS} style={INPUT_STYLE} placeholder="label"
+                              defaultValue={p.label ?? ''}
+                              onBlur={e => commitPinLabel(p.id, e.target.value)} />
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
+                </Section>
 
-                {/* Image */}
-                <div className="space-y-1 pt-1 border-t" style={{ borderColor: 'var(--panel-border)' }}>
-                  <input ref={boxImageInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={onAssignBoxImage} />
-                  <div className="flex items-center gap-2">
-                    <span className="text-gray-400" style={{ fontSize: 10 }}>Image</span>
-                    <button className="rounded px-2 py-0.5" style={{ fontSize: 11, border: '1px solid var(--panel-border)', color: 'var(--component-color)' }}
-                      onClick={() => boxImageInputRef.current?.click()}>
-                      {selected.box?.image ? 'Replace…' : 'Assign…'}
-                    </button>
-                    {selected.box?.image && (
-                      <button className="rounded px-2 py-0.5 text-red-500" style={{ fontSize: 11, border: '1px solid var(--panel-border)' }}
-                        onClick={() => commitBox({ image: null })}>Remove</button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Properties (flexible field rows) */}
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-400" style={{ fontSize: 10 }}>Properties</span>
-                    <button className="rounded px-2 py-0.5" style={{ fontSize: 11, border: '1px solid var(--panel-border)', color: 'var(--component-color)' }}
-                      onClick={() => { const next = addField(localFields, {}); setLocalFields(next); commitBox({ fields: next }) }}>+ Add</button>
-                  </div>
+                {/* Properties — flexible rows. Each is a self-contained card so the
+                    remove button is always visible (no horizontal overflow). */}
+                <Section
+                  title="Properties"
+                  action={<MiniButton title="Add a property"
+                    onClick={() => { const next = addField(localFields, {}); setLocalFields(next); commitBox({ fields: next }) }}>+ Add</MiniButton>}
+                >
+                  {localFields.length === 0 && (
+                    <div className="text-gray-400" style={{ fontSize: 10 }}>No properties yet. Use “+ Add”.</div>
+                  )}
                   {localFields.map(f => (
-                    <div key={f.id} className="grid gap-1 items-center" style={{ gridTemplateColumns: '1.2fr 1.2fr 0.7fr auto' }}>
-                      <input className="rounded px-1 outline-none" style={{ fontSize: 11, height: 18, background: 'var(--input-bg, rgba(0,0,0,0.06))', border: '1px solid var(--panel-border)', color: 'var(--component-color)' }}
-                        placeholder="Resistance" defaultValue={f.label}
-                        onBlur={e => { const next = updateField(localFields, f.id, { label: e.target.value }); setLocalFields(next); commitBox({ fields: next }) }} />
-                      <input className="rounded px-1 outline-none" style={{ fontSize: 11, height: 18, background: 'var(--input-bg, rgba(0,0,0,0.06))', border: '1px solid var(--panel-border)', color: 'var(--component-color)' }}
-                        placeholder="4.7k" defaultValue={f.value}
-                        onBlur={e => { const next = updateField(localFields, f.id, { value: e.target.value }); setLocalFields(next); commitBox({ fields: next }) }} />
-                      <input className="rounded px-1 outline-none" style={{ fontSize: 11, height: 18, background: 'var(--input-bg, rgba(0,0,0,0.06))', border: '1px solid var(--panel-border)', color: 'var(--component-color)' }}
-                        placeholder="Ω" defaultValue={f.unit}
-                        onBlur={e => { const next = updateField(localFields, f.id, { unit: e.target.value }); setLocalFields(next); commitBox({ fields: next }) }} />
-                      <button className="text-red-500" style={{ fontSize: 12 }} title="Remove field"
-                        onClick={() => { const next = removeField(localFields, f.id); setLocalFields(next); commitBox({ fields: next }) }}>×</button>
+                    <div key={f.id} className="rounded p-1.5 space-y-1" style={{ border: '1px solid var(--panel-border)' }}>
+                      <div className="flex items-center gap-1">
+                        <input className={INPUT_CLASS} style={{ ...INPUT_STYLE, flex: 1 }}
+                          placeholder="Property name" defaultValue={f.label}
+                          onBlur={e => { const next = updateField(localFields, f.id, { label: e.target.value }); setLocalFields(next); commitBox({ fields: next }) }} />
+                        <RemoveButton title="Remove this property"
+                          onClick={() => { const next = removeField(localFields, f.id); setLocalFields(next); commitBox({ fields: next }) }} />
+                      </div>
+                      <div className="grid gap-1" style={{ gridTemplateColumns: '2fr 1fr' }}>
+                        <input className={INPUT_CLASS} style={INPUT_STYLE}
+                          placeholder="Value" defaultValue={f.value}
+                          onBlur={e => { const next = updateField(localFields, f.id, { value: e.target.value }); setLocalFields(next); commitBox({ fields: next }) }} />
+                        <input className={INPUT_CLASS} style={INPUT_STYLE}
+                          placeholder="Unit" defaultValue={f.unit}
+                          onBlur={e => { const next = updateField(localFields, f.id, { unit: e.target.value }); setLocalFields(next); commitBox({ fields: next }) }} />
+                      </div>
                     </div>
                   ))}
-                </div>
+                </Section>
 
-                {/* Info / details */}
-                <div className="space-y-0.5">
-                  <span className="text-gray-400 block" style={{ fontSize: 10 }}>Details / info</span>
+                {/* Reference images — panel-only documentation (not drawn on the
+                    canvas). Each picture sits under an editable heading. */}
+                <Section
+                  title="Images"
+                  action={<MiniButton title="Add an image"
+                    onClick={() => boxImageInputRef.current?.click()}>+ Add</MiniButton>}
+                >
+                  <input ref={boxImageInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={onAssignBoxImage} />
+                  {localBoxImages.length === 0 && (
+                    <div className="text-gray-400" style={{ fontSize: 10 }}>No images. Pictures here are reference only — not shown on the schematic.</div>
+                  )}
+                  {localBoxImages.map(im => (
+                    <div key={im.id} className="space-y-1 rounded p-1.5" style={{ border: '1px solid var(--panel-border)' }}>
+                      <div className="flex items-center gap-1">
+                        <input className={INPUT_CLASS} style={{ ...INPUT_STYLE, flex: 1 }}
+                          placeholder="Heading (e.g. Pinout)" defaultValue={im.heading}
+                          onBlur={e => commitBoxImages(updateBoxImage(localBoxImages, im.id, { heading: e.target.value }))} />
+                        <RemoveButton title="Remove this image"
+                          onClick={() => commitBoxImages(removeBoxImage(localBoxImages, im.id))} />
+                      </div>
+                      <img src={im.src} alt={im.heading || 'reference image'}
+                        style={{ display: 'block', maxWidth: '100%', maxHeight: 160, margin: '0 auto', borderRadius: 3, background: 'rgba(0,0,0,0.04)' }} />
+                    </div>
+                  ))}
+                </Section>
+
+                {/* Details / info — free-form notes. */}
+                <Section title="Details">
                   <textarea
-                    className="w-full rounded px-1 outline-none resize-y"
-                    style={{ fontSize: 11, minHeight: 40, maxHeight: 120, background: 'var(--input-bg, rgba(0,0,0,0.06))', border: '1px solid var(--panel-border)', color: 'var(--component-color)', display: 'block' }}
+                    className="w-full rounded px-1 py-0.5 outline-none resize-y"
+                    style={{ fontSize: 11, minHeight: 48, maxHeight: 140, background: 'var(--input-bg, rgba(0,0,0,0.06))', border: '1px solid var(--panel-border)', color: 'var(--component-color)', display: 'block' }}
+                    placeholder="Notes, datasheet info, etc."
                     value={localBoxInfo}
                     onChange={e => setLocalBoxInfo(e.target.value)}
                     onBlur={() => commitBox({ info: localBoxInfo })}
                   />
-                </div>
-              </div>
+                </Section>
+              </>
             )}
 
             {/* Sim params */}

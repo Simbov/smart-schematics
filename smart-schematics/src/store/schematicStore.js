@@ -3,6 +3,7 @@ import { computePinAbsPositions } from '../lib/utils'
 import { pruneJunctions } from '../lib/wireUtils'
 import { plainToDoc, docToPlain } from '../lib/richText'
 import { createBox } from '../lib/boxComponent'
+import { normalizeBoxImages } from '../lib/boxImages'
 import {
   isRunningInTauri,
   openFileDialog, saveFileDialog,
@@ -71,6 +72,13 @@ function migrateDrawing(d) {
   for (const c of (d.components || [])) {
     for (const p of (c.pins || [])) {
       p.label ??= ''
+    }
+    // v0.2.0: a box's reference pictures live in `box.images` (panel-only). Fold
+    // any legacy single `box.image` (previously drawn on the canvas) into the
+    // array so old schematics keep the picture with no data loss. `box.image`
+    // is left in place (additive) but is no longer rendered on the canvas.
+    if (c.type === 'box' && c.box) {
+      c.box.images = normalizeBoxImages(c.box)
     }
   }
   return d

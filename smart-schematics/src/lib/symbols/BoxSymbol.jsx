@@ -9,6 +9,10 @@ import { docToHtml, isEmptyDoc } from '../richText'
 // [-w/2, -h/2] .. [w/2, h/2]. Pin DOTS are NOT drawn here — Canvas is the single
 // source of truth for pin dots (consistent with the rest of the app).
 //
+// NOTE (v0.2.0): reference pictures (box.images) are intentionally NOT drawn
+// here. They live only in the Properties panel as documentation, so assigning an
+// image never changes the schematic's appearance.
+//
 // A unique clip-path id keeps the label inside the rounded rect even when the
 // text overflows.
 let _clipSeq = 0
@@ -20,7 +24,6 @@ export default function BoxSymbol({ box = {}, instanceId }) {
   const fill = box.fill || '#f1f5f9'
   const stroke = box.stroke || '#334155'
   const doc = box.doc
-  const image = box.image || null
   const clipId = `boxclip_${instanceId || (_clipSeq++)}`
   const PAD = 4
 
@@ -43,18 +46,6 @@ export default function BoxSymbol({ box = {}, instanceId }) {
         strokeWidth="1.5"
         vectorEffect="non-scaling-stroke"
       />
-      {image && (
-        <image
-          href={image}
-          x={-w / 2 + PAD}
-          y={-h / 2 + PAD}
-          width={w - PAD * 2}
-          height={h - PAD * 2}
-          clipPath={`url(#${clipId})`}
-          preserveAspectRatio="xMidYMid meet"
-          style={{ pointerEvents: 'none' }}
-        />
-      )}
       {doc && !isEmptyDoc(doc) && (
         <foreignObject
           x={-w / 2 + PAD}
