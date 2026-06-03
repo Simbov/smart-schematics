@@ -18,7 +18,8 @@ import InlineEditor from './InlineEditor'
 import { resizeBox, snapBox, RESIZE_HANDLES, topImageAt, aspectFitSize, defaultPlacement } from '../lib/imageUtils'
 import { boxPinLabelPos } from '../lib/boxComponent'
 import RichTextEditor from './RichTextEditor'
-import { emptyDoc, plainToDoc, isEmptyDoc } from '../lib/richText'
+import { emptyDoc, plainToDoc, isEmptyDoc, docToPlain } from '../lib/richText'
+import { textOuterBox, outerBoxToAnnotation } from '../lib/annotationLayout'
 import { ELECTRICAL_SYMBOL_MAP } from '../lib/symbols/electrical'
 import { HYDRAULIC_SYMBOL_MAP } from '../lib/symbols/HydraulicSymbols'
 import { getElectricalDef } from '../lib/components/electrical'
@@ -105,6 +106,12 @@ export default function Canvas({ onCursorMove }) {
   // top-left box for rendering the rect + handles without mutating the store.
   const boxResizeRef = useRef(null) // { boxId, handle, startBox(topleft), z, startClient, lastBox }
   const [boxResizeState, setBoxResizeState] = useState(null) // { boxId, box(topleft) }
+
+  // Text-annotation resize state (Stage 10) — mirrors the image gesture but the
+  // box is the rendered outer box (annotationLayout.textOuterBox) and commits via
+  // updateAnnotation with outerBoxToAnnotation.
+  const textResizeRef = useRef(null) // { annId, handle, startBox, z, startClient, lastBox, ann }
+  const [textResizeState, setTextResizeState] = useState(null) // { annId, patch }
 
   // Inline editor state (title-block cells only)
   const [inlineEdit, setInlineEdit] = useState(null)
@@ -868,6 +875,46 @@ export default function Canvas({ onCursorMove }) {
     window.addEventListener('mouseup', onUp)
   }, [activeDrawingId, pushUndo, updateImage])
 
+  // Begin dragging a text-annotation resize handle (Stage 10). The gesture works
+  // on the rendered OUTER box (textOuterBox); on commit we invert it back to the
+  // annotation's {x,y,width,height} via outerBoxToAnnotation — making the text a
+  // fixed-size wrapping box.
+  const startTextResize = useCallback((annId, handle, e) => {
+    e.stopPropagation()
+    e.preventDefault()
+    const dr = useSchematicStore.getState().drawings.find(d => d.id === activeDrawingId)
+    const ann = (dr?.annotations || []).find(a => a.id === annId)
+    if (!ann) return
+    const plain = docToPlain(ann.doc || plainToDoc(ann.text || ''))
+    const startBox = textOuterBox(ann, plain)
+    const z = dr.viewState?.zoom || 1
+    const startClient = { x: e.clientX, y: e.clientY }
+    textResizeRef.current = { annId, handle, startBox, z, startClient, lastBox: startBox, ann }
+
+    const onMove = (ev) => {
+      const r = textResizeRef.current
+      if (!r) return
+      const dx = (ev.clientX - r.startClient.x) / r.z
+      const dy = (ev.clientY - r.startClient.y) / r.z
+      const box = resizeBox(r.startBox, r.handle, dx, dy, false)
+      r.lastBox = box
+      setTextResizeState({ annId: r.annId, patch: outerBoxToAnnotation(box, r.ann) })
+    }
+    const onUp = () => {
+      const r = textResizeRef.current
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      textResizeRef.current = null
+      setTextResizeState(null)
+      if (r) {
+        pushUndo()
+        updateAnnotation(activeDrawingId, r.annId, outerBoxToAnnotation(r.lastBox, r.ann))
+      }
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [activeDrawingId, pushUndo, updateAnnotation])
+
   // Begin dragging a box resize handle. Box geometry math lives in
   // boxComponent.resizeBoxGeometry (grid-snap + min-size); the box's stored x/y
   // is its CENTER, so we convert to a top-left box for the gesture, then back to
@@ -1131,6 +1178,10 @@ export default function Canvas({ onCursorMove }) {
     if (isDraggingNow && dragRef.current?.annotationIds?.includes(a.id)) {
       return { ...a, x: a.x + dragDelta.dx, y: a.y + dragDelta.dy }
     }
+    // Live text-resize preview (Stage 10).
+    if (textResizeState && textResizeState.annId === a.id) {
+      return { ...a, ...textResizeState.patch }
+    }
     return a
   })
   // Images carry the drag offset, plus the live resize box while a handle is dragged.
@@ -1221,6 +1272,16 @@ export default function Canvas({ onCursorMove }) {
     if (!c) return null
     const w = c.box?.width || 80, h = c.box?.height || 60
     return { id: c.id, x: c.x - w / 2, y: c.y - h / 2, width: w, height: h }
+  })()
+
+  // The single text annotation (if any) that should show resize handles: exactly
+  // one selected text annotation in select tool. Returns its rendered outer box.
+  const singleSelectedText = (() => {
+    if (activeTool !== 'select' || selectedIds.length !== 1) return null
+    const a = effectiveAnnotations.find(a => a.id === selectedIds[0] && a.type === 'text')
+    if (!a) return null
+    const box = textOuterBox(a, docToPlain(a.doc || plainToDoc(a.text || '')))
+    return { id: a.id, ...box }
   })()
 
   // Inline editor screen position
@@ -1475,6 +1536,36 @@ export default function Canvas({ onCursorMove }) {
                   strokeWidth={1 / zoom}
                   style={{ cursor: cursors[h] }}
                   onMouseDown={(e) => startBoxResize(bx.id, h, e)}
+                />
+              )
+            })
+          })()}
+
+          {/* Text-annotation resize handles (Stage 10) — same screen-space sizing */}
+          {singleSelectedText && (() => {
+            const tx = singleSelectedText
+            const HS = 8 / zoom
+            const pos = {
+              nw: [tx.x, tx.y], n: [tx.x + tx.width / 2, tx.y], ne: [tx.x + tx.width, tx.y],
+              e: [tx.x + tx.width, tx.y + tx.height / 2], se: [tx.x + tx.width, tx.y + tx.height],
+              s: [tx.x + tx.width / 2, tx.y + tx.height], sw: [tx.x, tx.y + tx.height],
+              w: [tx.x, tx.y + tx.height / 2],
+            }
+            const cursors = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize' }
+            return RESIZE_HANDLES.map(h => {
+              const [hx, hy] = pos[h]
+              return (
+                <rect
+                  key={`trh-${h}`}
+                  x={hx - HS / 2}
+                  y={hy - HS / 2}
+                  width={HS}
+                  height={HS}
+                  fill="var(--panel-bg)"
+                  stroke="var(--selection-color)"
+                  strokeWidth={1 / zoom}
+                  style={{ cursor: cursors[h] }}
+                  onMouseDown={(e) => startTextResize(tx.id, h, e)}
                 />
               )
             })

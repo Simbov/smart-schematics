@@ -1,5 +1,6 @@
 import React from 'react'
 import { docToHtml, docToPlain, plainToDoc, richExportFallback } from '../lib/richText'
+import { textOuterBox } from '../lib/annotationLayout'
 
 // Renders text and callout annotations as rich text. Per the shared rich-text
 // spec, content renders via a single <foreignObject> wrapping a styled XHTML
@@ -73,12 +74,12 @@ function TextAnnotation({ ann, sel, zoom, onClick, onMouseDown, onDoubleClick })
   const fs = ann.fontSize || 14
   const doc = annDoc(ann)
   const plain = docToPlain(doc)
-  // Estimate a content box: width from longest line, height from line count.
-  const lineCount = Math.max(1, doc.paragraphs?.length || 1)
-  const longest = plain.split('\n').reduce((m, l) => Math.max(m, l.length), 1)
-  const W = Math.max(20, longest * fs * 0.6)
-  const H = lineCount * fs * 1.4 + 4
-  const PAD = 3
+  // A text box is resizable (Stage 10): when it carries an explicit width/height
+  // it renders at that fixed size and wraps; otherwise it autosizes to content.
+  // Box geometry comes from the shared helper so the resize handles (Canvas)
+  // line up exactly with what is rendered here.
+  const fixed = ann.width != null && ann.height != null
+  const box = textOuterBox(ann, plain)
 
   return (
     <g
@@ -88,14 +89,14 @@ function TextAnnotation({ ann, sel, zoom, onClick, onMouseDown, onDoubleClick })
       style={{ cursor: 'move' }}
     >
       {/* Transparent hit area */}
-      <rect x={ann.x - PAD} y={ann.y - fs - PAD} width={W + PAD * 2} height={H + PAD * 2} fill="transparent" />
+      <rect x={box.x} y={box.y} width={box.width} height={box.height} fill="transparent" />
       <FallbackText doc={doc} x={ann.x} y={ann.y} fontSize={fs} />
       <foreignObject
-        x={ann.x - PAD}
-        y={ann.y - fs - PAD}
-        width={W + PAD * 2}
-        height={H + PAD * 2}
-        style={{ overflow: 'visible', pointerEvents: 'none' }}
+        x={box.x}
+        y={box.y}
+        width={box.width}
+        height={box.height}
+        style={{ overflow: fixed ? 'hidden' : 'visible', pointerEvents: 'none' }}
       >
         <div
           xmlns="http://www.w3.org/1999/xhtml"
@@ -105,6 +106,10 @@ function TextAnnotation({ ann, sel, zoom, onClick, onMouseDown, onDoubleClick })
             lineHeight: 1.4,
             color: sel ? '#2563eb' : 'currentColor',
             whiteSpace: 'pre-wrap',
+            wordBreak: fixed ? 'break-word' : 'normal',
+            width: fixed ? '100%' : undefined,
+            height: fixed ? '100%' : undefined,
+            overflow: fixed ? 'hidden' : undefined,
             userSelect: 'none',
           }}
           dangerouslySetInnerHTML={{ __html: docToHtml(doc) }}
@@ -112,10 +117,10 @@ function TextAnnotation({ ann, sel, zoom, onClick, onMouseDown, onDoubleClick })
       </foreignObject>
       {sel && (
         <rect
-          x={ann.x - PAD}
-          y={ann.y - fs - PAD}
-          width={W + PAD * 2}
-          height={H + PAD * 2}
+          x={box.x}
+          y={box.y}
+          width={box.width}
+          height={box.height}
           fill="rgba(37,99,235,0.06)"
           stroke="#2563eb"
           strokeWidth={1 / zoom}

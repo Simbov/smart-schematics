@@ -238,7 +238,7 @@ const PlacedComponent = memo(function PlacedComponent({
           x={designatorPos.x}
           y={designatorPos.y}
           textAnchor={designatorPos.anchor}
-          fontSize="8"
+          fontSize={8 * (component.labelScale || 1)}
           fill="var(--component-color)"
           style={{ userSelect: 'none', pointerEvents: 'none' }}
         >
