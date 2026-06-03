@@ -1304,6 +1304,7 @@ export default function Canvas({ onCursorMove }) {
                   ? { position: dcvPositions[comp.id] ?? defaultDCVPosition(comp.type) }
                   : undefined}
               isRunning={isRunning}
+              resistorStyleDefault={settings.resistorStyle}
               onMouseDown={(e) => handleComponentMouseDown(comp.id, e)}
               onClick={(e) => handleComponentClick(comp.id, e)}
               onDoubleClick={(e) => handleComponentDoubleClick(comp.id, e)}

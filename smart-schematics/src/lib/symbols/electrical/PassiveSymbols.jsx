@@ -2,7 +2,22 @@ import React from 'react'
 
 const SW = 1.5
 
-export function ResistorSymbol() {
+// `resistorStyle` selects the body: 'IEC' (rectangular box, default) or 'IEEE'
+// (ANSI/IEEE zig-zag). Leads run from x=-20 to x=+20, meeting the body at ±12.
+export function ResistorSymbol({ resistorStyle = 'IEC' }) {
+  if (resistorStyle === 'IEEE') {
+    return (
+      <g>
+        <line x1="-20" y1="0" x2="-12" y2="0" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
+        <polyline
+          points="-12,0 -10,-7 -6,7 -2,-7 2,7 6,-7 10,7 12,0"
+          stroke="currentColor" strokeWidth={SW} fill="none"
+          strokeLinejoin="round" strokeLinecap="round"
+        />
+        <line x1="12" y1="0" x2="20" y2="0" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
+      </g>
+    )
+  }
   return (
     <g>
       <line x1="-20" y1="0" x2="-12" y2="0" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />

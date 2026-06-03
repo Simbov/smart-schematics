@@ -9,6 +9,7 @@ import BoxSymbol from '../lib/symbols/BoxSymbol'
 import { INTERACTIVE_TYPES } from '../lib/simulation/electricalSim'
 import { MANUAL_DCV_TYPES } from '../lib/simulation/hydraulicSim'
 import { formatSI } from '../lib/simulation/parseValue'
+import { resolveResistorStyle } from '../lib/resistorStyle'
 
 const SYMBOL_MAP_ALL = { ...ELECTRICAL_SYMBOL_MAP, ...HYDRAULIC_SYMBOL_MAP }
 
@@ -127,6 +128,7 @@ const PlacedComponent = memo(function PlacedComponent({
   hydSimState,
   isRunning = false,
   labelSide = 'top',
+  resistorStyleDefault = 'IEC',
 }) {
   const isBox = component.type === 'box'
   const isCustom = component.type.startsWith('custom_')
@@ -218,7 +220,13 @@ const PlacedComponent = memo(function PlacedComponent({
             ? <BoxSymbol box={component.box} instanceId={component.id} />
             : isCustom
               ? <CustomSymbol svgPathData={def.svgPathData} />
-              : <SymbolComponent state={getSymbolState(component.type, simState, interactiveState, hydSimState, component.simParams)} params={component.simParams || {}} />
+              : <SymbolComponent
+                  state={getSymbolState(component.type, simState, interactiveState, hydSimState, component.simParams)}
+                  params={component.simParams || {}}
+                  resistorStyle={component.type === 'resistor'
+                    ? resolveResistorStyle(component, { resistorStyle: resistorStyleDefault })
+                    : undefined}
+                />
           }
         </g>
       </g>
