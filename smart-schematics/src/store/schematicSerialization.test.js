@@ -176,6 +176,7 @@ describe('Stage 1 — box component round-trip', () => {
         doc: { align: 'left', paragraphs: [{ runs: [{ text: 'MCU' }] }] },
         fill: '#eef', stroke: '#333', cornerRadius: 4,
         images: [], // v0.2.0: migration backfills panel-only reference images
+        links: [],  // v0.2.0: migration backfills panel-only reference links
       },
       pins: [
         { id: 'P1', relX: -40, relY: 0, absX: 60, absY: 100, direction: 'W', label: '' },

@@ -47,7 +47,7 @@ function TableComp({ table, sel, zoom, onClick, onMouseDown, onCellDoubleClick }
       style={{ cursor: 'move' }}
     >
       {/* Background + header tint */}
-      <rect x={x} y={y} width={width} height={height} fill="var(--canvas-bg)" />
+      <rect x={x} y={y} width={width} height={height} fill={table.fill || 'var(--canvas-bg)'} />
       {table.headerRow && rows > 0 && (
         <rect x={x} y={y} width={width} height={rowHeights[0]} fill="rgba(37,99,235,0.08)" />
       )}

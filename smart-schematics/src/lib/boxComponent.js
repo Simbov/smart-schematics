@@ -124,12 +124,25 @@ export function boxPins(box, spec = DEFAULT_PIN_SPEC, grid = 10) {
 }
 
 // Pure placement for a box pin's label text (Stage 7). Given a pin's absolute
-// world coords + edge direction, returns where to draw its `label` so it sits
-// just INSIDE the box from the pin, with the matching SVG text-anchor /
-// dominant-baseline. `inset` is in world units. No DOM.
-export function boxPinLabelPos(pin, inset = 8) {
+// world coords + edge direction, returns where to draw its `label` plus the
+// matching SVG text-anchor / dominant-baseline. `inset` is in world units.
+//
+// `outside` (v0.2.0) places the label just OUTSIDE the box edge from the pin
+// instead of inside, so pin names never overlap the box's centred rich-text
+// label (the "pin naming overlapping the component text" fix). With
+// `outside:false` the legacy inside placement is returned unchanged. No DOM.
+export function boxPinLabelPos(pin, inset = 8, outside = false) {
   const x = pin.absX ?? pin.relX ?? 0
   const y = pin.absY ?? pin.relY ?? 0
+  if (outside) {
+    switch (pin.direction) {
+      case 'W': return { x: x - inset, y, anchor: 'end',    baseline: 'middle' }
+      case 'E': return { x: x + inset, y, anchor: 'start',  baseline: 'middle' }
+      case 'N': return { x, y: y - inset, anchor: 'middle', baseline: 'auto' }
+      case 'S': return { x, y: y + inset, anchor: 'middle', baseline: 'hanging' }
+      default:  return { x, y, anchor: 'middle', baseline: 'middle' }
+    }
+  }
   switch (pin.direction) {
     case 'W': return { x: x + inset, y, anchor: 'start',  baseline: 'middle' }
     case 'E': return { x: x - inset, y, anchor: 'end',    baseline: 'middle' }

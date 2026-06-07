@@ -12,6 +12,39 @@ section with the version and date and starts a fresh Unreleased block.
 
 ## [Unreleased]
 
+### Added
+- **Resizable Properties panel.** Drag the panel's left edge to make it wider or
+  narrower; the width is remembered between sessions.
+- **Click to enlarge images.** Click any reference image (on a box, or a selected
+  image) to view it full-screen. Press Esc or click to close.
+- **Clean view / edit mode for boxes.** A component box now shows its properties,
+  images, links and description as a tidy read-only summary. Press **Edit** to
+  reveal text boxes, delete buttons and drag handles; press **Done** to go back.
+- **Reorder box content by dragging.** In edit mode, drag the handle on any
+  property, image or link to change its order.
+- **Links on a box.** Add clickable reference links (e.g. a datasheet URL) to a
+  box, alongside its properties and images.
+- **One-tap add menu.** A single row at the bottom of a box's settings adds a
+  property, image, link or description — and a **Paste image** button drops an
+  image straight from your clipboard.
+- **Wire colour.** Select a wire to set its colour (with a one-click reset to the
+  default), line style and weight.
+- **Table formatting.** Select a table to add or remove rows and columns, toggle
+  a header row, and set the border colour, fill and line weight.
+
+### Fixed
+- **Box label font size now works.** Setting the label size in a box's settings
+  resizes the whole label as expected.
+- **Reference images no longer leak between boxes.** Adding or pasting an image to
+  one box (including duplicated/pasted boxes) no longer affects another.
+- **Pin names no longer overlap a box's centre text** — they now sit just outside
+  the box edge.
+
+### Compatibility
+- Projects saved in older versions open unchanged; new fields (box links, wire
+  colour, table fill) are added with safe defaults and a legacy on-box picture is
+  carried over into the panel's reference images.
+
 ## [0.2.0] - 2026-06-03
 
 ### Added

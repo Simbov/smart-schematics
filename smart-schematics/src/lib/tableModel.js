@@ -51,6 +51,7 @@ export function createTable({
   borderColor = DEFAULT_BORDER_COLOR,
   borderWidth = DEFAULT_BORDER_WIDTH,
   headerRow = false,
+  fill = null,
   grid = DEFAULT_TABLE_GRID,
   id = null,
 } = {}) {
@@ -75,6 +76,9 @@ export function createTable({
     borderColor,
     borderWidth,
     headerRow,
+    // Optional background fill. `null` ⇒ the renderer falls back to the canvas
+    // background (transparent-looking), preserving the pre-fill appearance.
+    fill,
   }
 }
 

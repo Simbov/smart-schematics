@@ -14,6 +14,8 @@
 // Everything here is side-effect-free: helpers return new arrays and never
 // mutate inputs, so they unit-test with no DOM.
 
+import { reorderById } from './boxFields'
+
 let _imgCounter = 0
 
 // Mint a unique image id. Uses crypto.randomUUID when available, with a
@@ -49,6 +51,12 @@ export function updateBoxImage(images = [], id, patch = {}) {
 // Remove an image by id. Unknown ids are a no-op.
 export function removeBoxImage(images = [], id) {
   return (images || []).filter(im => im.id !== id)
+}
+
+// Reorder reference images (drag fromId onto toId). Delegates to the shared
+// id-based reorder so fields/images/links behave identically. Never mutates.
+export function moveBoxImage(images = [], fromId, toId) {
+  return reorderById(images, fromId, toId)
 }
 
 // Resolve a box's images array, folding a legacy single `box.image` data URL into

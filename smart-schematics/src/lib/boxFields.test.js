@@ -51,3 +51,20 @@ describe('boxFields helpers', () => {
     expect(removeField(list, 'nope')).toHaveLength(2)
   })
 })
+
+describe('reorderById / moveField (drag-to-reorder)', () => {
+  const mk = () => [{ id: 'a' }, { id: 'b' }, { id: 'c' }]
+  it('moves an item to the position of the drop target', async () => {
+    const { reorderById, moveField } = await import('./boxFields.js')
+    expect(reorderById(mk(), 'a', 'c').map(x => x.id)).toEqual(['b', 'c', 'a'])
+    expect(reorderById(mk(), 'c', 'a').map(x => x.id)).toEqual(['c', 'a', 'b'])
+    expect(moveField(mk(), 'b', 'a').map(x => x.id)).toEqual(['b', 'a', 'c'])
+  })
+  it('is a no-op for unknown ids or self-move and never mutates input', async () => {
+    const { reorderById } = await import('./boxFields.js')
+    const arr = mk()
+    expect(reorderById(arr, 'a', 'a').map(x => x.id)).toEqual(['a', 'b', 'c'])
+    expect(reorderById(arr, 'a', 'zz').map(x => x.id)).toEqual(['a', 'b', 'c'])
+    expect(arr.map(x => x.id)).toEqual(['a', 'b', 'c'])
+  })
+})

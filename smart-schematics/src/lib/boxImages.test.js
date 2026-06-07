@@ -56,3 +56,12 @@ describe('boxImages pure helpers (v0.2.0)', () => {
     })
   })
 })
+
+describe('moveBoxImage (drag-to-reorder)', () => {
+  it('reorders by id without mutating', async () => {
+    const { moveBoxImage } = await import('./boxImages')
+    const imgs = [{ id: 'i1' }, { id: 'i2' }, { id: 'i3' }]
+    expect(moveBoxImage(imgs, 'i3', 'i1').map(x => x.id)).toEqual(['i3', 'i1', 'i2'])
+    expect(imgs.map(x => x.id)).toEqual(['i1', 'i2', 'i3'])
+  })
+})

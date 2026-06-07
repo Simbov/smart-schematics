@@ -322,3 +322,47 @@ describe('hasUnsavedWork', () => {
     expect(hasUnsavedWork(null)).toBe(false)
   })
 })
+
+describe('pasteFromClipboard deep-clones nested box data (no cross-instance leak)', () => {
+  it('editing one pasted box does not affect another paste of the same clipboard', () => {
+    const store = useSchematicStore.getState()
+    store.newProject('Paste Test')
+    const did = useSchematicStore.getState().activeDrawingId
+    const boxId = useSchematicStore.getState().addBox(did, 100, 100)
+    useSchematicStore.getState().updateBox(did, boxId, { images: [{ id: 'bimg_1', src: 'data:a', heading: 'orig' }] })
+
+    // Copy the box, then paste it twice from the same clipboard.
+    useSchematicStore.getState().copyToClipboard(did, [boxId])
+    useSchematicStore.getState().pasteFromClipboard(did)
+    const firstPasteId = useSchematicStore.getState().selectedIds[0]
+    useSchematicStore.getState().pasteFromClipboard(did)
+    const secondPasteId = useSchematicStore.getState().selectedIds[0]
+    expect(firstPasteId).not.toBe(secondPasteId)
+
+    // Mutate the first paste's reference images.
+    useSchematicStore.getState().updateBox(did, firstPasteId, { images: [{ id: 'bimg_x', src: 'data:b', heading: 'changed' }] })
+
+    const d = useSchematicStore.getState().drawings.find(x => x.id === did)
+    const second = d.components.find(c => c.id === secondPasteId)
+    // The second paste must keep the original image — no shared reference.
+    expect(second.box.images).toEqual([{ id: 'bimg_1', src: 'data:a', heading: 'orig' }])
+  })
+})
+
+describe('updateWire patches a single wire', () => {
+  it('sets color/style/weight without touching other wires', () => {
+    const store = useSchematicStore.getState()
+    store.newProject('Wire Test')
+    const did = useSchematicStore.getState().activeDrawingId
+    const w1 = { id: genId(), points: [{ x: 0, y: 0 }, { x: 10, y: 0 }], netName: '', style: 'solid', weight: 1, pinA: null, pinB: null }
+    const w2 = { id: genId(), points: [{ x: 0, y: 5 }, { x: 10, y: 5 }], netName: '', style: 'solid', weight: 1, pinA: null, pinB: null }
+    useSchematicStore.getState().addWire(did, w1)
+    useSchematicStore.getState().addWire(did, w2)
+
+    useSchematicStore.getState().updateWire(did, w1.id, { color: '#ff0000', style: 'dashed', weight: 2 })
+
+    const d = useSchematicStore.getState().drawings.find(x => x.id === did)
+    expect(d.wires.find(w => w.id === w1.id)).toMatchObject({ color: '#ff0000', style: 'dashed', weight: 2 })
+    expect(d.wires.find(w => w.id === w2.id).color).toBeUndefined()
+  })
+})

@@ -46,3 +46,22 @@ export function updateField(fields = [], id, patch = {}) {
 export function removeField(fields = [], id) {
   return (fields || []).filter(f => f.id !== id)
 }
+
+// Generic id-based reorder, shared by box fields / images / links (drag-to-
+// reorder in the Properties panel). Moves the item with `fromId` so it lands at
+// the current position of `toId` (the row it was dropped onto). Unknown ids or a
+// no-op move return a copy of the list unchanged. Never mutates the input.
+export function reorderById(list = [], fromId, toId) {
+  const arr = [...(list || [])]
+  const from = arr.findIndex(x => x.id === fromId)
+  const to = arr.findIndex(x => x.id === toId)
+  if (from === -1 || to === -1 || from === to) return arr
+  const [moved] = arr.splice(from, 1)
+  arr.splice(to, 0, moved)
+  return arr
+}
+
+// Reorder a field list (drag fromId onto toId).
+export function moveField(fields = [], fromId, toId) {
+  return reorderById(fields, fromId, toId)
+}

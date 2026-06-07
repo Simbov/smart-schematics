@@ -79,6 +79,8 @@ function migrateDrawing(d) {
     // is left in place (additive) but is no longer rendered on the canvas.
     if (c.type === 'box' && c.box) {
       c.box.images = normalizeBoxImages(c.box)
+      // v0.2.0: a box's clickable reference links live in `box.links` (panel-only).
+      c.box.links ??= []
     }
   }
   return d
@@ -444,6 +446,20 @@ const useSchematicStore = create((set, get) => ({
     }))
   },
 
+  // Patch a single wire (e.g. color/style/weight from the Properties panel).
+  updateWire(drawingId, wireId, patch) {
+    set(state => ({
+      drawings: state.drawings.map(d => {
+        if (d.id !== drawingId) return d
+        return {
+          ...d,
+          isDirty: true,
+          wires: d.wires.map(w => (w.id !== wireId ? w : { ...w, ...patch })),
+        }
+      }),
+    }))
+  },
+
   addJunction(drawingId, junction) {
     set(state => ({
       drawings: state.drawings.map(d =>
@@ -793,7 +809,14 @@ const useSchematicStore = create((set, get) => ({
     get().pushUndo()
     const OFFSET = 20
     const idMap = {}
-    const newComps = components.map(c => {
+    // Deep-clone every pasted item so nested objects (a box's `box`/images/fields/
+    // links, a component's `doc`/simParams, a table's cells) are fully independent.
+    // Without this, pasting one clipboard twice yields items sharing nested
+    // references, so a later edit to one leaks into the other (the "image applied
+    // to both devices" bug).
+    const clone = (o) => JSON.parse(JSON.stringify(o))
+    const newComps = components.map(orig => {
+      const c = clone(orig)
       const newId = genId()
       idMap[c.id] = newId
       return {
@@ -801,19 +824,22 @@ const useSchematicStore = create((set, get) => ({
         id: newId,
         x: c.x + OFFSET,
         y: c.y + OFFSET,
-        pins: c.pins.map(p => ({ ...p, absX: p.absX + OFFSET, absY: p.absY + OFFSET })),
+        pins: (c.pins || []).map(p => ({ ...p, absX: p.absX + OFFSET, absY: p.absY + OFFSET })),
       }
     })
-    const newWires = wires.map(w => ({
-      ...w,
-      id: genId(),
-      points: w.points.map(p => ({ x: p.x + OFFSET, y: p.y + OFFSET })),
-      pinA: w.pinA ? { ...w.pinA, componentId: idMap[w.pinA.componentId] ?? w.pinA.componentId } : null,
-      pinB: w.pinB ? { ...w.pinB, componentId: idMap[w.pinB.componentId] ?? w.pinB.componentId } : null,
-    }))
-    const newAnnotations = annotations.map(a => ({ ...a, id: genId(), x: a.x + OFFSET, y: a.y + OFFSET }))
-    const newImages = images.map(img => ({ ...img, id: genId(), x: img.x + OFFSET, y: img.y + OFFSET }))
-    const newTables = tables.map(t => ({ ...t, id: genId(), x: t.x + OFFSET, y: t.y + OFFSET }))
+    const newWires = wires.map(orig => {
+      const w = clone(orig)
+      return {
+        ...w,
+        id: genId(),
+        points: w.points.map(p => ({ x: p.x + OFFSET, y: p.y + OFFSET })),
+        pinA: w.pinA ? { ...w.pinA, componentId: idMap[w.pinA.componentId] ?? w.pinA.componentId } : null,
+        pinB: w.pinB ? { ...w.pinB, componentId: idMap[w.pinB.componentId] ?? w.pinB.componentId } : null,
+      }
+    })
+    const newAnnotations = annotations.map(orig => ({ ...clone(orig), id: genId(), x: orig.x + OFFSET, y: orig.y + OFFSET }))
+    const newImages = images.map(orig => ({ ...clone(orig), id: genId(), x: orig.x + OFFSET, y: orig.y + OFFSET }))
+    const newTables = tables.map(orig => ({ ...clone(orig), id: genId(), x: orig.x + OFFSET, y: orig.y + OFFSET }))
     const newIds = [
       ...newComps.map(c => c.id),
       ...newWires.map(w => w.id),

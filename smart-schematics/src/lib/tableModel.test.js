@@ -97,3 +97,10 @@ describe('tableSize', () => {
     expect(height).toBe(t.rowHeights.reduce((a, b) => a + b, 0))
   })
 })
+
+describe('createTable fill (v0.2.0)', () => {
+  it('defaults fill to null and stores a provided fill', () => {
+    expect(createTable({}).fill).toBe(null)
+    expect(createTable({ fill: '#ffeeaa' }).fill).toBe('#ffeeaa')
+  })
+})

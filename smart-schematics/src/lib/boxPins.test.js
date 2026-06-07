@@ -80,3 +80,20 @@ describe('createBox — v0.2.0 box payload', () => {
     expect(b.box.info).toBe('')
   })
 })
+
+describe('boxPinLabelPos outside placement (v0.2.0)', () => {
+  it('places labels just OUTSIDE the box edge (no overlap with centre text)', () => {
+    expect(boxPinLabelPos({ absX: -40, absY: 0, direction: 'W' }, 8, true))
+      .toEqual({ x: -48, y: 0, anchor: 'end', baseline: 'middle' })
+    expect(boxPinLabelPos({ absX: 40, absY: 0, direction: 'E' }, 8, true))
+      .toEqual({ x: 48, y: 0, anchor: 'start', baseline: 'middle' })
+    expect(boxPinLabelPos({ absX: 0, absY: -30, direction: 'N' }, 8, true))
+      .toEqual({ x: 0, y: -38, anchor: 'middle', baseline: 'auto' })
+    expect(boxPinLabelPos({ absX: 0, absY: 30, direction: 'S' }, 8, true))
+      .toEqual({ x: 0, y: 38, anchor: 'middle', baseline: 'hanging' })
+  })
+  it('still defaults to inside placement when outside is false', () => {
+    expect(boxPinLabelPos({ absX: -40, absY: 0, direction: 'W' }, 8))
+      .toEqual({ x: -32, y: 0, anchor: 'start', baseline: 'middle' })
+  })
+})

@@ -88,3 +88,42 @@ describe('Stage 7 — v2 fixture migrates to v3', () => {
     expect(store()._buildProjectSnapshot().version).toBe(4)
   })
 })
+
+describe('v0.2.0 — legacy box migrates forward without data loss', () => {
+  beforeEach(() => { store().newProject('scratch') })
+
+  it('folds legacy box.image into box.images and backfills box.links', () => {
+    const legacy = JSON.stringify({
+      version: 3,
+      id: 'p_old', name: 'Old', drawingIds: ['d_old'], activeDrawingId: 'd_old',
+      drawings: [{
+        id: 'd_old', name: 'D', type: 'electrical',
+        components: [{
+          id: 'box_old', type: 'box', designator: 'BX1', value: '', description: '',
+          x: 0, y: 0, rotation: 0, flipH: false, flipV: false,
+          pins: [{ id: 'P1', relX: -40, relY: 0, absX: -40, absY: 0, direction: 'W' }],
+          box: { width: 80, height: 60, doc: { align: 'left', paragraphs: [{ runs: [{ text: 'IC' }] }] },
+                 fill: '#eef', stroke: '#333', cornerRadius: 4, image: 'data:image/png;base64,AAAA' },
+        }],
+        wires: [{ id: 'w_old', points: [{ x: 0, y: 0 }, { x: 10, y: 0 }], netName: '', style: 'solid', weight: 1, pinA: null, pinB: null }],
+        junctions: [], annotations: [],
+        titleBlock: { title: 'D', visible: false }, viewState: { panX: 0, panY: 0, zoom: 1 },
+      }],
+    })
+    store().importProjectJSON(legacy)
+    const d = activeDrawing()
+    const box = d.components.find(c => c.id === 'box_old')
+    // Legacy single image folded into the panel-only images array.
+    expect(box.box.images).toHaveLength(1)
+    expect(box.box.images[0].src).toBe('data:image/png;base64,AAAA')
+    // New panel-only links array backfilled.
+    expect(box.box.links).toEqual([])
+    // Pre-existing pin gains an empty label; old content untouched.
+    expect(box.pins[0].label).toBe('')
+    expect(box.box.doc.paragraphs[0].runs[0].text).toBe('IC')
+    // Old wire with no color is preserved (renders with the theme default).
+    expect(d.wires[0].color).toBeUndefined()
+    // New tables array backfilled at the drawing level.
+    expect(d.tables).toEqual([])
+  })
+})

@@ -72,7 +72,7 @@ const WirePath = memo(function WirePath({ wire, crossings, selected, onClick, wi
       <path
         id={`wire-vis-${wire.id}`}
         d={d}
-        stroke={selected ? '#2563eb' : 'var(--wire-color)'}
+        stroke={selected ? '#2563eb' : (wire.color || 'var(--wire-color)')}
         strokeWidth={sw}
         strokeDasharray={dasharray}
         fill="none"

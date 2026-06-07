@@ -1497,7 +1497,7 @@ export default function Canvas({ onCursorMove }) {
               box from each labelled pin. Boxes only. */}
           {drawing.components.filter(c => c.type === 'box').map(comp =>
             (comp.pins || []).filter(p => p.label).map(pin => {
-              const lp = boxPinLabelPos(pin)
+              const lp = boxPinLabelPos(pin, 8, true)
               return (
                 <text
                   key={`plabel-${comp.id}-${pin.id}`}
