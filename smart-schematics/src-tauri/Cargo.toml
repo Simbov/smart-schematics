@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.2.0"
+version = "0.3.0"
 description = "Smart Schematics — draw and simulate electrical schematics"
 authors = ["Simon Vollert"]
 license = ""

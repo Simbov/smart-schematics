@@ -12,6 +12,8 @@ section with the version and date and starts a fresh Unreleased block.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-07
+
 ### Added
 - **Resizable Properties panel.** Drag the panel's left edge to make it wider or
   narrower; the width is remembered between sessions.
