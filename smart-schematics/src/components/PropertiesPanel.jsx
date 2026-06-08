@@ -5,9 +5,8 @@ import { getElectricalDef } from '../lib/components/electrical'
 import { getHydraulicDef } from '../lib/components/hydraulic'
 import { parseValue, formatSI } from '../lib/simulation/parseValue'
 import { plainToDoc, applyDocStyle, setDocAlign, docToPlain, docToHtml, isEmptyDoc, emptyDoc } from '../lib/richText'
-import { addField, updateField, removeField, moveField } from '../lib/boxFields'
-import { addBoxImage, updateBoxImage, removeBoxImage, normalizeBoxImages, moveBoxImage } from '../lib/boxImages'
-import { addLink, updateLink, removeLink, moveLink, normalizeUrl } from '../lib/boxLinks'
+import { addBlock, updateBlock, removeBlock, moveBlock, migrateBlocks, HEADING_SIZES } from '../lib/boxBlocks'
+import { normalizeUrl } from '../lib/boxLinks'
 import { addRow, addCol, removeRow, removeCol } from '../lib/tableModel'
 import { RESISTOR_STYLES } from '../lib/resistorStyle'
 import Lightbox from './Lightbox'
@@ -133,6 +132,131 @@ function RemoveButton({ onClick, title }) {
   )
 }
 
+// Render free text with bare URLs turned into clickable links (used by the
+// document view's text blocks — links are no longer a separate section).
+function renderRichText(text) {
+  const parts = String(text || '').split(/(https?:\/\/[^\s]+|www\.[^\s]+)/g)
+  return parts.map((p, i) => {
+    if (/^(https?:\/\/|www\.)/.test(p)) {
+      return (
+        <a key={i} href={normalizeUrl(p)} target="_blank" rel="noreferrer"
+          onClick={e => e.stopPropagation()}
+          style={{ color: '#2563eb', textDecoration: 'underline', wordBreak: 'break-all' }}>{p}</a>
+      )
+    }
+    return <span key={i}>{p}</span>
+  })
+}
+
+// Shared "document content" renderer for a box or a junction. `blocks` is the
+// ordered, mixed list (headings/properties/text/images). `commit(next)` persists
+// a changed list. In view mode it reads like a formatted info document; in edit
+// mode each block becomes inputs with a drag handle + remove button, reorderable
+// across types via moveBlock.
+function ContentBlocks({ blocks, editing, commit, onImageClick }) {
+  const list = blocks || []
+  // Reorder via explicit up/down buttons — reliable in the Tauri (WebKit) webview,
+  // where HTML5 drag-and-drop is unreliable.
+  const moveUp = (i) => { if (i > 0) commit(moveBlock(list, list[i].id, list[i - 1].id)) }
+  const moveDown = (i) => { if (i < list.length - 1) commit(moveBlock(list, list[i].id, list[i + 1].id)) }
+
+  if (!editing) {
+    if (list.length === 0) {
+      return <div className="text-gray-400" style={{ fontSize: 11 }}>Nothing yet — click Edit to add headings, properties, text or images.</div>
+    }
+    return (
+      <div className="space-y-2">
+        {list.map(b => {
+          if (b.type === 'heading') {
+            return <div key={b.id} style={{ fontSize: HEADING_SIZES[b.size] ?? HEADING_SIZES.medium, fontWeight: 700, lineHeight: 1.2 }}>{b.text || '—'}</div>
+          }
+          if (b.type === 'property') {
+            return (
+              <div key={b.id} className="flex justify-between gap-2" style={{ fontSize: 12 }}>
+                <span className="text-gray-400 flex-shrink-0">{b.label || '—'}</span>
+                <span className="text-right" style={{ wordBreak: 'break-word' }}>{b.value}{b.unit ? ` ${b.unit}` : ''}</span>
+              </div>
+            )
+          }
+          if (b.type === 'image') {
+            return (
+              <div key={b.id} className="space-y-1">
+                {b.heading && <div style={{ fontSize: HEADING_SIZES[b.size] ?? HEADING_SIZES.medium, fontWeight: 700, lineHeight: 1.2 }}>{b.heading}</div>}
+                <img src={b.src} alt={b.heading || 'reference image'} title="Click to enlarge"
+                  onClick={() => onImageClick?.(b.src)}
+                  style={{ display: 'block', maxWidth: '100%', maxHeight: 180, margin: '0 auto', borderRadius: 3, cursor: 'zoom-in', background: 'rgba(0,0,0,0.04)' }} />
+              </div>
+            )
+          }
+          // text
+          return <div key={b.id} style={{ fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{renderRichText(b.text)}</div>
+        })}
+      </div>
+    )
+  }
+
+  // Edit mode — one card per block; ▲/▼ reorder across types, × removes.
+  const moveBtn = {
+    width: 20, height: 18, lineHeight: 1, fontSize: 11, borderRadius: 3,
+    border: '1px solid var(--panel-border)', color: 'var(--component-color)',
+    background: 'var(--input-bg, rgba(0,0,0,0.06))', cursor: 'pointer',
+  }
+  return (
+    <div className="space-y-1.5">
+      {list.map((b, i) => (
+        <div key={b.id}
+          className="rounded p-1.5 space-y-1" style={{ border: '1px solid var(--panel-border)' }}>
+          <div className="flex items-center gap-1">
+            <button type="button" title="Move up" disabled={i === 0} style={{ ...moveBtn, opacity: i === 0 ? 0.35 : 1 }} onClick={() => moveUp(i)}>▲</button>
+            <button type="button" title="Move down" disabled={i === list.length - 1} style={{ ...moveBtn, opacity: i === list.length - 1 ? 0.35 : 1 }} onClick={() => moveDown(i)}>▼</button>
+            <span className="text-gray-400 uppercase flex-1" style={{ fontSize: 9, letterSpacing: '0.06em' }}>{b.type}</span>
+            {(b.type === 'heading' || b.type === 'image') && (
+              <select value={b.size || 'medium'} className="rounded px-1 outline-none"
+                title="Heading size"
+                style={{ fontSize: 10, height: 20, background: 'var(--input-bg, rgba(0,0,0,0.06))', border: '1px solid var(--panel-border)', color: 'var(--component-color)' }}
+                onChange={e => commit(updateBlock(list, b.id, { size: e.target.value }))}>
+                {Object.keys(HEADING_SIZES).map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            )}
+            <RemoveButton title="Remove this block" onClick={() => commit(removeBlock(list, b.id))} />
+          </div>
+          {b.type === 'heading' && (
+            <input className={INPUT_CLASS} style={{ ...INPUT_STYLE, fontWeight: 700 }} placeholder="Subheading"
+              defaultValue={b.text} onBlur={e => commit(updateBlock(list, b.id, { text: e.target.value }))} />
+          )}
+          {b.type === 'property' && (
+            <>
+              <input className={INPUT_CLASS} style={INPUT_STYLE} placeholder="Property name"
+                defaultValue={b.label} onBlur={e => commit(updateBlock(list, b.id, { label: e.target.value }))} />
+              <div className="grid gap-1" style={{ gridTemplateColumns: '2fr 1fr' }}>
+                <input className={INPUT_CLASS} style={INPUT_STYLE} placeholder="Value"
+                  defaultValue={b.value} onBlur={e => commit(updateBlock(list, b.id, { value: e.target.value }))} />
+                <input className={INPUT_CLASS} style={INPUT_STYLE} placeholder="Unit"
+                  defaultValue={b.unit} onBlur={e => commit(updateBlock(list, b.id, { unit: e.target.value }))} />
+              </div>
+            </>
+          )}
+          {b.type === 'text' && (
+            <textarea className="w-full rounded px-1 py-0.5 outline-none resize-y"
+              style={{ fontSize: 11, minHeight: 44, maxHeight: 160, background: 'var(--input-bg, rgba(0,0,0,0.06))', border: '1px solid var(--panel-border)', color: 'var(--component-color)', display: 'block' }}
+              placeholder="Notes, datasheet info, a link…" defaultValue={b.text}
+              onBlur={e => commit(updateBlock(list, b.id, { text: e.target.value }))} />
+          )}
+          {b.type === 'image' && (
+            <>
+              <input className={INPUT_CLASS} style={INPUT_STYLE} placeholder="Caption (e.g. Pinout)"
+                defaultValue={b.heading} onBlur={e => commit(updateBlock(list, b.id, { heading: e.target.value }))} />
+              <img src={b.src} alt={b.heading || 'reference image'} title="Click to enlarge"
+                onClick={() => onImageClick?.(b.src)}
+                style={{ display: 'block', maxWidth: '100%', maxHeight: 160, margin: '0 auto', borderRadius: 3, cursor: 'zoom-in', background: 'rgba(0,0,0,0.04)' }} />
+            </>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function PropertiesPanel() {
   const selectedIds = useSchematicStore(s => s.selectedIds)
   const activeDrawingId = useSchematicStore(s => s.activeDrawingId)
@@ -147,27 +271,37 @@ export default function PropertiesPanel() {
   const updateWire = useSchematicStore(s => s.updateWire)
   const updateTable = useSchematicStore(s => s.updateTable)
   const removeTable = useSchematicStore(s => s.removeTable)
+  const updateJunction = useSchematicStore(s => s.updateJunction)
+  const deleteIds = useSchematicStore(s => s.deleteIds)
 
   const isRunning = useSimulationStore(s => s.isRunning)
   const simCompState = useSimulationStore(s => s.componentStates[selectedIds[0]])
   const simWireState = useSimulationStore(s => s.wireStates[selectedIds[0]])
 
   const [local, setLocal] = useState({ designator: '', value: '', description: '', labelScale: 1, resistorStyle: '' })
-  const [localBoxInfo, setLocalBoxInfo] = useState('')
-  const [localFields, setLocalFields] = useState([])
-  const [localBoxImages, setLocalBoxImages] = useState([])
+  // The id the local edit buffers belong to, captured when the selection synced.
+  // All blur-commits target THIS id (not the live selection) so a half-typed edit
+  // can never land on the next item you click (item 5 — "edits leak across items").
+  const [localOwnerId, setLocalOwnerId] = useState(null)
+  // v0.4.0: a box's documentation is one ordered, mixed block list.
+  const [localBlocks, setLocalBlocks] = useState([])
   const [localSim, setLocalSim] = useState({})
   const [localAnnText, setLocalAnnText] = useState('')
   const [localAnnSize, setLocalAnnSize] = useState(14)
   const [localImg, setLocalImg] = useState({ x: 0, y: 0, width: 0, height: 0, opacity: 1, rotation: 0 })
-  const [localBox, setLocalBox] = useState({ width: 80, height: 60, cornerRadius: 4, fill: '#f1f5f9', stroke: '#334155', W: 1, E: 1, N: 0, S: 0 })
-  const [localLinks, setLocalLinks] = useState([])
+  const [localBox, setLocalBox] = useState({ width: 80, height: 60, cornerRadius: 4, fill: '#f1f5f9', stroke: '#334155', title: '', W: 1, E: 1, N: 0, S: 0 })
   const [localBoxLabelSize, setLocalBoxLabelSize] = useState(11)
+  // Junction documentation (shares the block model with boxes).
+  const [localJunction, setLocalJunction] = useState({ label: '' })
+  const [localJunctionBlocks, setLocalJunctionBlocks] = useState([])
   const [localWire, setLocalWire] = useState({ color: '', style: 'solid', weight: 1 })
   const [localTable, setLocalTable] = useState({ borderColor: '#334155', borderWidth: 1, headerRow: false, fill: '' })
   // Box content view/edit toggle (clean read-only view by default; flip to Edit
   // for textboxes + delete + drag-reorder). Resets to view on selection change.
   const [boxEdit, setBoxEdit] = useState(false)
+  // Configure disclosure (geometry/colour/pin/label-style) — collapsed by default
+  // so the pane reads like a clean info document (item 10).
+  const [configOpen, setConfigOpen] = useState(false)
   const [lightboxSrc, setLightboxSrc] = useState(null)
   const [dragRowId, setDragRowId] = useState(null)
   // Resizable panel width, persisted across sessions.
@@ -182,20 +316,26 @@ export default function PropertiesPanel() {
         || drawing?.wires.find(w => w.id === selectedIds[0])
         || (drawing?.annotations || []).find(a => a.id === selectedIds[0])
         || (drawing?.images || []).find(im => im.id === selectedIds[0])
-        || (drawing?.tables || []).find(t => t.id === selectedIds[0]))
+        || (drawing?.tables || []).find(t => t.id === selectedIds[0])
+        || (drawing?.junctions || []).find(j => j.id === selectedIds[0]))
       : 'multi'
 
+  // Junctions live in drawing.junctions — identify by membership so the
+  // shape-based checks below don't mistake a junction (no designator/src) for an
+  // image or component.
+  const isJunction = selected && selected !== 'multi' && (drawing?.junctions || []).some(j => j.id === selected.id)
   // Tables carry a `cells` 2-D array; distinguish them before images/wires.
-  const isTable = selected && selected !== 'multi' && Array.isArray(selected.cells)
+  const isTable = selected && selected !== 'multi' && !isJunction && Array.isArray(selected.cells)
   // Images carry a `src` (and no designator/text), so distinguish them first.
-  const isImage = selected && selected !== 'multi' && !isTable && selected.src !== undefined && selected.designator === undefined
-  const isAnnotation = selected && selected !== 'multi' && !isImage && !isTable && (selected.type === 'text' || selected.type === 'callout')
-  const isComponent = selected && selected !== 'multi' && !isAnnotation && !isImage && !isTable && selected.designator !== undefined
+  const isImage = selected && selected !== 'multi' && !isJunction && !isTable && selected.src !== undefined && selected.designator === undefined
+  const isAnnotation = selected && selected !== 'multi' && !isJunction && !isImage && !isTable && (selected.type === 'text' || selected.type === 'callout')
+  const isComponent = selected && selected !== 'multi' && !isJunction && !isAnnotation && !isImage && !isTable && selected.designator !== undefined
   const isBox = isComponent && selected.type === 'box'
-  const isWire = selected && selected !== 'multi' && !isComponent && !isAnnotation && !isImage && !isTable && Array.isArray(selected.points)
+  const isWire = selected && selected !== 'multi' && !isJunction && !isComponent && !isAnnotation && !isImage && !isTable && Array.isArray(selected.points)
 
   // Sync local state when selection changes
   useEffect(() => {
+    setLocalOwnerId(selectedIds[0] ?? null)
     if (isComponent) {
       setLocal({
         designator: selected.designator ?? '',
@@ -238,14 +378,16 @@ export default function PropertiesPanel() {
         cornerRadius: b.cornerRadius ?? 4,
         fill: b.fill ?? '#f1f5f9',
         stroke: b.stroke ?? '#334155',
+        title: b.title ?? '',
         ...counts,
       })
-      setLocalBoxInfo(b.info ?? '')
-      setLocalFields(b.fields ?? [])
-      setLocalBoxImages(normalizeBoxImages(b))
-      setLocalLinks(b.links ?? [])
+      setLocalBlocks(migrateBlocks(b))
       const firstRun = (b.doc?.paragraphs || []).flatMap(p => p.runs || []).find(r => r.text)
       setLocalBoxLabelSize(firstRun?.fontSize ?? 11)
+    }
+    if (isJunction) {
+      setLocalJunction({ label: selected.label ?? '' })
+      setLocalJunctionBlocks(migrateBlocks(selected))
     }
     if (isWire) {
       setLocalWire({
@@ -263,17 +405,28 @@ export default function PropertiesPanel() {
       })
     }
     setBoxEdit(false)
+    setConfigOpen(false)
   }, [selectedIds[0]])
 
+  // Look up the entity the local edit buffers belong to, fresh from the store, by
+  // the captured owner id (NOT the live selection). Used by blur-commits so an
+  // edit always lands on the item that was being edited.
+  const getOwnerComponent = useCallback(() => {
+    if (!localOwnerId) return null
+    const dr = useSchematicStore.getState().drawings.find(d => d.id === activeDrawingId)
+    return (dr?.components || []).find(c => c.id === localOwnerId) || null
+  }, [activeDrawingId, localOwnerId])
+
   const commitField = useCallback((field, val) => {
-    if (!isComponent) return
+    if (!getOwnerComponent()) return
     pushUndo()
-    updateComponent(activeDrawingId, selected.id, { [field]: val })
-  }, [isComponent, activeDrawingId, selected?.id])
+    updateComponent(activeDrawingId, localOwnerId, { [field]: val })
+  }, [activeDrawingId, localOwnerId, getOwnerComponent, pushUndo, updateComponent])
 
   const commitSimParam = useCallback((key, val) => {
-    if (!isComponent) return
-    const def = getAnyDef(selected.type)
+    const owner = getOwnerComponent()
+    if (!owner) return
+    const def = getAnyDef(owner.type)
     const paramDef = def?.simParams?.[key]
     let stored = val
     if (paramDef?.primary) {
@@ -282,8 +435,8 @@ export default function PropertiesPanel() {
       setLocalSim(s => ({ ...s, [key]: formatSI(num, paramDef.unit ?? '') }))
     }
     pushUndo()
-    updateComponentSimParam(activeDrawingId, selected.id, key, stored)
-  }, [isComponent, activeDrawingId, selected?.id, selected?.type])
+    updateComponentSimParam(activeDrawingId, localOwnerId, key, stored)
+  }, [activeDrawingId, localOwnerId, getOwnerComponent, pushUndo, updateComponentSimParam])
 
   // The current doc for the selected annotation (tolerates legacy text-only).
   const annDoc = isAnnotation ? (selected.doc || plainToDoc(selected.text ?? '')) : null
@@ -311,9 +464,10 @@ export default function PropertiesPanel() {
       doc = applyDocStyle(doc, carry)
     }
     doc = setDocAlign(doc, annDoc?.align || 'left')
+    if (!localOwnerId) return
     pushUndo()
-    updateAnnotation(activeDrawingId, selected.id, { doc })
-  }, [isAnnotation, activeDrawingId, selected?.id, annDoc, pushUndo])
+    updateAnnotation(activeDrawingId, localOwnerId, { doc })
+  }, [isAnnotation, activeDrawingId, localOwnerId, annDoc, pushUndo])
 
   // Whole-box quick style: patch every run.
   const commitDocStyle = useCallback((patch) => {
@@ -329,26 +483,29 @@ export default function PropertiesPanel() {
   }, [isAnnotation, activeDrawingId, selected?.id, annDoc, pushUndo])
 
   const commitImageField = useCallback((patch) => {
-    if (!isImage) return
+    if (!localOwnerId) return
     pushUndo()
-    updateImage(activeDrawingId, selected.id, patch)
-  }, [isImage, activeDrawingId, selected?.id])
+    updateImage(activeDrawingId, localOwnerId, patch)
+  }, [activeDrawingId, localOwnerId, pushUndo, updateImage])
 
   // Box style/geometry commit (grid-snapping + pin re-derivation handled by the
-  // store's updateBox). Geometry changes recompute pins; pin-count changes pass a
-  // pinSpec so updateBox rebuilds the edges.
+  // store's updateBox). Targets the captured owner id and verifies it is a box, so
+  // a blur after switching selection can't write to the wrong box (item 5).
   const commitBox = useCallback((boxPatch, pinSpec = null) => {
-    if (!isBox) return
+    if (!localOwnerId) return
+    const owner = getOwnerComponent()
+    if (!owner || owner.type !== 'box') return
     pushUndo()
-    updateBox(activeDrawingId, selected.id, boxPatch, pinSpec)
-  }, [isBox, activeDrawingId, selected?.id, pushUndo, updateBox])
+    updateBox(activeDrawingId, localOwnerId, boxPatch, pinSpec)
+  }, [activeDrawingId, localOwnerId, getOwnerComponent, pushUndo, updateBox])
 
   const commitBoxPins = useCallback((counts) => {
-    if (!isBox) return
+    const owner = getOwnerComponent()
+    if (!owner || owner.type !== 'box') return
     const spec = { W: counts.W, E: counts.E, N: counts.N, S: counts.S }
     pushUndo()
-    updateBox(activeDrawingId, selected.id, {}, spec)
-  }, [isBox, activeDrawingId, selected?.id, pushUndo, updateBox])
+    updateBox(activeDrawingId, localOwnerId, {}, spec)
+  }, [activeDrawingId, localOwnerId, getOwnerComponent, pushUndo, updateBox])
 
   const replaceInputRef = useRef(null)
   const onReplaceImage = (e) => {
@@ -360,39 +517,55 @@ export default function PropertiesPanel() {
     reader.readAsDataURL(file)
   }
 
-  // Box reference images (v0.2.0): panel-only documentation pictures. Reading a
-  // file appends it to box.images (NOT drawn on the canvas). Multiple images are
-  // supported, each filed under an editable heading.
+  // ── Unified documentation blocks (v0.4.0) — works for the selected box OR
+  // junction. `docBlocks` is the live list; `commitBlocks` persists a changed list
+  // to the right owner (box.blocks via updateBox / junction.blocks via updateJunction).
+  const docBlocks = isBox ? localBlocks : isJunction ? localJunctionBlocks : []
+  const commitBlocks = useCallback((next) => {
+    if (!localOwnerId) return
+    const dr = useSchematicStore.getState().drawings.find(d => d.id === activeDrawingId)
+    const comp = (dr?.components || []).find(c => c.id === localOwnerId)
+    if (comp?.type === 'box') {
+      setLocalBlocks(next)
+      pushUndo()
+      updateBox(activeDrawingId, localOwnerId, { blocks: next })
+      return
+    }
+    const jct = (dr?.junctions || []).find(j => j.id === localOwnerId)
+    if (jct) {
+      setLocalJunctionBlocks(next)
+      pushUndo()
+      updateJunction(activeDrawingId, localOwnerId, { blocks: next })
+    }
+  }, [activeDrawingId, localOwnerId, pushUndo, updateBox, updateJunction])
+
+  // Add image block(s) from chosen files (panel-only documentation pictures).
   const boxImageInputRef = useRef(null)
-  const commitBoxImages = useCallback((next) => {
-    if (!isBox) return
-    setLocalBoxImages(next)
-    commitBox({ images: next })
-  }, [isBox, commitBox])
   const onAssignBoxImage = (e) => {
     const files = Array.from(e.target.files || [])
     e.target.value = ''
-    if (!files.length || !isBox) return
-    // Read all chosen files, then append them in one commit.
+    if (!files.length || (!isBox && !isJunction)) return
     Promise.all(files.map(file => new Promise(resolve => {
       const reader = new FileReader()
       reader.onload = () => resolve(reader.result)
       reader.onerror = () => resolve(null)
       reader.readAsDataURL(file)
     }))).then(srcs => {
-      let next = localBoxImages
-      for (const src of srcs) if (src) next = addBoxImage(next, { src, heading: '' })
-      commitBoxImages(next)
+      let next = docBlocks
+      for (const src of srcs) if (src) next = addBlock(next, { type: 'image', src })
+      commitBlocks(next)
+      setBoxEdit(true)
     })
   }
 
   // Commit a single box pin's label without rebuilding the pin layout.
   const commitPinLabel = useCallback((pinId, label) => {
-    if (!isBox) return
-    const pins = (selected.pins || []).map(p => p.id === pinId ? { ...p, label } : p)
+    const owner = getOwnerComponent()
+    if (!owner || owner.type !== 'box') return
+    const pins = (owner.pins || []).map(p => p.id === pinId ? { ...p, label } : p)
     pushUndo()
-    updateComponent(activeDrawingId, selected.id, { pins })
-  }, [isBox, activeDrawingId, selected, pushUndo, updateComponent])
+    updateComponent(activeDrawingId, localOwnerId, { pins })
+  }, [activeDrawingId, localOwnerId, getOwnerComponent, pushUndo, updateComponent])
 
   // ── Box label whole-doc quick styles (fixes "font size not working on boxes":
   // the panel now sizes/styles the ENTIRE box label, not just an editor range).
@@ -402,7 +575,6 @@ export default function PropertiesPanel() {
     const runs = boxDoc.paragraphs.flatMap(p => p.runs || []).filter(r => r.text)
     return runs.length > 0 && runs.every(r => r[attr])
   }, [boxDoc])
-  const boxDocSize = boxDoc?.paragraphs?.flatMap(p => p.runs || []).find(r => r.text)?.fontSize ?? 11
   const commitBoxDocStyle = useCallback((patch) => {
     if (!isBox) return
     commitBox({ doc: applyDocStyle(boxDoc, patch) })
@@ -412,45 +584,31 @@ export default function PropertiesPanel() {
     commitBox({ doc: setDocAlign(boxDoc, align) })
   }, [isBox, boxDoc, commitBox])
 
-  // ── Box links (panel-only clickable references).
-  const commitLinks = useCallback((next) => {
-    if (!isBox) return
-    setLocalLinks(next)
-    commitBox({ links: next })
-  }, [isBox, commitBox])
-
-  // ── Generic drag-to-reorder for the box content rows. Each section commits a
-  // reordered array via its move* helper when a row is dropped onto another.
-  const reorderDrop = useCallback((kind, toId) => {
-    const fromId = dragRowId
-    setDragRowId(null)
-    if (!fromId || fromId === toId) return
-    if (kind === 'field') { const next = moveField(localFields, fromId, toId); setLocalFields(next); commitBox({ fields: next }) }
-    else if (kind === 'image') commitBoxImages(moveBoxImage(localBoxImages, fromId, toId))
-    else if (kind === 'link') commitLinks(moveLink(localLinks, fromId, toId))
-  }, [dragRowId, localFields, localBoxImages, localLinks, commitBox, commitBoxImages, commitLinks])
-
-  // ── Paste an image from the clipboard straight into the box's reference images.
+  // ── Paste an image from the clipboard straight into the document as an image
+  // block. Works for a box OR a junction. Only intercepts image items — text
+  // paste into inputs is never swallowed (Windows-paste fix, Stage 6).
   const onBoxPaste = useCallback((e) => {
-    if (!isBox) return
+    if (!isBox && !isJunction) return
     const items = e.clipboardData?.items
-    if (!items) return
-    for (const it of items) {
-      if (it.type && it.type.startsWith('image/')) {
-        const file = it.getAsFile()
-        if (!file) continue
-        e.preventDefault()
-        e.stopPropagation()
-        const reader = new FileReader()
-        reader.onload = () => commitBoxImages(addBoxImage(localBoxImages, { src: reader.result, heading: '' }))
-        reader.readAsDataURL(file)
-        return
-      }
+    const files = e.clipboardData?.files
+    const pickFile = () => {
+      if (items) for (const it of items) if (it.type?.startsWith('image/')) return it.getAsFile()
+      if (files) for (const f of files) if (f.type?.startsWith('image/')) return f
+      return null
     }
-  }, [isBox, localBoxImages, commitBoxImages])
+    const file = pickFile()
+    if (!file) return
+    e.preventDefault()
+    e.stopPropagation()
+    const reader = new FileReader()
+    reader.onload = () => { commitBlocks(addBlock(docBlocks, { type: 'image', src: reader.result })); setBoxEdit(true) }
+    reader.readAsDataURL(file)
+  }, [isBox, isJunction, docBlocks, commitBlocks])
 
+  // Explicit "Paste image" button — async clipboard read with a graceful no-op
+  // when the webview denies it (common on Windows/Tauri).
   const pasteImageFromClipboard = useCallback(async () => {
-    if (!isBox || !navigator.clipboard?.read) return
+    if ((!isBox && !isJunction) || !navigator.clipboard?.read) return
     try {
       const items = await navigator.clipboard.read()
       for (const item of items) {
@@ -458,27 +616,27 @@ export default function PropertiesPanel() {
         if (!type) continue
         const blob = await item.getType(type)
         const reader = new FileReader()
-        reader.onload = () => commitBoxImages(addBoxImage(localBoxImages, { src: reader.result, heading: '' }))
+        reader.onload = () => { commitBlocks(addBlock(docBlocks, { type: 'image', src: reader.result })); setBoxEdit(true) }
         reader.readAsDataURL(blob)
         return
       }
     } catch { /* clipboard unreadable / denied — ignore */ }
-  }, [isBox, localBoxImages, commitBoxImages])
+  }, [isBox, isJunction, docBlocks, commitBlocks])
 
-  // ── Wire styling.
+  // ── Wire styling. Targets the captured owner id (item 5 safety).
   const commitWire = useCallback((patch) => {
-    if (!isWire) return
+    if (!localOwnerId) return
     pushUndo()
-    updateWire(activeDrawingId, selected.id, patch)
-  }, [isWire, activeDrawingId, selected?.id, pushUndo, updateWire])
+    updateWire(activeDrawingId, localOwnerId, patch)
+  }, [activeDrawingId, localOwnerId, pushUndo, updateWire])
 
   // ── Table structure + styling. Structural ops go through tableModel helpers
   // (which keep cells/colWidths/rowHeights rectangular) then patch the whole table.
   const commitTable = useCallback((patch) => {
-    if (!isTable) return
+    if (!localOwnerId) return
     pushUndo()
-    updateTable(activeDrawingId, selected.id, patch)
-  }, [isTable, activeDrawingId, selected?.id, pushUndo, updateTable])
+    updateTable(activeDrawingId, localOwnerId, patch)
+  }, [activeDrawingId, localOwnerId, pushUndo, updateTable])
   const applyTableOp = useCallback((fn) => {
     if (!isTable) return
     const next = fn(selected)
@@ -765,11 +923,56 @@ export default function PropertiesPanel() {
           </div>
         )}
 
+        {/* Junction selected (v0.4.0) — a documentable connection node. Same
+            clean document model as boxes (name + mixed reorderable blocks). */}
+        {isJunction && (
+          <div className="space-y-1.5" onPaste={onBoxPaste}>
+            <input ref={boxImageInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={onAssignBoxImage} />
+            <div style={{ fontSize: 13, fontWeight: 700 }}>Junction</div>
+            <Field label="Name" value={localJunction.label}
+              onChange={v => setLocalJunction({ label: v })}
+              onBlur={() => { pushUndo(); updateJunction(activeDrawingId, selected.id, { label: localJunction.label }) }}
+              placeholder="e.g. Node A" />
+
+            <div className="pt-2 mt-2 border-t flex items-center justify-between" style={{ borderColor: 'var(--panel-border)' }}>
+              <span className="text-gray-400 font-semibold uppercase" style={{ fontSize: 11, letterSpacing: '0.04em' }}>Documentation</span>
+              <MiniButton title={boxEdit ? 'Finish editing' : 'Edit content'}
+                onClick={() => setBoxEdit(e => !e)}>{boxEdit ? 'Done' : 'Edit'}</MiniButton>
+            </div>
+            <div className="mt-1.5">
+              <ContentBlocks blocks={localJunctionBlocks} editing={boxEdit} commit={commitBlocks}
+                onImageClick={setLightboxSrc} dragRowId={dragRowId} setDragRowId={setDragRowId} />
+            </div>
+
+            <div className="pt-2 mt-2 border-t flex flex-wrap gap-1" style={{ borderColor: 'var(--panel-border)' }}>
+              <MiniButton title="Add a subheading"
+                onClick={() => { commitBlocks(addBlock(docBlocks, { type: 'heading' })); setBoxEdit(true) }}>+ Heading</MiniButton>
+              <MiniButton title="Add a property row"
+                onClick={() => { commitBlocks(addBlock(docBlocks, { type: 'property' })); setBoxEdit(true) }}>+ Property</MiniButton>
+              <MiniButton title="Add a text paragraph"
+                onClick={() => { commitBlocks(addBlock(docBlocks, { type: 'text' })); setBoxEdit(true) }}>+ Text</MiniButton>
+              <MiniButton title="Add an image"
+                onClick={() => { setBoxEdit(true); boxImageInputRef.current?.click() }}>+ Image</MiniButton>
+              <MiniButton title="Paste an image from the clipboard"
+                onClick={() => { setBoxEdit(true); pasteImageFromClipboard() }}>Paste image</MiniButton>
+            </div>
+
+            <button
+              className="rounded px-2 py-0.5 text-red-500 mt-1"
+              style={{ fontSize: 11, border: '1px solid var(--panel-border)' }}
+              onClick={() => deleteIds(activeDrawingId, [selected.id])}
+            >Delete junction</button>
+          </div>
+        )}
+
         {/* Component selected */}
         {isComponent && (
           <div className="space-y-1.5">
+            {/* Non-box components keep the compact Ref / Value / Desc fields.
+                Boxes use the document layout below (big Ref title + description). */}
+            {!isBox && (<>
             {/* Basic fields row */}
-            <div className="grid gap-1.5" style={{ gridTemplateColumns: (hasPrimaryParam || isBox) ? '1fr 1.5fr' : '1fr 1fr 1.5fr' }}>
+            <div className="grid gap-1.5" style={{ gridTemplateColumns: hasPrimaryParam ? '1fr 1.5fr' : '1fr 1fr 1.5fr' }}>
               <Field
                 label="Ref"
                 value={local.designator}
@@ -800,7 +1003,7 @@ export default function PropertiesPanel() {
             {/* Ref label size + (resistors) symbol style */}
             <div className="grid gap-1.5 items-center" style={{ gridTemplateColumns: selected.type === 'resistor' ? '1fr 1fr' : '1fr' }}>
               <Field
-                label="Ref size"
+                label="Ref label size"
                 type="number"
                 value={local.labelScale}
                 onChange={v => setLocal(l => ({ ...l, labelScale: v }))}
@@ -828,11 +1031,109 @@ export default function PropertiesPanel() {
                 </div>
               )}
             </div>
+            </>)}
 
-            {/* Box editor (Stage 5 + v0.2.0): grouped into scannable sections so
-                the narrow vertical rail stays readable. */}
+            {/* Box editor (v0.4.0): a clean info document — big Ref title, a
+                Description box, then mixed reorderable blocks. Editing is gated by
+                the Edit button; geometry/colour/pins/ref-size live under Configure. */}
             {isBox && (
               <div onPaste={onBoxPaste}>
+                <input ref={boxImageInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={onAssignBoxImage} />
+
+                {/* Header: the document Edit toggle. */}
+                <div className="flex items-center justify-end">
+                  <MiniButton title={boxEdit ? 'Finish editing' : 'Edit this component'}
+                    onClick={() => setBoxEdit(e => !e)}>{boxEdit ? 'Done' : 'Edit'}</MiniButton>
+                </div>
+
+                {/* Title — a properties-only name for the component (NOT the ref,
+                    NOT drawn on the canvas), shown big at the top. */}
+                {boxEdit ? (
+                  <input
+                    className="w-full rounded px-1 outline-none"
+                    style={{ fontSize: 20, fontWeight: 800, height: 30, background: 'var(--input-bg, rgba(0,0,0,0.06))', border: '1px solid var(--panel-border)', color: 'var(--component-color)' }}
+                    value={localBox.title}
+                    placeholder="Title"
+                    onChange={e => setLocalBox(b => ({ ...b, title: e.target.value }))}
+                    onBlur={() => commitBox({ title: localBox.title })}
+                  />
+                ) : (
+                  <div style={{ fontSize: 20, fontWeight: 800, lineHeight: 1.15, wordBreak: 'break-word' }}>
+                    {localBox.title || <span className="text-gray-400">Untitled</span>}
+                  </div>
+                )}
+
+                {/* Ref / label — just under the title, smaller + italic. */}
+                {boxEdit ? (
+                  <input
+                    className="w-full rounded px-1 outline-none mt-0.5"
+                    style={{ fontSize: 12, fontStyle: 'italic', height: 20, background: 'var(--input-bg, rgba(0,0,0,0.06))', border: '1px solid var(--panel-border)', color: 'var(--component-color)' }}
+                    value={local.designator}
+                    placeholder="Ref (e.g. BX1)"
+                    onChange={e => setLocal(l => ({ ...l, designator: e.target.value }))}
+                    onBlur={() => commitField('designator', local.designator)}
+                  />
+                ) : (
+                  local.designator
+                    ? <div className="text-gray-400 mt-0.5" style={{ fontSize: 12, fontStyle: 'italic', wordBreak: 'break-word' }}>{local.designator}</div>
+                    : null
+                )}
+
+                {/* Description — always present, just under the title. */}
+                {boxEdit ? (
+                  <textarea
+                    className="w-full rounded px-1 py-0.5 outline-none resize-y mt-1"
+                    style={{ fontSize: 12, minHeight: 48, maxHeight: 160, background: 'var(--input-bg, rgba(0,0,0,0.06))', border: '1px solid var(--panel-border)', color: 'var(--component-color)', display: 'block' }}
+                    placeholder="Description…"
+                    value={local.description}
+                    onChange={e => setLocal(l => ({ ...l, description: e.target.value }))}
+                    onBlur={() => commitField('description', local.description)}
+                  />
+                ) : (
+                  local.description
+                    ? <div className="mt-1" style={{ fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{renderRichText(local.description)}</div>
+                    : <div className="mt-1 text-gray-400" style={{ fontSize: 11 }}>No description</div>
+                )}
+
+                {/* Documentation blocks — anything else, below the description. */}
+                <div className="mt-2">
+                  <ContentBlocks blocks={localBlocks} editing={boxEdit} commit={commitBlocks}
+                    onImageClick={setLightboxSrc} />
+                </div>
+
+                {/* Add a block of any type — only while editing. */}
+                {boxEdit && (
+                  <div className="pt-2 mt-2 border-t flex flex-wrap gap-1" style={{ borderColor: 'var(--panel-border)' }}>
+                    <MiniButton title="Add a subheading"
+                      onClick={() => commitBlocks(addBlock(localBlocks, { type: 'heading' }))}>+ Heading</MiniButton>
+                    <MiniButton title="Add a property row"
+                      onClick={() => commitBlocks(addBlock(localBlocks, { type: 'property' }))}>+ Property</MiniButton>
+                    <MiniButton title="Add a text paragraph"
+                      onClick={() => commitBlocks(addBlock(localBlocks, { type: 'text' }))}>+ Text</MiniButton>
+                    <MiniButton title="Add an image"
+                      onClick={() => boxImageInputRef.current?.click()}>+ Image</MiniButton>
+                    <MiniButton title="Paste an image from the clipboard"
+                      onClick={() => pasteImageFromClipboard()}>Paste image</MiniButton>
+                  </div>
+                )}
+
+                {/* Configure — geometry/colour/pins/label-style/ref-size, collapsed. */}
+                <div className="pt-2 mt-2 border-t" style={{ borderColor: 'var(--panel-border)' }}>
+                  <button type="button"
+                    className="flex items-center gap-1 text-gray-400 font-semibold uppercase w-full"
+                    style={{ fontSize: 10, letterSpacing: '0.04em' }}
+                    onClick={() => setConfigOpen(o => !o)}>
+                    <span style={{ width: 10 }}>{configOpen ? '▾' : '▸'}</span>
+                    <span>⚙ Configure</span>
+                  </button>
+                  {configOpen && (
+                   <div className="mt-1">
+                {/* Ref label size — how big the designator renders on the canvas. */}
+                <Section title="Canvas label">
+                  <Field label="Ref label size" type="number" value={local.labelScale}
+                    onChange={v => setLocal(l => ({ ...l, labelScale: v }))}
+                    onBlur={() => { const n = Number(local.labelScale); if (n > 0) commitField('labelScale', n) }} />
+                </Section>
                 {/* Appearance — geometry + colours. */}
                 <Section title="Appearance">
                   <div className="grid gap-1.5" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
@@ -920,152 +1221,8 @@ export default function PropertiesPanel() {
                     </div>
                   )}
                 </Section>
-
-                {/* Documentation content — clean read-only view by default; the
-                    Edit toggle reveals textboxes + delete + drag-reorder. */}
-                <input ref={boxImageInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={onAssignBoxImage} />
-                <div className="pt-2 mt-2 border-t flex items-center justify-between" style={{ borderColor: 'var(--panel-border)' }}>
-                  <span className="text-gray-400 font-semibold uppercase" style={{ fontSize: 9, letterSpacing: '0.06em' }}>Documentation</span>
-                  <MiniButton title={boxEdit ? 'Finish editing' : 'Edit properties, images & links'}
-                    onClick={() => setBoxEdit(e => !e)}>{boxEdit ? 'Done' : 'Edit'}</MiniButton>
-                </div>
-
-                {/* Properties */}
-                {(localFields.length > 0 || boxEdit) && (
-                  <Section title="Properties">
-                    {boxEdit ? (
-                      localFields.map(f => (
-                        <div key={f.id}
-                          onDragOver={e => e.preventDefault()} onDrop={() => reorderDrop('field', f.id)}
-                          className="rounded p-1.5 space-y-1" style={{ border: '1px solid var(--panel-border)', opacity: dragRowId === f.id ? 0.5 : 1 }}>
-                          <div className="flex items-center gap-1">
-                            <span draggable onDragStart={() => setDragRowId(f.id)} onDragEnd={() => setDragRowId(null)}
-                              title="Drag to reorder" style={{ cursor: 'grab', fontSize: 12, color: 'var(--panel-border)', userSelect: 'none' }}>⠿</span>
-                            <input className={INPUT_CLASS} style={{ ...INPUT_STYLE, flex: 1 }}
-                              placeholder="Property name" defaultValue={f.label}
-                              onBlur={e => { const next = updateField(localFields, f.id, { label: e.target.value }); setLocalFields(next); commitBox({ fields: next }) }} />
-                            <RemoveButton title="Remove this property"
-                              onClick={() => { const next = removeField(localFields, f.id); setLocalFields(next); commitBox({ fields: next }) }} />
-                          </div>
-                          <div className="grid gap-1" style={{ gridTemplateColumns: '2fr 1fr' }}>
-                            <input className={INPUT_CLASS} style={INPUT_STYLE}
-                              placeholder="Value" defaultValue={f.value}
-                              onBlur={e => { const next = updateField(localFields, f.id, { value: e.target.value }); setLocalFields(next); commitBox({ fields: next }) }} />
-                            <input className={INPUT_CLASS} style={INPUT_STYLE}
-                              placeholder="Unit" defaultValue={f.unit}
-                              onBlur={e => { const next = updateField(localFields, f.id, { unit: e.target.value }); setLocalFields(next); commitBox({ fields: next }) }} />
-                          </div>
-                        </div>
-                      ))
-                    ) : (
-                      localFields.map(f => (
-                        <div key={f.id} className="flex justify-between gap-2" style={{ fontSize: 11 }}>
-                          <span className="text-gray-400 flex-shrink-0">{f.label || '—'}</span>
-                          <span className="text-right" style={{ wordBreak: 'break-word' }}>{f.value}{f.unit ? ` ${f.unit}` : ''}</span>
-                        </div>
-                      ))
-                    )}
-                  </Section>
-                )}
-
-                {/* Reference images — panel-only documentation (not drawn on canvas). */}
-                {(localBoxImages.length > 0 || boxEdit) && (
-                  <Section title="Images">
-                    {boxEdit && (
-                      <div className="text-gray-400" style={{ fontSize: 10 }}>Reference only — not drawn on the schematic. Paste (⌘/Ctrl-V) an image here too.</div>
-                    )}
-                    {localBoxImages.map(im => (
-                      boxEdit ? (
-                        <div key={im.id}
-                          onDragOver={e => e.preventDefault()} onDrop={() => reorderDrop('image', im.id)}
-                          className="space-y-1 rounded p-1.5" style={{ border: '1px solid var(--panel-border)', opacity: dragRowId === im.id ? 0.5 : 1 }}>
-                          <div className="flex items-center gap-1">
-                            <span draggable onDragStart={() => setDragRowId(im.id)} onDragEnd={() => setDragRowId(null)}
-                              title="Drag to reorder" style={{ cursor: 'grab', fontSize: 12, color: 'var(--panel-border)', userSelect: 'none' }}>⠿</span>
-                            <input className={INPUT_CLASS} style={{ ...INPUT_STYLE, flex: 1 }}
-                              placeholder="Heading (e.g. Pinout)" defaultValue={im.heading}
-                              onBlur={e => commitBoxImages(updateBoxImage(localBoxImages, im.id, { heading: e.target.value }))} />
-                            <RemoveButton title="Remove this image"
-                              onClick={() => commitBoxImages(removeBoxImage(localBoxImages, im.id))} />
-                          </div>
-                          <img src={im.src} alt={im.heading || 'reference image'} title="Click to enlarge"
-                            onClick={() => setLightboxSrc(im.src)}
-                            style={{ display: 'block', maxWidth: '100%', maxHeight: 160, margin: '0 auto', borderRadius: 3, cursor: 'zoom-in', background: 'rgba(0,0,0,0.04)' }} />
-                        </div>
-                      ) : (
-                        <div key={im.id} className="space-y-0.5">
-                          {im.heading && <div className="text-gray-400" style={{ fontSize: 10 }}>{im.heading}</div>}
-                          <img src={im.src} alt={im.heading || 'reference image'} title="Click to enlarge"
-                            onClick={() => setLightboxSrc(im.src)}
-                            style={{ display: 'block', maxWidth: '100%', maxHeight: 160, margin: '0 auto', borderRadius: 3, cursor: 'zoom-in', background: 'rgba(0,0,0,0.04)' }} />
-                        </div>
-                      )
-                    ))}
-                  </Section>
-                )}
-
-                {/* Links — clickable reference URLs (panel-only). */}
-                {(localLinks.length > 0 || boxEdit) && (
-                  <Section title="Links">
-                    {localLinks.map(l => (
-                      boxEdit ? (
-                        <div key={l.id}
-                          onDragOver={e => e.preventDefault()} onDrop={() => reorderDrop('link', l.id)}
-                          className="space-y-1 rounded p-1.5" style={{ border: '1px solid var(--panel-border)', opacity: dragRowId === l.id ? 0.5 : 1 }}>
-                          <div className="flex items-center gap-1">
-                            <span draggable onDragStart={() => setDragRowId(l.id)} onDragEnd={() => setDragRowId(null)}
-                              title="Drag to reorder" style={{ cursor: 'grab', fontSize: 12, color: 'var(--panel-border)', userSelect: 'none' }}>⠿</span>
-                            <input className={INPUT_CLASS} style={{ ...INPUT_STYLE, flex: 1 }}
-                              placeholder="Label (e.g. Datasheet)" defaultValue={l.label}
-                              onBlur={e => commitLinks(updateLink(localLinks, l.id, { label: e.target.value }))} />
-                            <RemoveButton title="Remove this link"
-                              onClick={() => commitLinks(removeLink(localLinks, l.id))} />
-                          </div>
-                          <input className={INPUT_CLASS} style={INPUT_STYLE}
-                            placeholder="https://…" defaultValue={l.url}
-                            onBlur={e => commitLinks(updateLink(localLinks, l.id, { url: e.target.value }))} />
-                        </div>
-                      ) : (
-                        <a key={l.id} href={normalizeUrl(l.url)} target="_blank" rel="noreferrer"
-                          onClick={e => e.stopPropagation()}
-                          style={{ color: '#2563eb', fontSize: 11, display: 'block', wordBreak: 'break-all', textDecoration: 'underline' }}>
-                          {l.label || l.url}
-                        </a>
-                      )
-                    ))}
-                  </Section>
-                )}
-
-                {/* Details / description — free-form notes. */}
-                {(localBoxInfo.trim() || boxEdit) && (
-                  <Section title="Description">
-                    {boxEdit ? (
-                      <textarea
-                        className="w-full rounded px-1 py-0.5 outline-none resize-y"
-                        style={{ fontSize: 11, minHeight: 48, maxHeight: 140, background: 'var(--input-bg, rgba(0,0,0,0.06))', border: '1px solid var(--panel-border)', color: 'var(--component-color)', display: 'block' }}
-                        placeholder="Notes, datasheet info, etc."
-                        value={localBoxInfo}
-                        onChange={e => setLocalBoxInfo(e.target.value)}
-                        onBlur={() => commitBox({ info: localBoxInfo })}
-                      />
-                    ) : (
-                      <div style={{ fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{localBoxInfo}</div>
-                    )}
-                  </Section>
-                )}
-
-                {/* General add — adds to the right section and flips to edit mode. */}
-                <div className="pt-2 mt-2 border-t flex flex-wrap gap-1" style={{ borderColor: 'var(--panel-border)' }}>
-                  <MiniButton title="Add a property"
-                    onClick={() => { const next = addField(localFields, {}); setLocalFields(next); commitBox({ fields: next }); setBoxEdit(true) }}>+ Property</MiniButton>
-                  <MiniButton title="Add an image"
-                    onClick={() => { setBoxEdit(true); boxImageInputRef.current?.click() }}>+ Image</MiniButton>
-                  <MiniButton title="Paste an image from the clipboard"
-                    onClick={() => { setBoxEdit(true); pasteImageFromClipboard() }}>Paste image</MiniButton>
-                  <MiniButton title="Add a link"
-                    onClick={() => { commitLinks(addLink(localLinks, {})); setBoxEdit(true) }}>+ Link</MiniButton>
-                  <MiniButton title="Add a description"
-                    onClick={() => setBoxEdit(true)}>+ Description</MiniButton>
+                   </div>
+                  )}
                 </div>
               </div>
             )}

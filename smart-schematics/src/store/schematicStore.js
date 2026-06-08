@@ -4,6 +4,8 @@ import { pruneJunctions } from '../lib/wireUtils'
 import { plainToDoc, docToPlain } from '../lib/richText'
 import { createBox } from '../lib/boxComponent'
 import { normalizeBoxImages } from '../lib/boxImages'
+import { migrateBlocks } from '../lib/boxBlocks'
+import { createJunction } from '../lib/junctions'
 import {
   isRunningInTauri,
   openFileDialog, saveFileDialog,
@@ -81,6 +83,18 @@ function migrateDrawing(d) {
       c.box.images = normalizeBoxImages(c.box)
       // v0.2.0: a box's clickable reference links live in `box.links` (panel-only).
       c.box.links ??= []
+      // v0.4.0: fold the old fixed sections (fields/images/links/info) into one
+      // ordered, mixed `box.blocks` list. Legacy arrays are left in place.
+      c.box.blocks = migrateBlocks(c.box)
+    }
+  }
+  // v0.4.0: junctions gain optional documentation. Auto dots stay {id,x,y}; a
+  // saved manual/documented junction keeps its label/blocks. Backfill nothing on
+  // plain dots so the array stays lean.
+  for (const j of (d.junctions || [])) {
+    if (j.manual || j.label || j.blocks || j.info || j.fields || j.images) {
+      j.blocks = migrateBlocks(j)
+      j.label ??= ''
     }
   }
   return d
@@ -468,6 +482,35 @@ const useSchematicStore = create((set, get) => ({
     }))
   },
 
+  // v0.4.0: drop a user-placed (manual) junction node and return its id. Manual
+  // junctions carry documentation (label + blocks) and are never auto-pruned.
+  addJunctionNode(drawingId, { x, y }) {
+    const j = createJunction({ id: genId(), x, y })
+    set(state => ({
+      drawings: state.drawings.map(d =>
+        d.id === drawingId ? { ...d, junctions: [...d.junctions, j], isDirty: true } : d
+      ),
+    }))
+    return j.id
+  },
+
+  // v0.4.0: patch a junction's documentation (label/blocks). Lazily upgrades a
+  // plain auto-dot to a documented junction on first edit.
+  updateJunction(drawingId, junctionId, patch) {
+    set(state => ({
+      drawings: state.drawings.map(d => {
+        if (d.id !== drawingId) return d
+        return {
+          ...d,
+          isDirty: true,
+          junctions: d.junctions.map(j =>
+            j.id !== junctionId ? j : { label: '', blocks: [], ...j, ...patch }
+          ),
+        }
+      }),
+    }))
+  },
+
   // ─── Component placement ──────────────────────────────────────────────────
 
   addComponent(drawingId, type, x, y, def) {
@@ -541,10 +584,14 @@ const useSchematicStore = create((set, get) => ({
           // per-side counts derived from the existing pins.
           if (pinSpec || boxPatch.width != null || boxPatch.height != null) {
             const spec = pinSpec || pinSpecFromPins(c.pins)
+            // v0.4.0 fix: carry existing pin labels through a rebuild (resize or
+            // count change) by id so a resize never wipes the user's pin names.
+            const labels = {}
+            for (const p of (c.pins || [])) if (p.label) labels[p.id] = p.label
             const rebuilt = createBox({
               x: c.x, y: c.y,
               width: nextBox.width, height: nextBox.height,
-              pinSpec: spec,
+              pinSpec: { ...spec, labels },
               grid: get().settings.snapToGrid ? get().settings.gridSize : 0,
             })
             pins = computePinAbsPositions(rebuilt.pins, c.x, c.y, c.rotation || 0, c.flipH, c.flipV)
@@ -669,8 +716,8 @@ const useSchematicStore = create((set, get) => ({
   },
 
   // `imageIds` was appended (default []) so existing 6-arg callers keep working;
-  // `tableIds` is appended last (default []) for the same reason (v0.2.0).
-  moveItems(drawingId, compIds, wireIds, annotationIds, dx, dy, imageIds = [], tableIds = []) {
+  // `tableIds`/`junctionIds` are appended last (default []) for the same reason.
+  moveItems(drawingId, compIds, wireIds, annotationIds, dx, dy, imageIds = [], tableIds = [], junctionIds = []) {
     get().pushUndo()
     set(state => ({
       drawings: state.drawings.map(d => {
@@ -701,6 +748,9 @@ const useSchematicStore = create((set, get) => ({
           ),
           tables: (d.tables || []).map(t =>
             (tableIds || []).includes(t.id) ? { ...t, x: t.x + dx, y: t.y + dy } : t
+          ),
+          junctions: (d.junctions || []).map(j =>
+            (junctionIds || []).includes(j.id) ? { ...j, x: j.x + dx, y: j.y + dy } : j
           ),
         }
       }),

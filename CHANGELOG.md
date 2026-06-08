@@ -12,6 +12,31 @@ section with the version and date and starts a fresh Unreleased block.
 
 ## [Unreleased]
 
+### Added
+- **Junctions you can document.** A new **Junction** tool (toolbar, shortcut `J`)
+  lets you click anywhere on a wire to drop a connection node. Select a junction
+  to give it a name and attach photos, properties and notes in its Properties
+  panel — handy for documenting splices, terminals or test points.
+- **Junctions move with their wire.** Wires are now draggable, and any junction
+  sitting on a wire moves along with it instead of being left behind.
+- **Boxes read like a document.** A component box's Properties panel is now a
+  clean, formatted info sheet: a big **Title** of its own, the reference shown
+  smaller and italic beneath it, a **Description**, then anything you like —
+  headings, property rows, paragraphs and images — mixed in any order.
+- **Reorder and resize content.** Use the ▲ / ▼ buttons to reorder any block, and
+  give headings and image captions a small / medium / large size.
+- **Tidier settings.** All the technical box controls (size, colours, pins,
+  on-canvas label size) are tucked under a single **⚙ Configure** section, hidden
+  until you need them.
+
+### Fixed
+- **Box pin labels survive a resize** and now sit clear of any wire attached to
+  the pin, instead of being hidden underneath it.
+- **Edits no longer jump to the next item.** Typing in a field and then clicking
+  another component no longer applies your half-typed edit to the new selection.
+- **Editing a box label happens in place** on the box, rather than in a separate
+  pop-up box.
+
 ## [0.3.0] - 2026-06-07
 
 ### Added

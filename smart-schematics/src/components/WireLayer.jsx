@@ -47,7 +47,7 @@ function buildWirePath(wire, crossings) {
   return d
 }
 
-const WirePath = memo(function WirePath({ wire, crossings, selected, onClick, wireMode }) {
+const WirePath = memo(function WirePath({ wire, crossings, selected, onClick, onMouseDown, wireMode }) {
   const d = useMemo(() => buildWirePath(wire, crossings), [wire, crossings])
 
   const dasharray =
@@ -64,7 +64,7 @@ const WirePath = memo(function WirePath({ wire, crossings, selected, onClick, wi
         stroke="transparent"
         strokeWidth={Math.max(sw, 8)}
         fill="none"
-        onMouseDown={e => e.stopPropagation()}
+        onMouseDown={e => { e.stopPropagation(); onMouseDown?.(e) }}
         onClick={e => { e.stopPropagation(); onClick?.(e) }}
         style={{ cursor: 'pointer', pointerEvents: wireMode ? 'none' : 'auto' }}
       />
@@ -136,7 +136,7 @@ function useFlowAnimation(wires, isRunning) {
   }, [isRunning, wires])
 }
 
-export default function WireLayer({ wires, junctions, selectedIds, onWireClick, isRunning, wireMode }) {
+export default function WireLayer({ wires, junctions, selectedIds, onWireClick, onWireMouseDown, onJunctionMouseDown, onJunctionClick, zoom = 1, isRunning, wireMode }) {
   useFlowAnimation(wires, isRunning)
 
   return (
@@ -150,22 +150,44 @@ export default function WireLayer({ wires, junctions, selectedIds, onWireClick, 
             wire={wire}
             crossings={crossings}
             selected={selectedIds.includes(wire.id)}
-            onClick={() => onWireClick?.(wire.id)}
+            onClick={(e) => onWireClick?.(wire.id, e)}
+            onMouseDown={(e) => onWireMouseDown?.(wire.id, e)}
             wireMode={wireMode}
           />
         )
       })}
 
-      {junctions.map(j => (
-        <circle
-          key={j.id}
-          cx={j.x}
-          cy={j.y}
-          r={3.5}
-          fill="var(--wire-color)"
-          style={{ pointerEvents: 'none' }}
-        />
-      ))}
+      {junctions.map(j => {
+        const selected = selectedIds?.includes(j.id)
+        // Documented/manual junctions read slightly larger; selected ones get a ring.
+        const r = j.manual ? 4.5 : 3.5
+        return (
+          <g key={j.id}>
+            {selected && (
+              <circle cx={j.x} cy={j.y} r={r + 3} fill="none"
+                stroke="#2563eb" strokeWidth={1.5 / zoom} style={{ pointerEvents: 'none' }} />
+            )}
+            <circle
+              cx={j.x}
+              cy={j.y}
+              r={r}
+              fill="var(--wire-color)"
+              style={{ pointerEvents: 'none' }}
+            />
+            {/* Fat invisible hit area for select/drag. In wire mode it's
+                click-through so the canvas can still snap wires onto the node. */}
+            <circle
+              cx={j.x}
+              cy={j.y}
+              r={Math.max(7, 9 / zoom)}
+              fill="transparent"
+              style={{ cursor: 'pointer', pointerEvents: wireMode ? 'none' : 'auto' }}
+              onMouseDown={e => onJunctionMouseDown?.(j.id, e)}
+              onClick={e => { e.stopPropagation?.(); onJunctionClick?.(j.id, e) }}
+            />
+          </g>
+        )
+      })}
     </g>
   )
 }

@@ -20,6 +20,10 @@ const COLORS = ['#000000', '#e2e8f0', '#dc2626', '#2563eb', '#16a34a', '#d97706'
 
 export default function RichTextEditor({
   x, y, width, height, zoom = 1, doc, fixedSize = false, onCommit, onCancel,
+  // Box-label mode (v0.4.0): when `blend` is set the editable area takes on the
+  // box's own fill / corner radius / base font size so editing happens *in place*
+  // on the box rather than in a separate-looking popup.
+  blend = false, fill = null, cornerRadius = 0, baseFontSize = 14,
 }) {
   const ref = useRef(null)
   const committedRef = useRef(false)
@@ -252,12 +256,14 @@ export default function RichTextEditor({
         onBlur={doCommit}
         style={{
           fontFamily: 'sans-serif',
-          fontSize: 14 * zoom,
+          fontSize: (blend ? baseFontSize : 14) * zoom,
           lineHeight: 1.3,
-          color: 'var(--component-color, #111)',
-          background: 'var(--canvas-bg, #fff)',
-          border: '2px solid #2563eb',
-          borderRadius: 3,
+          color: blend ? '#0f172a' : 'var(--component-color, #111)',
+          background: blend ? (fill || '#f1f5f9') : 'var(--canvas-bg, #fff)',
+          // In blend mode use a soft dashed accent (reads as "editing this box"),
+          // otherwise the bold blue editor border.
+          border: blend ? '1px dashed rgba(37,99,235,0.7)' : '2px solid #2563eb',
+          borderRadius: blend ? (cornerRadius || 3) : 3,
           outline: 'none',
           padding: '2px 4px',
           minWidth: Math.max(80, (width || 0) * zoom),

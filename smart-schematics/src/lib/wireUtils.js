@@ -185,10 +185,12 @@ export function wireConnectionCount(px, py, wires, tol = 0.5) {
 }
 
 // Drop junctions that are no longer real nodes (fewer than 3 wire connections
-// meet there). Used after wire deletion so dangling dots disappear.
+// meet there). Used after wire deletion so dangling dots disappear. A
+// user-placed/documented junction (`manual:true`, v0.4.0) is always kept — it can
+// live on a single wire and carries the user's photos/properties.
 export function pruneJunctions(junctions, wires) {
   if (!junctions?.length) return junctions || []
-  return junctions.filter(j => wireConnectionCount(j.x, j.y, wires) >= 3)
+  return junctions.filter(j => j.manual || wireConnectionCount(j.x, j.y, wires) >= 3)
 }
 
 // Find crossing points between `wire` and `otherWires`.

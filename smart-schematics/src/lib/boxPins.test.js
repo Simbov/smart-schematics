@@ -97,3 +97,30 @@ describe('boxPinLabelPos outside placement (v0.2.0)', () => {
       .toEqual({ x: -32, y: 0, anchor: 'start', baseline: 'middle' })
   })
 })
+
+describe('boxPinLabelPos clearWire offset (v0.4.0)', () => {
+  it('nudges the label perpendicular to an attached wire so it is not covered', () => {
+    // W/E: wire is horizontal ⇒ label lifts above it (y decreases, baseline auto).
+    expect(boxPinLabelPos({ absX: -40, absY: 0, direction: 'W' }, 8, true, true))
+      .toEqual({ x: -48, y: -7, anchor: 'end', baseline: 'auto' })
+    expect(boxPinLabelPos({ absX: 40, absY: 0, direction: 'E' }, 8, true, true))
+      .toEqual({ x: 48, y: -7, anchor: 'start', baseline: 'auto' })
+    // N/S: wire is vertical ⇒ label shifts to the right (x increases).
+    expect(boxPinLabelPos({ absX: 0, absY: -30, direction: 'N' }, 8, true, true))
+      .toEqual({ x: 7, y: -38, anchor: 'start', baseline: 'auto' })
+    expect(boxPinLabelPos({ absX: 0, absY: 30, direction: 'S' }, 8, true, true))
+      .toEqual({ x: 7, y: 38, anchor: 'start', baseline: 'hanging' })
+  })
+})
+
+describe('updateBox preserves pin labels across a resize (v0.4.0 item 8)', () => {
+  it('rebuilt pins keep their labels when geometry changes', () => {
+    // Simulate the store's rebuild path: extract labels by id, pass through pinSpec.
+    const before = createBox({ width: 80, height: 60, grid: GRID, pinSpec: { W: 1, E: 1, labels: { W1: 'VCC', E1: 'GND' } } })
+    const labels = {}
+    for (const p of before.pins) if (p.label) labels[p.id] = p.label
+    const after = createBox({ width: 120, height: 100, grid: GRID, pinSpec: { W: 1, E: 1, labels } })
+    expect(after.pins.find(p => p.id === 'W1').label).toBe('VCC')
+    expect(after.pins.find(p => p.id === 'E1').label).toBe('GND')
+  })
+})

@@ -23,6 +23,7 @@ export const TOOLBAR_GROUPS = [
     buttons: [
       { id: 'select', label: 'Select', shortcut: 'V', icon: 'MousePointer2' },
       { id: 'wire', label: 'Wire', shortcut: 'W', icon: 'Pencil' },
+      { id: 'junction', label: 'Junction', shortcut: 'J', icon: 'Circle' },
     ],
   },
   {

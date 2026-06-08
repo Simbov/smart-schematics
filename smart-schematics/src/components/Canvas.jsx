@@ -42,8 +42,10 @@ import {
   routeWire,
   dedupPoints,
   getBestSnap,
+  findNearestWireSnap,
   isPointOnWireMiddle,
 } from '../lib/wireUtils'
+import { junctionsOnWires } from '../lib/junctions'
 
 const GhostComponent = memo(function GhostComponent({ type, x, y }) {
   const isCustom = type.startsWith('custom_')
@@ -155,6 +157,7 @@ export default function Canvas({ onCursorMove }) {
   const addComponent = useSchematicStore(s => s.addComponent)
   const addWire = useSchematicStore(s => s.addWire)
   const addJunction = useSchematicStore(s => s.addJunction)
+  const addJunctionNode = useSchematicStore(s => s.addJunctionNode)
   const addAnnotation = useSchematicStore(s => s.addAnnotation)
   const addTable = useSchematicStore(s => s.addTable)
   const updateTable = useSchematicStore(s => s.updateTable)
@@ -291,6 +294,7 @@ export default function Canvas({ onCursorMove }) {
       }
       if (e.key === 'v' || e.key === 'V') { setActiveTool('select'); return }
       if (e.key === 'w' || e.key === 'W') { setActiveTool('wire'); return }
+      if (e.key === 'j' || e.key === 'J') { setActiveTool('junction'); return }
       if (e.key === 't' || e.key === 'T') { setActiveTool('text'); return }
       if (e.key === 'b' || e.key === 'B') { setActiveTool('callout'); return }
       if (e.key === '+' || e.key === '=') {
@@ -608,7 +612,8 @@ export default function Canvas({ onCursorMove }) {
             dragRef.current.annotationIds || [],
             dx, dy,
             dragRef.current.imageIds || [],
-            dragRef.current.tableIds || []
+            dragRef.current.tableIds || [],
+            dragRef.current.junctionIds || []
           )
         }
       }
@@ -657,6 +662,10 @@ export default function Canvas({ onCursorMove }) {
           if (im.locked) continue
           if (im.x >= minX && im.x + im.width <= maxX && im.y >= minY && im.y + im.height <= maxY)
             inside.push(im.id)
+        }
+        // Junctions: point inside the band.
+        for (const j of (dr?.junctions || [])) {
+          if (j.x >= minX && j.x <= maxX && j.y >= minY && j.y <= maxY) inside.push(j.id)
         }
         if (inside.length > 0) setSelectedIds(inside)
         else clearSelection()
@@ -709,6 +718,22 @@ export default function Canvas({ onCursorMove }) {
       if (e.detail === 1 && state.activeDrawingId) {
         pushUndo()
         const id = addBox(state.activeDrawingId, snapped.x, snapped.y)
+        if (id) setSelectedIds([id])
+        setActiveTool('select')
+      }
+      return
+    }
+
+    if (tool === 'junction') {
+      // Drop a documented junction anywhere along a wire (snap to the nearest
+      // wire; fall back to the clicked grid point if no wire is near).
+      if (e.detail === 1 && state.activeDrawingId) {
+        const dr = state.drawings.find(d => d.id === state.activeDrawingId)
+        const raw = toWorld(sx, sy, false)
+        const hit = findNearestWireSnap(raw.x, raw.y, dr?.wires || [], 12)
+        const at = hit ? { x: hit.x, y: hit.y } : { x: snapped.x, y: snapped.y }
+        pushUndo()
+        const id = addJunctionNode(state.activeDrawingId, at)
         if (id) setSelectedIds([id])
         setActiveTool('select')
       }
@@ -794,7 +819,7 @@ export default function Canvas({ onCursorMove }) {
       if (topImageAt(dr?.images || [], wpt.x, wpt.y, { includeLocked: e.altKey })) return
       clearSelection()
     }
-  }, [activeDrawingId, getSVGPos, toWorld, addComponent, addBox, addTable, setActiveTool, setSelectedIds, finishWire, clearSelection, pushUndo, addAnnotation])
+  }, [activeDrawingId, getSVGPos, toWorld, addComponent, addBox, addTable, addJunctionNode, setActiveTool, setSelectedIds, finishWire, clearSelection, pushUndo, addAnnotation])
 
   // Unified drag starter for components, wires, annotations, and images
   const startDrag = useCallback((id, e, alwaysDraggable = false) => {
@@ -826,8 +851,13 @@ export default function Canvas({ onCursorMove }) {
     const annotationIds = (dr?.annotations || []).filter(a => dragIds.includes(a.id)).map(a => a.id)
     const imageIds = (dr?.images || []).filter(im => dragIds.includes(im.id)).map(im => im.id)
     const tableIds = (dr?.tables || []).filter(t => dragIds.includes(t.id)).map(t => t.id)
+    // Junctions move when directly selected OR when they sit on a wire being
+    // dragged (item 12 — a junction follows its wire instead of being left behind).
+    const directJ = (dr?.junctions || []).filter(j => dragIds.includes(j.id)).map(j => j.id)
+    const draggedWires = (dr?.wires || []).filter(w => wireIds.includes(w.id))
+    const junctionIds = [...new Set([...directJ, ...junctionsOnWires(dr?.junctions || [], draggedWires)])]
 
-    dragRef.current = { compIds, wireIds, annotationIds, imageIds, tableIds, startWorld: worldStart }
+    dragRef.current = { compIds, wireIds, annotationIds, imageIds, tableIds, junctionIds, startWorld: worldStart }
     isDraggingItems.current = true
     mouseDownPos.current = { x: e.clientX, y: e.clientY }
     didDrag.current = false
@@ -1083,6 +1113,7 @@ export default function Canvas({ onCursorMove }) {
     if (!comp || comp.type !== 'box') return
     const w = comp.box?.width || 80
     const h = comp.box?.height || 60
+    const firstRun = (comp.box?.doc?.paragraphs || []).flatMap(p => p.runs || []).find(r => r.text)
     setRichEdit({
       boxId: id,
       worldX: comp.x - w / 2 + 4,
@@ -1092,10 +1123,16 @@ export default function Canvas({ onCursorMove }) {
       doc: comp.box?.doc || emptyDoc(),
       fixedSize: true,
       isNew: false,
+      // Box-label edit blends into the box (item 9 — edit in place, not a popup).
+      blend: true,
+      fill: comp.box?.fill || '#f1f5f9',
+      cornerRadius: comp.box?.cornerRadius ?? 4,
+      baseFontSize: firstRun?.fontSize ?? 11,
     })
   }, [activeDrawingId])
 
   const handleWireClick = useCallback((id, e) => {
+    if (isDraggingItems.current) return
     if (activeTool !== 'select') return
     if (e?.shiftKey) {
       addToSelection(id)
@@ -1103,6 +1140,19 @@ export default function Canvas({ onCursorMove }) {
       setSelectedIds([id])
     }
   }, [activeTool, setSelectedIds, addToSelection])
+
+  // Wires drag like any other element (select tool) — so a wire and the junctions
+  // sitting on it move together (item 12). Mirrors handleComponentMouseDown.
+  const handleWireMouseDown = useCallback((id, e) => startDrag(id, e, false), [startDrag])
+
+  // Junctions select + drag like an annotation (always draggable in select mode).
+  const handleJunctionMouseDown = useCallback((id, e) => startDrag(id, e, false), [startDrag])
+  const handleJunctionClick = useCallback((id, e) => {
+    if (isDraggingItems.current) return
+    if (activeTool !== 'select') return
+    if (e?.shiftKey) addToSelection(id)
+    else setSelectedIds([id])
+  }, [activeTool, setSelectedIds, addToSelection, startDrag])
 
   // Title-block inline editor commit / cancel
   const commitInlineEdit = useCallback((newValue) => {
@@ -1250,6 +1300,14 @@ export default function Canvas({ onCursorMove }) {
     }
     return t
   })
+  // Junctions carry the drag offset (v0.4.0) so a junction visually follows its
+  // wire / itself while dragging (item 12).
+  const effectiveJunctions = (drawing?.junctions || []).map(j => {
+    if (isDraggingNow && dragRef.current?.junctionIds?.includes(j.id)) {
+      return { ...j, x: j.x + dragDelta.dx, y: j.y + dragDelta.dy }
+    }
+    return j
+  })
 
   // Resolve each component's designator side so labels dodge wires. Recomputes
   // only when components or wires actually change (not on every render), and we
@@ -1392,11 +1450,15 @@ export default function Canvas({ onCursorMove }) {
 
           <WireLayer
             wires={effectiveWires}
-            junctions={drawing.junctions}
+            junctions={effectiveJunctions}
             selectedIds={selectedIds}
             onWireClick={handleWireClick}
+            onWireMouseDown={handleWireMouseDown}
+            onJunctionMouseDown={handleJunctionMouseDown}
+            onJunctionClick={handleJunctionClick}
+            zoom={zoom}
             isRunning={isRunning}
-            wireMode={activeTool === 'wire'}
+            wireMode={activeTool === 'wire' || activeTool === 'junction'}
           />
 
           <HydraulicFlowLayer wires={effectiveWires} isRunning={isRunning} />
@@ -1497,7 +1559,11 @@ export default function Canvas({ onCursorMove }) {
               box from each labelled pin. Boxes only. */}
           {drawing.components.filter(c => c.type === 'box').map(comp =>
             (comp.pins || []).filter(p => p.label).map(pin => {
-              const lp = boxPinLabelPos(pin, 8, true)
+              // Nudge the label clear of a wire that runs out along the pin normal.
+              const hasWire = drawing.wires.some(w =>
+                (w.pinA?.componentId === comp.id && w.pinA?.pinId === pin.id) ||
+                (w.pinB?.componentId === comp.id && w.pinB?.pinId === pin.id))
+              const lp = boxPinLabelPos(pin, 8, true, hasWire)
               return (
                 <text
                   key={`plabel-${comp.id}-${pin.id}`}
@@ -1661,6 +1727,10 @@ export default function Canvas({ onCursorMove }) {
           zoom={zoom}
           doc={richEdit.doc}
           fixedSize={richEdit.fixedSize}
+          blend={richEdit.blend}
+          fill={richEdit.fill}
+          cornerRadius={richEdit.cornerRadius}
+          baseFontSize={richEdit.baseFontSize}
           onCommit={commitRichEdit}
           onCancel={cancelRichEdit}
         />
@@ -1671,6 +1741,7 @@ export default function Canvas({ onCursorMove }) {
 
 function getCursor(tool) {
   if (tool === 'wire') return 'crosshair'
+  if (tool === 'junction') return 'crosshair'
   if (tool === 'place') return 'crosshair'
   if (tool === 'text') return 'text'
   if (tool === 'callout') return 'crosshair'

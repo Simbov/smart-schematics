@@ -131,10 +131,26 @@ export function boxPins(box, spec = DEFAULT_PIN_SPEC, grid = 10) {
 // instead of inside, so pin names never overlap the box's centred rich-text
 // label (the "pin naming overlapping the component text" fix). With
 // `outside:false` the legacy inside placement is returned unchanged. No DOM.
-export function boxPinLabelPos(pin, inset = 8, outside = false) {
+//
+// `clearWire` (v0.4.0): when a wire is attached to the pin it runs straight out
+// along the edge normal — exactly where the `outside` label sits. Setting this
+// nudges the label PERPENDICULAR to that wire (by `clear` world units) so the pin
+// name stays readable beside the wire instead of being covered by it.
+export function boxPinLabelPos(pin, inset = 8, outside = false, clearWire = false, clear = 7) {
   const x = pin.absX ?? pin.relX ?? 0
   const y = pin.absY ?? pin.relY ?? 0
   if (outside) {
+    if (clearWire) {
+      // Shift off the wire line: W/E wires are horizontal ⇒ lift the label above
+      // them; N/S wires are vertical ⇒ push the label to the right of them.
+      switch (pin.direction) {
+        case 'W': return { x: x - inset, y: y - clear, anchor: 'end',   baseline: 'auto' }
+        case 'E': return { x: x + inset, y: y - clear, anchor: 'start', baseline: 'auto' }
+        case 'N': return { x: x + clear, y: y - inset, anchor: 'start', baseline: 'auto' }
+        case 'S': return { x: x + clear, y: y + inset, anchor: 'start', baseline: 'hanging' }
+        default:  return { x, y, anchor: 'middle', baseline: 'middle' }
+      }
+    }
     switch (pin.direction) {
       case 'W': return { x: x - inset, y, anchor: 'end',    baseline: 'middle' }
       case 'E': return { x: x + inset, y, anchor: 'start',  baseline: 'middle' }
@@ -200,12 +216,19 @@ export function createBox({
       fill,
       stroke,
       cornerRadius,
+      // v0.4.0: a properties-only title (NOT drawn on the canvas) shown as the
+      // big heading at the top of the box's Properties document.
+      title: '',
       // v0.2.0 box additions — flexible property rows replace the generic
       // `value` for boxes; reference pictures shown only in the Properties panel
       // (NOT drawn on the canvas); free-form info text.
       fields: [],
       images: [],
       info: '',
+      // v0.4.0: unified ordered documentation blocks (headings/properties/text/
+      // images mixed in any order). Replaces the fixed fields/images/links/info
+      // sections in the Properties pane; legacy arrays kept for back-compat.
+      blocks: [],
     },
     simParams: {},
     simState: {},
