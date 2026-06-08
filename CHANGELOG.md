@@ -12,6 +12,8 @@ section with the version and date and starts a fresh Unreleased block.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-08
+
 ### Added
 - **Junctions you can document.** A new **Junction** tool (toolbar, shortcut `J`)
   lets you click anywhere on a wire to drop a connection node. Select a junction
