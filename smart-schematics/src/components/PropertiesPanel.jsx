@@ -5,11 +5,15 @@ import { getElectricalDef } from '../lib/components/electrical'
 import { getHydraulicDef } from '../lib/components/hydraulic'
 import { parseValue, formatSI } from '../lib/simulation/parseValue'
 import { plainToDoc, applyDocStyle, setDocAlign, docToPlain, docToHtml, isEmptyDoc, emptyDoc } from '../lib/richText'
-import { addBlock, updateBlock, removeBlock, moveBlock, migrateBlocks, HEADING_SIZES } from '../lib/boxBlocks'
+import { addBlock, updateBlock, removeBlock, moveBlock, migrateBlocks, HEADING_SIZES,
+  blockTableSetCell, blockTableAddRow, blockTableAddCol, blockTableRemoveRow, blockTableRemoveCol } from '../lib/boxBlocks'
 import { normalizeUrl } from '../lib/boxLinks'
-import { addRow, addCol, removeRow, removeCol } from '../lib/tableModel'
+import { addRow, addCol, removeRow, removeCol, insertRow, insertCol, moveRow, moveCol, resizeRow, resizeCol } from '../lib/tableModel'
+import { copyTableToClipboard } from '../lib/tableClipboard'
 import { RESISTOR_STYLES } from '../lib/resistorStyle'
 import Lightbox from './Lightbox'
+import ImageCropper from './ImageCropper'
+import { isCropped } from '../lib/imageUtils'
 
 function getAnyDef(type) { return getElectricalDef(type) || getHydraulicDef(type) }
 
@@ -188,6 +192,37 @@ function ContentBlocks({ blocks, editing, commit, onImageClick }) {
               </div>
             )
           }
+          if (b.type === 'link') {
+            return (
+              <div key={b.id} style={{ fontSize: 12 }}>
+                <a href={normalizeUrl(b.url)} target="_blank" rel="noreferrer"
+                  onClick={e => e.stopPropagation()}
+                  style={{ color: '#2563eb', textDecoration: 'underline', wordBreak: 'break-all' }}>
+                  {b.label || b.url || '—'}
+                </a>
+              </div>
+            )
+          }
+          if (b.type === 'table') {
+            return (
+              <table key={b.id} style={{ borderCollapse: 'collapse', width: '100%', fontSize: 11 }}>
+                <tbody>
+                  {b.cells.map((row, r) => (
+                    <tr key={r}>
+                      {row.map((cell, c) => {
+                        const Tag = b.headerRow && r === 0 ? 'th' : 'td'
+                        return (
+                          <Tag key={c} style={{ border: '1px solid var(--panel-border)', padding: '2px 4px', textAlign: 'left', fontWeight: b.headerRow && r === 0 ? 700 : 400, background: b.headerRow && r === 0 ? 'rgba(37,99,235,0.08)' : undefined }}>
+                            {cell}
+                          </Tag>
+                        )
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )
+          }
           // text
           return <div key={b.id} style={{ fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{renderRichText(b.text)}</div>
         })}
@@ -251,6 +286,48 @@ function ContentBlocks({ blocks, editing, commit, onImageClick }) {
                 style={{ display: 'block', maxWidth: '100%', maxHeight: 160, margin: '0 auto', borderRadius: 3, cursor: 'zoom-in', background: 'rgba(0,0,0,0.04)' }} />
             </>
           )}
+          {b.type === 'link' && (
+            <>
+              <input className={INPUT_CLASS} style={INPUT_STYLE} placeholder="Link text (e.g. Datasheet)"
+                defaultValue={b.label} onBlur={e => commit(updateBlock(list, b.id, { label: e.target.value }))} />
+              <input className={INPUT_CLASS} style={INPUT_STYLE} placeholder="https://…"
+                defaultValue={b.url} onBlur={e => commit(updateBlock(list, b.id, { url: e.target.value }))} />
+            </>
+          )}
+          {b.type === 'table' && (
+            <div className="space-y-1">
+              <label className="flex items-center gap-1.5" style={{ fontSize: 10 }}>
+                <input type="checkbox" checked={!!b.headerRow}
+                  onChange={e => commit(updateBlock(list, b.id, { headerRow: e.target.checked }))} />
+                <span className="text-gray-400">Header row</span>
+              </label>
+              <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                <tbody>
+                  {b.cells.map((row, r) => (
+                    <tr key={r}>
+                      {row.map((cell, c) => (
+                        <td key={c} style={{ border: '1px solid var(--panel-border)', padding: 0 }}>
+                          <input className="w-full px-1 outline-none bg-transparent"
+                            style={{ fontSize: 11, fontWeight: b.headerRow && r === 0 ? 700 : 400, minWidth: 36 }}
+                            defaultValue={cell}
+                            onBlur={e => commit(updateBlock(list, b.id, blockTableSetCell(b, r, c, e.target.value)))} />
+                        </td>
+                      ))}
+                      <td style={{ padding: '0 2px' }}>
+                        <button type="button" title="Remove this row" style={moveBtn}
+                          onClick={() => commit(updateBlock(list, b.id, blockTableRemoveRow(b, r)))}>✕</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="flex gap-1">
+                <MiniButton title="Add a row" onClick={() => commit(updateBlock(list, b.id, blockTableAddRow(b)))}>+ Row</MiniButton>
+                <MiniButton title="Add a column" onClick={() => commit(updateBlock(list, b.id, blockTableAddCol(b)))}>+ Col</MiniButton>
+                <MiniButton title="Remove last column" onClick={() => commit(updateBlock(list, b.id, blockTableRemoveCol(b, b.cols - 1)))}>− Col</MiniButton>
+              </div>
+            </div>
+          )}
         </div>
       ))}
     </div>
@@ -295,7 +372,12 @@ export default function PropertiesPanel() {
   const [localJunction, setLocalJunction] = useState({ label: '' })
   const [localJunctionBlocks, setLocalJunctionBlocks] = useState([])
   const [localWire, setLocalWire] = useState({ color: '', style: 'solid', weight: 1 })
-  const [localTable, setLocalTable] = useState({ borderColor: '#334155', borderWidth: 1, headerRow: false, fill: '' })
+  const [localTable, setLocalTable] = useState({ borderColor: '#334155', borderWidth: 1, headerRow: false, headerFill: '', fill: '' })
+  // 1-based row/col targets for insert/move/resize ops in the table editor.
+  const [tblRow, setTblRow] = useState(1)
+  const [tblCol, setTblCol] = useState(1)
+  const [tableCopied, setTableCopied] = useState(false)
+  const [cropMode, setCropMode] = useState(false)
   // Box content view/edit toggle (clean read-only view by default; flip to Edit
   // for textboxes + delete + drag-reorder). Resets to view on selection change.
   const [boxEdit, setBoxEdit] = useState(false)
@@ -401,10 +483,12 @@ export default function PropertiesPanel() {
         borderColor: selected.borderColor ?? '#334155',
         borderWidth: selected.borderWidth ?? 1,
         headerRow: !!selected.headerRow,
+        headerFill: selected.headerFill ?? '',
         fill: selected.fill ?? '',
       })
     }
     setBoxEdit(false)
+    setCropMode(false)
     setConfigOpen(false)
   }, [selectedIds[0]])
 
@@ -758,11 +842,63 @@ export default function PropertiesPanel() {
                 <MiniButton title="Remove the last row" onClick={() => applyTableOp(t => removeRow(t, t.rows - 1))}>− Row</MiniButton>
                 <MiniButton title="Remove the last column" onClick={() => applyTableOp(t => removeCol(t, t.cols - 1))}>− Column</MiniButton>
               </div>
+
+              {/* Row editing — insert/move/remove/resize at a 1-based index */}
+              <div className="flex items-center gap-1 flex-wrap" style={{ fontSize: 10 }}>
+                <span className="text-gray-400">Row</span>
+                <input type="number" min={1} max={selected.rows} value={tblRow}
+                  onChange={e => setTblRow(Math.max(1, Math.min(selected.rows, Number(e.target.value) || 1)))}
+                  className="w-10 px-1 rounded border bg-transparent" style={{ borderColor: 'var(--panel-border)' }} />
+                <MiniButton title="Insert a row above this one" onClick={() => applyTableOp(t => insertRow(t, tblRow - 1))}>Ins↑</MiniButton>
+                <MiniButton title="Insert a row below this one" onClick={() => applyTableOp(t => insertRow(t, tblRow))}>Ins↓</MiniButton>
+                <MiniButton title="Move this row up" onClick={() => { applyTableOp(t => moveRow(t, tblRow - 1, tblRow - 2)); setTblRow(r => Math.max(1, r - 1)) }}>↑</MiniButton>
+                <MiniButton title="Move this row down" onClick={() => { applyTableOp(t => moveRow(t, tblRow - 1, tblRow)); setTblRow(r => Math.min(selected.rows, r + 1)) }}>↓</MiniButton>
+                <MiniButton title="Delete this row" onClick={() => { applyTableOp(t => removeRow(t, tblRow - 1)); setTblRow(r => Math.max(1, Math.min(selected.rows - 1, r))) }}>✕</MiniButton>
+              </div>
+              <div className="flex items-center gap-1" style={{ fontSize: 10 }}>
+                <span className="text-gray-400">Height</span>
+                <input type="number" min={20} value={selected.rowHeights?.[tblRow - 1] ?? 30}
+                  onChange={e => applyTableOp(t => resizeRow(t, tblRow - 1, Number(e.target.value) || 20))}
+                  className="w-14 px-1 rounded border bg-transparent" style={{ borderColor: 'var(--panel-border)' }} />
+              </div>
+
+              {/* Column editing */}
+              <div className="flex items-center gap-1 flex-wrap" style={{ fontSize: 10 }}>
+                <span className="text-gray-400">Col</span>
+                <input type="number" min={1} max={selected.cols} value={tblCol}
+                  onChange={e => setTblCol(Math.max(1, Math.min(selected.cols, Number(e.target.value) || 1)))}
+                  className="w-10 px-1 rounded border bg-transparent" style={{ borderColor: 'var(--panel-border)' }} />
+                <MiniButton title="Insert a column to the left" onClick={() => applyTableOp(t => insertCol(t, tblCol - 1))}>Ins←</MiniButton>
+                <MiniButton title="Insert a column to the right" onClick={() => applyTableOp(t => insertCol(t, tblCol))}>Ins→</MiniButton>
+                <MiniButton title="Move this column left" onClick={() => { applyTableOp(t => moveCol(t, tblCol - 1, tblCol - 2)); setTblCol(c => Math.max(1, c - 1)) }}>←</MiniButton>
+                <MiniButton title="Move this column right" onClick={() => { applyTableOp(t => moveCol(t, tblCol - 1, tblCol)); setTblCol(c => Math.min(selected.cols, c + 1)) }}>→</MiniButton>
+                <MiniButton title="Delete this column" onClick={() => { applyTableOp(t => removeCol(t, tblCol - 1)); setTblCol(c => Math.max(1, Math.min(selected.cols - 1, c))) }}>✕</MiniButton>
+              </div>
+              <div className="flex items-center gap-1" style={{ fontSize: 10 }}>
+                <span className="text-gray-400">Width</span>
+                <input type="number" min={20} value={selected.colWidths?.[tblCol - 1] ?? 80}
+                  onChange={e => applyTableOp(t => resizeCol(t, tblCol - 1, Number(e.target.value) || 20))}
+                  className="w-14 px-1 rounded border bg-transparent" style={{ borderColor: 'var(--panel-border)' }} />
+              </div>
+
               <label className="flex items-center gap-1.5" style={{ fontSize: 11 }}>
                 <input type="checkbox" checked={localTable.headerRow}
                   onChange={e => { setLocalTable(t => ({ ...t, headerRow: e.target.checked })); commitTable({ headerRow: e.target.checked }) }} />
                 <span className="text-gray-400" style={{ fontSize: 10 }}>Header row (tinted first row)</span>
               </label>
+              {localTable.headerRow && (
+                <label className="flex items-center gap-1" title="Header row tint">
+                  <span className="text-gray-400" style={{ fontSize: 10 }}>Header tint</span>
+                  <input type="color" value={localTable.headerFill || '#dbe7ff'}
+                    onChange={e => { setLocalTable(t => ({ ...t, headerFill: e.target.value })); commitTable({ headerFill: e.target.value }) }}
+                    style={{ width: 28, height: 20, border: 'none', background: 'transparent', cursor: 'pointer', padding: 0 }} />
+                  {localTable.headerFill && (
+                    <button type="button" className="text-red-500" title="Reset header tint"
+                      style={{ fontSize: 13, lineHeight: 1 }}
+                      onClick={() => { setLocalTable(t => ({ ...t, headerFill: '' })); commitTable({ headerFill: null }) }}>×</button>
+                  )}
+                </label>
+              )}
             </Section>
             <Section title="Style">
               <div className="flex items-center gap-3 flex-wrap">
@@ -788,11 +924,23 @@ export default function PropertiesPanel() {
                 onChange={v => setLocalTable(t => ({ ...t, borderWidth: Number(v) }))}
                 onBlur={() => commitTable({ borderWidth: Math.max(0.25, Number(localTable.borderWidth) || 1) })} />
             </Section>
-            <button
-              className="rounded px-2 py-0.5 text-red-500"
-              style={{ fontSize: 11, border: '1px solid var(--panel-border)' }}
-              onClick={() => { pushUndo(); removeTable(activeDrawingId, selected.id) }}
-            >Delete table</button>
+            <div className="flex gap-1.5">
+              <button
+                className="rounded px-2 py-0.5"
+                style={{ fontSize: 11, border: '1px solid var(--panel-border)' }}
+                title="Copy this table to the clipboard as an HTML table — paste into Word/Excel/Docs"
+                onClick={async () => {
+                  const ok = await copyTableToClipboard(selected)
+                  setTableCopied(ok)
+                  if (ok) setTimeout(() => setTableCopied(false), 1500)
+                }}
+              >{tableCopied ? 'Copied ✓' : 'Copy for Word'}</button>
+              <button
+                className="rounded px-2 py-0.5 text-red-500"
+                style={{ fontSize: 11, border: '1px solid var(--panel-border)' }}
+                onClick={() => { pushUndo(); removeTable(activeDrawingId, selected.id) }}
+              >Delete table</button>
+            </div>
           </div>
         )}
 
@@ -908,6 +1056,32 @@ export default function PropertiesPanel() {
                   onChange={e => commitImageField({ locked: e.target.checked })} />
               </div>
             </div>
+            <Section title="Crop" action={
+              <MiniButton title={cropMode ? 'Finish cropping' : 'Crop this image'}
+                onClick={() => { if (!cropMode) pushUndo(); setCropMode(m => !m) }}>
+                {cropMode ? 'Done' : '✂ Crop'}
+              </MiniButton>
+            }>
+              {cropMode ? (
+                <>
+                  <ImageCropper
+                    src={selected.src}
+                    crop={selected.crop}
+                    onChange={(cr) => updateImage(activeDrawingId, selected.id, { crop: cr })}
+                    onCommit={() => {}}
+                  />
+                  <button
+                    className="rounded px-2 py-0.5 mt-1"
+                    style={{ fontSize: 11, border: '1px solid var(--panel-border)', color: 'var(--component-color)' }}
+                    onClick={() => updateImage(activeDrawingId, selected.id, { crop: null })}
+                  >Reset crop</button>
+                </>
+              ) : (
+                <div className="text-gray-400" style={{ fontSize: 10 }}>
+                  {isCropped(selected.crop) ? 'Cropped. Click ✂ Crop to adjust.' : 'Click ✂ Crop to trim this image.'}
+                </div>
+              )}
+            </Section>
             <div className="flex gap-2">
               <button
                 className="rounded px-2 py-0.5"
@@ -951,6 +1125,10 @@ export default function PropertiesPanel() {
                 onClick={() => { commitBlocks(addBlock(docBlocks, { type: 'property' })); setBoxEdit(true) }}>+ Property</MiniButton>
               <MiniButton title="Add a text paragraph"
                 onClick={() => { commitBlocks(addBlock(docBlocks, { type: 'text' })); setBoxEdit(true) }}>+ Text</MiniButton>
+              <MiniButton title="Add a table"
+                onClick={() => { commitBlocks(addBlock(docBlocks, { type: 'table' })); setBoxEdit(true) }}>+ Table</MiniButton>
+              <MiniButton title="Add a hyperlink"
+                onClick={() => { commitBlocks(addBlock(docBlocks, { type: 'link' })); setBoxEdit(true) }}>+ Link</MiniButton>
               <MiniButton title="Add an image"
                 onClick={() => { setBoxEdit(true); boxImageInputRef.current?.click() }}>+ Image</MiniButton>
               <MiniButton title="Paste an image from the clipboard"
@@ -1110,6 +1288,10 @@ export default function PropertiesPanel() {
                       onClick={() => commitBlocks(addBlock(localBlocks, { type: 'property' }))}>+ Property</MiniButton>
                     <MiniButton title="Add a text paragraph"
                       onClick={() => commitBlocks(addBlock(localBlocks, { type: 'text' }))}>+ Text</MiniButton>
+                    <MiniButton title="Add a table"
+                      onClick={() => commitBlocks(addBlock(localBlocks, { type: 'table' }))}>+ Table</MiniButton>
+                    <MiniButton title="Add a hyperlink"
+                      onClick={() => commitBlocks(addBlock(localBlocks, { type: 'link' }))}>+ Link</MiniButton>
                     <MiniButton title="Add an image"
                       onClick={() => boxImageInputRef.current?.click()}>+ Image</MiniButton>
                     <MiniButton title="Paste an image from the clipboard"
@@ -1248,6 +1430,32 @@ export default function PropertiesPanel() {
                           setLocalSim(s => ({ ...s, [key]: v }))
                           commitSimParam(key, v)
                         }}
+                      />
+                    )
+                  }
+                  if (paramDef.type === 'textarea') {
+                    return (
+                      <div key={key} className="mb-1">
+                        <div className="text-gray-400 mb-0.5" style={{ fontSize: 10 }}>{paramDef.label}</div>
+                        <textarea
+                          className="w-full px-1 py-0.5 rounded border bg-transparent"
+                          style={{ borderColor: 'var(--panel-border)', fontSize: 11, minHeight: 44, resize: 'vertical' }}
+                          value={localSim[key] ?? paramDef.default ?? ''}
+                          onChange={e => setLocalSim(s => ({ ...s, [key]: e.target.value }))}
+                          onBlur={() => commitSimParam(key, localSim[key] ?? '')}
+                        />
+                      </div>
+                    )
+                  }
+                  if (paramDef.type === 'text') {
+                    return (
+                      <Field
+                        key={key}
+                        label={paramDef.label}
+                        type="text"
+                        value={localSim[key] ?? paramDef.default ?? ''}
+                        onChange={v => setLocalSim(s => ({ ...s, [key]: v }))}
+                        onBlur={() => commitSimParam(key, localSim[key] ?? '')}
                       />
                     )
                   }

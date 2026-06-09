@@ -15,7 +15,7 @@ const SYMBOL_MAP_ALL = { ...ELECTRICAL_SYMBOL_MAP, ...HYDRAULIC_SYMBOL_MAP }
 
 function getAnyDef(type) { return getElectricalDef(type) || getHydraulicDef(type) || getCustomDef(type) }
 
-function getDisplayValue(component) {
+export function getDisplayValue(component) {
   const def = getAnyDef(component.type)
   const primaryEntry = def?.simParams && Object.entries(def.simParams).find(([, p]) => p.primary)
   if (primaryEntry) {
@@ -106,6 +106,7 @@ function getSymbolState(type, simState, interactiveState, hydSimState, simParams
     case 'pushbutton_no':
     case 'pushbutton_nc':
       return { pressed: ist === 'pressed' }
+    case 'plc_output':
     case 'plc_digital_output':
     case 'plc_pwm_output':
       return { on: ist === 'closed' }
@@ -128,6 +129,7 @@ const PlacedComponent = memo(function PlacedComponent({
   hydSimState,
   isRunning = false,
   labelSide = 'top',
+  valueSide = null,
   resistorStyleDefault = 'IEC',
 }) {
   const isBox = component.type === 'box'
@@ -169,7 +171,9 @@ const PlacedComponent = memo(function PlacedComponent({
     }
   }
   const designatorPos = labelPos(labelSide)
-  const valuePos = labelPos(labelSide === 'bottom' ? 'top' : 'bottom')
+  // Value sits on its own wire-dodging side (valueSide); fall back to the side
+  // opposite the designator when not provided.
+  const valuePos = labelPos(valueSide || (labelSide === 'bottom' ? 'top' : 'bottom'))
 
   return (
     <g
@@ -223,6 +227,8 @@ const PlacedComponent = memo(function PlacedComponent({
               : <SymbolComponent
                   state={getSymbolState(component.type, simState, interactiveState, hydSimState, component.simParams)}
                   params={component.simParams || {}}
+                  flipH={component.flipH}
+                  flipV={component.flipV}
                   resistorStyle={component.type === 'resistor'
                     ? resolveResistorStyle(component, { resistorStyle: resistorStyleDefault })
                     : undefined}

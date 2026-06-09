@@ -5,7 +5,7 @@ import { TOGGLE_TYPES } from '../lib/simulation/electricalSim'
 import { MANUAL_DCV_TYPES, defaultDCVPosition } from '../lib/simulation/hydraulicSim'
 import { genId } from '../store/schematicStore'
 import GridOverlay from './GridOverlay'
-import PlacedComponent from './PlacedComponent'
+import PlacedComponent, { getDisplayValue } from './PlacedComponent'
 import WireLayer from './WireLayer'
 import WireInProgress from './WireInProgress'
 import HydraulicFlowLayer from './HydraulicFlowLayer'
@@ -19,7 +19,7 @@ import { resizeBox, snapBox, RESIZE_HANDLES, topImageAt, aspectFitSize, defaultP
 import { boxPinLabelPos } from '../lib/boxComponent'
 import RichTextEditor from './RichTextEditor'
 import { emptyDoc, plainToDoc, isEmptyDoc, docToPlain } from '../lib/richText'
-import { textOuterBox, outerBoxToAnnotation } from '../lib/annotationLayout'
+import { textOuterBox, outerBoxToAnnotation, TEXT_PAD } from '../lib/annotationLayout'
 import { createTable, setCell } from '../lib/tableModel'
 import TableLayer from './TableLayer'
 import { ELECTRICAL_SYMBOL_MAP } from '../lib/symbols/electrical'
@@ -27,7 +27,7 @@ import { HYDRAULIC_SYMBOL_MAP } from '../lib/symbols/HydraulicSymbols'
 import { getElectricalDef } from '../lib/components/electrical'
 import { getHydraulicDef } from '../lib/components/hydraulic'
 import { getCustomDef } from '../lib/components/custom'
-import { chooseLabelSide } from '../lib/labelPlacement'
+import { chooseLabelSides } from '../lib/labelPlacement'
 import CustomSymbol from '../lib/symbols/CustomSymbol'
 
 const SYMBOL_MAP_ALL = { ...ELECTRICAL_SYMBOL_MAP, ...HYDRAULIC_SYMBOL_MAP }
@@ -117,6 +117,11 @@ export default function Canvas({ onCursorMove }) {
   const textResizeRef = useRef(null) // { annId, handle, startBox, z, startClient, lastBox, ann }
   const [textResizeState, setTextResizeState] = useState(null) // { annId, patch }
 
+  // Wire-endpoint/vertex drag — lets a placed wire be lengthened/reshaped after
+  // the fact. Live preview via wirePointDrag state; commit via updateWire.
+  const wirePointRef = useRef(null) // { wireId, index, z, startClient, points, pinA, pinB, lastPt }
+  const [wirePointDrag, setWirePointDrag] = useState(null) // { wireId, index, point }
+
   // Inline editor state (title-block cells only)
   const [inlineEdit, setInlineEdit] = useState(null)
   // { titleBlockField, worldX, worldY, value, multiline, isNew? }
@@ -156,6 +161,7 @@ export default function Canvas({ onCursorMove }) {
   const setActiveTool = useSchematicStore(s => s.setActiveTool)
   const addComponent = useSchematicStore(s => s.addComponent)
   const addWire = useSchematicStore(s => s.addWire)
+  const updateWire = useSchematicStore(s => s.updateWire)
   const addJunction = useSchematicStore(s => s.addJunction)
   const addJunctionNode = useSchematicStore(s => s.addJunctionNode)
   const addAnnotation = useSchematicStore(s => s.addAnnotation)
@@ -280,6 +286,11 @@ export default function Canvas({ onCursorMove }) {
         if (selComps.length === 1 && !e.ctrlKey && !e.metaKey) flipComponent(did, selComps[0].id, 'V')
         return
       }
+      // M = mirror (horizontal flip) — the natural shortcut users expect.
+      if (e.key === 'm' || e.key === 'M') {
+        if (selComps.length === 1 && !e.ctrlKey && !e.metaKey) flipComponent(did, selComps[0].id, 'H')
+        return
+      }
 
       if (e.key === 'Escape') {
         if (wirePointsRef.current.length > 0) { setWirePts([]); return }
@@ -366,7 +377,33 @@ export default function Canvas({ onCursorMove }) {
       for (const it of items) {
         if (it.type && it.type.startsWith('image/')) { file = it.getAsFile(); break }
       }
-      if (!file) return
+      // No image in the clipboard — fall back to pasting external TEXT as a text
+      // annotation on the canvas (previously text only pasted into Properties).
+      if (!file) {
+        const text = e.clipboardData?.getData('text/plain')
+        if (text && text.trim()) {
+          e.preventDefault()
+          const s2 = useSchematicStore.getState()
+          const grid = s2.settings.snapToGrid ? s2.settings.gridSize : 0
+          let cx, cy
+          if (lastWorldPoint.current) {
+            cx = lastWorldPoint.current.x; cy = lastWorldPoint.current.y
+          } else {
+            const dr = s2.drawings.find(d => d.id === did)
+            const { panX, panY, zoom } = dr?.viewState || { panX: 0, panY: 0, zoom: 1 }
+            cx = (window.innerWidth / 2 - panX) / zoom
+            cy = (window.innerHeight / 2 - panY) / zoom
+          }
+          const sx = grid > 0 ? Math.round(cx / grid) * grid : cx
+          const sy = grid > 0 ? Math.round(cy / grid) * grid : cy
+          const ann = { id: genId(), type: 'text', x: sx, y: sy, text, doc: plainToDoc(text), fontSize: 14 }
+          pushUndo()
+          addAnnotation(did, ann)
+          setSelectedIds([ann.id])
+          setActiveTool('select')
+        }
+        return
+      }
       e.preventDefault()
       const reader = new FileReader()
       reader.onload = () => {
@@ -397,7 +434,7 @@ export default function Canvas({ onCursorMove }) {
     }
     window.addEventListener('paste', onPaste)
     return () => window.removeEventListener('paste', onPaste)
-  }, [addImage, pushUndo, setSelectedIds, setActiveTool])
+  }, [addImage, addAnnotation, pushUndo, setSelectedIds, setActiveTool])
 
   const zoomAt = useCallback((factor, cx, cy) => {
     if (!activeDrawingId) return
@@ -592,7 +629,13 @@ export default function Canvas({ onCursorMove }) {
       pushUndo()
       addAnnotation(activeDrawingId, ann)
       setSelectedIds([ann.id])
-      setRichEdit({ annotationId: ann.id, worldX: x, worldY: y, width: W, height: H, doc: ann.doc, fixedSize: true, isNew: true })
+      setRichEdit({
+        annotationId: ann.id,
+        worldX: x + 6, worldY: y + 6,
+        width: W - 12, height: H - 12,
+        doc: ann.doc, fixedSize: true, isNew: true,
+        inline: true, baseFontSize: 12,
+      })
       setActiveTool('select')
       mouseDownPos.current = null
       // Leave didDrag.current as-is so onClick bails if a drag occurred
@@ -793,13 +836,18 @@ export default function Canvas({ onCursorMove }) {
       pushUndo()
       addAnnotation(state.activeDrawingId, ann)
       setSelectedIds([ann.id])
+      // Align the editor exactly over where the text will render (outer box
+      // top-left) and edit inline — no separate-looking popup box.
+      const ob = textOuterBox(ann, '')
       setRichEdit({
         annotationId: ann.id,
-        worldX: snapped.x,
-        worldY: snapped.y - 14,
+        worldX: ob.x,
+        worldY: ob.y,
         doc: ann.doc,
         fixedSize: false,
         isNew: true,
+        inline: true,
+        baseFontSize: ann.fontSize || 14,
       })
       return
     }
@@ -900,6 +948,8 @@ export default function Canvas({ onCursorMove }) {
       doc: cellBox.doc || emptyDoc(),
       fixedSize: true,
       isNew: false,
+      inline: true,        // transparent overlay so the cell tint shows through
+      baseFontSize: 11,    // matches TableLayer cell font
     })
   }, [])
 
@@ -1041,6 +1091,58 @@ export default function Canvas({ onCursorMove }) {
     window.addEventListener('mouseup', onUp)
   }, [activeDrawingId, pushUndo, updateBox, updateComponent])
 
+  // Drag a single vertex of a selected wire to make it longer/shorter or reshape
+  // it. Dragging an endpoint that was bound to a pin unbinds that end (the user is
+  // repositioning it by hand). Grid-snaps on commit.
+  const startWirePointDrag = useCallback((wireId, index, e) => {
+    e.stopPropagation()
+    e.preventDefault()
+    const dr = useSchematicStore.getState().drawings.find(d => d.id === activeDrawingId)
+    const w = (dr?.wires || []).find(ww => ww.id === wireId)
+    if (!w) return
+    const z = dr.viewState?.zoom || 1
+    const last = w.points.length - 1
+    wirePointRef.current = {
+      wireId, index, z,
+      startClient: { x: e.clientX, y: e.clientY },
+      points: w.points.map(p => ({ ...p })),
+      pinA: w.pinA, pinB: w.pinB,
+      lastPt: { ...w.points[index] },
+    }
+
+    const onMove = (ev) => {
+      const r = wirePointRef.current
+      if (!r) return
+      const dx = (ev.clientX - r.startClient.x) / r.z
+      const dy = (ev.clientY - r.startClient.y) / r.z
+      const pt = { x: r.points[index].x + dx, y: r.points[index].y + dy }
+      r.lastPt = pt
+      setWirePointDrag({ wireId, index, point: pt })
+    }
+    const onUp = () => {
+      const r = wirePointRef.current
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      wirePointRef.current = null
+      setWirePointDrag(null)
+      if (!r) return
+      const { gridSize, snapToGrid } = useSchematicStore.getState().settings
+      const grid = snapToGrid ? gridSize : 0
+      const snapped = grid > 0
+        ? { x: Math.round(r.lastPt.x / grid) * grid, y: Math.round(r.lastPt.y / grid) * grid }
+        : r.lastPt
+      const points = r.points.map((p, i) => (i === index ? snapped : p))
+      const patch = { points }
+      // Unbind the moved endpoint from its pin (it no longer follows the pin).
+      if (index === 0 && r.pinA) patch.pinA = null
+      if (index === last && r.pinB) patch.pinB = null
+      pushUndo()
+      updateWire(activeDrawingId, wireId, patch)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [activeDrawingId, pushUndo, updateWire])
+
   const handleComponentClick = useCallback((id, e) => {
     if (isDraggingItems.current) return
     if (activeTool !== 'select') return
@@ -1092,16 +1194,36 @@ export default function Canvas({ onCursorMove }) {
     const ann = (dr?.annotations || []).find(a => a.id === id)
     if (!ann) return
     const doc = ann.doc || plainToDoc(ann.text || '')
-    setRichEdit({
-      annotationId: id,
-      worldX: ann.x,
-      worldY: ann.type === 'callout' ? ann.y : ann.y - (ann.fontSize || 14),
-      width: ann.type === 'callout' ? (ann.width || 120) : undefined,
-      height: ann.type === 'callout' ? (ann.height || 60) : undefined,
-      doc,
-      fixedSize: ann.type === 'callout',
-      isNew: false,
-    })
+    const fs = ann.fontSize || (ann.type === 'callout' ? 12 : 14)
+    if (ann.type === 'callout') {
+      // Sit the editor inside the callout's padded interior so the callout's own
+      // border/fill stays visible behind it — edit in place, not in a popup.
+      const PAD = 6
+      setRichEdit({
+        annotationId: id,
+        worldX: ann.x + PAD,
+        worldY: ann.y + PAD,
+        width: (ann.width || 120) - PAD * 2,
+        height: (ann.height || 60) - PAD * 2,
+        doc,
+        fixedSize: true,
+        isNew: false,
+        inline: true,
+        baseFontSize: fs,
+      })
+    } else {
+      const ob = textOuterBox(ann, docToPlain(doc))
+      setRichEdit({
+        annotationId: id,
+        worldX: ob.x,
+        worldY: ob.y,
+        doc,
+        fixedSize: false,
+        isNew: false,
+        inline: true,
+        baseFontSize: fs,
+      })
+    }
   }, [activeTool, activeDrawingId])
 
   // Double-clicking a box opens the rich-text editor on its label, sized to the
@@ -1271,6 +1393,10 @@ export default function Canvas({ onCursorMove }) {
     if (isDraggingNow && dragRef.current?.wireIds.includes(w.id)) {
       return { ...w, points: w.points.map(p => ({ x: p.x + dragDelta.dx, y: p.y + dragDelta.dy })) }
     }
+    // Live wire-vertex drag preview.
+    if (wirePointDrag && wirePointDrag.wireId === w.id) {
+      return { ...w, points: w.points.map((p, i) => (i === wirePointDrag.index ? wirePointDrag.point : p)) }
+    }
     return w
   })
   const effectiveAnnotations = (drawing?.annotations || []).map(a => {
@@ -1317,7 +1443,8 @@ export default function Canvas({ onCursorMove }) {
   const labelSides = useMemo(() => {
     const map = {}
     ;(comps || []).forEach(c => {
-      map[c.id] = chooseLabelSide(c, getAnyDef(c.type), wiresForLabels || [])
+      // Both the designator and the value dodge wires (and each other).
+      map[c.id] = chooseLabelSides(c, getAnyDef(c.type), wiresForLabels || [], getDisplayValue(c))
     })
     return map
   }, [comps, wiresForLabels])
@@ -1398,6 +1525,11 @@ export default function Canvas({ onCursorMove }) {
     return { id: a.id, ...box }
   })()
 
+  // The single wire (if any) that should show vertex drag handles.
+  const singleSelectedWire = (activeTool === 'select' && selectedIds.length === 1)
+    ? effectiveWires.find(w => w.id === selectedIds[0] && Array.isArray(w.points))
+    : null
+
   // Inline editor screen position
   const ieScreenX = inlineEdit ? inlineEdit.worldX * zoom + panX : 0
   const ieScreenY = inlineEdit ? inlineEdit.worldY * zoom + panY : 0
@@ -1475,7 +1607,8 @@ export default function Canvas({ onCursorMove }) {
               component={comp}
               selected={selectedIds.includes(comp.id)}
               showPins={activeTool === 'wire'}
-              labelSide={labelSides[comp.id]}
+              labelSide={labelSides[comp.id]?.designator}
+              valueSide={labelSides[comp.id]?.value}
               simState={componentStates[comp.id]}
               interactiveState={interactiveStates[comp.id]}
               hydSimState={hydComponentStates[comp.id]
@@ -1510,6 +1643,7 @@ export default function Canvas({ onCursorMove }) {
             annotations={visibleAnnotations}
             selectedIds={selectedIds}
             zoom={zoom}
+            editingId={richEdit?.annotationId || null}
             onAnnotationClick={handleAnnotationClick}
             onAnnotationMouseDown={handleAnnotationMouseDown}
             onAnnotationDoubleClick={handleAnnotationDoubleClick}
@@ -1519,6 +1653,7 @@ export default function Canvas({ onCursorMove }) {
             tables={effectiveTables}
             selectedIds={selectedIds}
             zoom={zoom}
+            editingCell={richEdit?.tableId ? { tableId: richEdit.tableId, row: richEdit.row, col: richEdit.col } : null}
             onTableClick={handleTableClick}
             onTableMouseDown={handleTableMouseDown}
             onCellDoubleClick={handleTableCellDoubleClick}
@@ -1701,6 +1836,26 @@ export default function Canvas({ onCursorMove }) {
               )
             })
           })()}
+
+          {/* Wire vertex handles — drag any point to lengthen/reshape the wire */}
+          {singleSelectedWire && (() => {
+            const HS = 9 / zoom
+            return (singleSelectedWire.points || []).map((p, i) => (
+              <rect
+                key={`wph-${i}`}
+                x={p.x - HS / 2}
+                y={p.y - HS / 2}
+                width={HS}
+                height={HS}
+                fill="var(--panel-bg)"
+                stroke="var(--selection-color)"
+                strokeWidth={1 / zoom}
+                rx={HS / 4}
+                style={{ cursor: 'move' }}
+                onMouseDown={(e) => startWirePointDrag(singleSelectedWire.id, i, e)}
+              />
+            ))
+          })()}
         </g>
       </svg>
 
@@ -1728,6 +1883,7 @@ export default function Canvas({ onCursorMove }) {
           doc={richEdit.doc}
           fixedSize={richEdit.fixedSize}
           blend={richEdit.blend}
+          inline={richEdit.inline}
           fill={richEdit.fill}
           cornerRadius={richEdit.cornerRadius}
           baseFontSize={richEdit.baseFontSize}

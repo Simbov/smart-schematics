@@ -6,12 +6,13 @@ import { createBox } from '../lib/boxComponent'
 import { normalizeBoxImages } from '../lib/boxImages'
 import { migrateBlocks } from '../lib/boxBlocks'
 import { createJunction } from '../lib/junctions'
+import { migratePlcComponent } from '../lib/plcMigration'
 import {
   isRunningInTauri,
   openFileDialog, saveFileDialog,
   readTextFile, writeTextFile, writeBinaryFile, base64ToBytes,
   getRecentFiles, addRecentFile, removeRecentFile,
-  basename, askConfirm,
+  basename, askConfirm, backupFile,
 } from '../lib/tauriFs'
 import { sanitizeLoadedProject } from '../lib/projectFile'
 
@@ -70,6 +71,11 @@ function migrateDrawing(d) {
       a.doc = plainToDoc(a.text || '')
     }
   }
+  // Smart Schematics update: collapse the four legacy PLC I/O types into the two
+  // mode-switchable plc_input/plc_output (pin address moved into simParams).
+  for (const c of (d.components || [])) {
+    migratePlcComponent(c)
+  }
   // v0.2.0 (v3 → v4): every pin gains an optional `label` (default '').
   for (const c of (d.components || [])) {
     for (const p of (c.pins || [])) {
@@ -104,6 +110,7 @@ function migrateDrawing(d) {
 function migrateProject(p) {
   p.folders ??= []
   p.attachments ??= []
+  p.filePath ??= null   // per-project on-disk path (save-safety fix); null = never saved to a file
   return p
 }
 
@@ -142,6 +149,7 @@ const createBlankProject = (name = 'Project 1') => {
       activeDrawingId: drawing.id,
       folders: [],        // nested file-tree folders: { id, name, parentId }
       attachments: [],    // embedded sub-files: { id, name, mime, data, addedAt }
+      filePath: null,     // on-disk .scpro path for THIS project (null = unsaved)
       lastSaved: null,
     },
     drawing,
@@ -224,6 +232,10 @@ const useSchematicStore = create((set, get) => ({
       drawings: [...state.drawings, drawing],
       activeProjectId: project.id,
       activeDrawingId: drawing.id,
+      // Save-safety: a brand-new project has NO file yet. Clearing currentFilePath
+      // is what stops the next autosave from overwriting the previously-open
+      // project's .scpro with this blank one.
+      currentFilePath: null,
       selectedIds: [],
       undoStack: [],
       redoStack: [],
@@ -237,6 +249,9 @@ const useSchematicStore = create((set, get) => ({
     set({
       activeProjectId: id,
       activeDrawingId: project.activeDrawingId,
+      // Mirror the activated project's own file path so saveAll writes to the
+      // right file (never another project's).
+      currentFilePath: project.filePath || null,
       selectedIds: [],
       undoStack: [],
       redoStack: [],
@@ -261,6 +276,7 @@ const useSchematicStore = create((set, get) => ({
       drawings: state.drawings.filter(d => !project.drawingIds.includes(d.id)),
       activeProjectId: next.id,
       activeDrawingId: next.activeDrawingId,
+      currentFilePath: next.filePath || null,
       selectedIds: [],
       undoStack: [],
       redoStack: [],
@@ -1227,7 +1243,10 @@ const useSchematicStore = create((set, get) => ({
     const projectDrawings = project.drawingIds
       .map(id => drawings.find(d => d.id === id))
       .filter(Boolean)
-    return { version: 4, ...project, drawings: projectDrawings }
+    // `filePath` is a runtime-only field — it must not be baked into the file
+    // (the file's location can change; an old embedded path would be misleading).
+    const { filePath, ...projectData } = project
+    return { version: 4, ...projectData, drawings: projectDrawings }
   },
 
   // saveAll — writes to file (Tauri) or localStorage (browser).
@@ -1238,16 +1257,23 @@ const useSchematicStore = create((set, get) => ({
   // having touched the existing good file — so a failed snapshot can never
   // overwrite a known-good one. Returns true on success, false on failure.
   async saveAll() {
-    const { projects, drawings, currentFilePath } = get()
+    const { projects, drawings, activeProjectId } = get()
     const now = Date.now()
+    // Save-safety: always derive the target path from the ACTIVE project itself,
+    // never a stale global. A project can only ever overwrite its own file.
+    const activeProject = projects.find(p => p.id === activeProjectId)
+    const targetPath = activeProject?.filePath || null
 
     try {
-      if (isRunningInTauri() && currentFilePath) {
+      if (isRunningInTauri() && targetPath) {
         const snapshot = get()._buildProjectSnapshot()
         if (snapshot) {
           // Serialize before any state mutation; a throw here leaves disk intact.
           const json = JSON.stringify(snapshot, null, 2)
-          await writeTextFile(currentFilePath, json)
+          // Roll the previous good save to `${path}.bak` first so the last
+          // version is always locally recoverable. Best-effort — never blocks.
+          await backupFile(targetPath)
+          await writeTextFile(targetPath, json)
         }
       } else {
         const savedDrawings = drawings.map(d => ({ ...d, isDirty: false, lastSaved: now }))
@@ -1328,7 +1354,14 @@ const useSchematicStore = create((set, get) => ({
       [{ name: 'Schematic Project', extensions: ['scpro'] }]
     )
     if (!path) return
-    set({ currentFilePath: path })
+    // Bind the path to THIS project (not just the global mirror) so future
+    // autosaves target the right file even after switching projects.
+    set(state => ({
+      currentFilePath: path,
+      projects: state.projects.map(p =>
+        p.id === activeProjectId ? { ...p, filePath: path } : p
+      ),
+    }))
     addRecentFile(path)
     set({ recentFiles: getRecentFiles() })
     await get().saveAll()
@@ -1361,6 +1394,7 @@ const useSchematicStore = create((set, get) => ({
         activeDrawingId: drawings[0]?.id || null,
         folders: data.folders,
         attachments: data.attachments,
+        filePath: path,   // bind this project to the file it was loaded from
         lastSaved: Date.now(),
       })
       set(state => ({

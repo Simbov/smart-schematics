@@ -56,6 +56,29 @@ export async function writeTextFile(path, content) {
   }
 }
 
+// Copy the current on-disk file to `${path}.bak` before it gets overwritten, so
+// the previous good save is always recoverable locally (not just via OneDrive
+// version history). Best-effort: a failure here must never block the real save,
+// so callers ignore the return. Tauri-only; no-op in a plain browser.
+export async function backupFile(path) {
+  if (!isRunningInTauri() || !path) return false
+  try {
+    const { exists, copyFile } = await import('@tauri-apps/plugin-fs')
+    if (!(await exists(path))) return false
+    // Suppress the file watcher for the .bak write too.
+    setSelfWriting(true)
+    try {
+      await copyFile(path, `${path}.bak`)
+    } finally {
+      setTimeout(() => setSelfWriting(false), 800)
+    }
+    return true
+  } catch (e) {
+    console.warn('Backup copy failed (non-fatal)', e)
+    return false
+  }
+}
+
 // Read a binary file (e.g. an image picked via openFileDialog) and return it as
 // a base64 `data:` URL suitable for an <image href>. Tauri-only; returns null in
 // a plain browser (which uses the hidden <input> + FileReader path instead).

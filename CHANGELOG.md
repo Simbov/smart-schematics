@@ -12,6 +12,35 @@ section with the version and date and starts a fresh Unreleased block.
 
 ## [Unreleased]
 
+### Fixed
+- **Lost work when creating a New Project.** Making a new project could overwrite
+  the previously-open project's file with a blank one on the next autosave. Every
+  project now saves to its own file, and a `.scpro.bak` of the previous save is
+  kept alongside each file for local recovery.
+
+### Added
+- **Inline text editing.** Editing text, callouts and table cells now happens
+  directly on the canvas — a transparent editor sits exactly over the text instead
+  of popping out a separate box.
+- **PLC I/O simplified.** PLC Input switches between Digital and Analogue; PLC
+  Output switches between Digital and PWM — one component each, chosen via a Mode
+  dropdown. Existing PLC parts are converted automatically. Inputs/outputs gain a
+  Pin Address and Signal Name (shown on the schematic) plus a Notes field.
+- **Solenoid Relay** component (coil + SPDT contact) with full simulation — energising the coil throws the contact.
+- **Fuse styles** — choose IEC, cartridge, or ANSI symbol.
+- **Tables**: insert/move/resize rows & columns at any position, a custom header-row
+  tint, **Copy for Word** (pastes as a real table into Word/Excel/Docs), and tables
+  can now be embedded in a component box's or junction's Properties.
+- **Wires** can be lengthened or reshaped after placing — drag the vertex handles
+  on a selected wire.
+- **Image crop** in the Properties panel (drag a crop box), reflected on the canvas;
+  the enlarged-image viewer now supports zoom and pan.
+- **Component values** now avoid wires too (not just the reference designator).
+- **Mirror with the `M` key**, and mirrored PLC symbols (DI/DO etc.) now stay
+  readable instead of rendering backwards.
+- **Paste external text** straight onto the canvas (not only into Properties).
+- **Links** can be added to box/junction documentation; file-tree styling polished.
+
 ## [0.4.0] - 2026-06-08
 
 ### Added

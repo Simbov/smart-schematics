@@ -24,6 +24,10 @@ export default function RichTextEditor({
   // box's own fill / corner radius / base font size so editing happens *in place*
   // on the box rather than in a separate-looking popup.
   blend = false, fill = null, cornerRadius = 0, baseFontSize = 14,
+  // Inline mode (inline-editing pass): a fully transparent overlay that sits
+  // exactly over the rendered text so editing a text/callout annotation or a
+  // table cell feels like typing on the canvas — no separate "box pulls out".
+  inline = false,
 }) {
   const ref = useRef(null)
   const committedRef = useRef(false)
@@ -255,22 +259,26 @@ export default function RichTextEditor({
         onMouseUp={refreshActive}
         onBlur={doCommit}
         style={{
+          boxSizing: 'border-box',
           fontFamily: 'sans-serif',
-          fontSize: (blend ? baseFontSize : 14) * zoom,
-          lineHeight: 1.3,
+          fontSize: ((blend || inline) ? baseFontSize : 14) * zoom,
+          lineHeight: inline ? 1.4 : 1.3,
           color: blend ? '#0f172a' : 'var(--component-color, #111)',
-          background: blend ? (fill || '#f1f5f9') : 'var(--canvas-bg, #fff)',
-          // In blend mode use a soft dashed accent (reads as "editing this box"),
-          // otherwise the bold blue editor border.
-          border: blend ? '1px dashed rgba(37,99,235,0.7)' : '2px solid #2563eb',
-          borderRadius: blend ? (cornerRadius || 3) : 3,
+          // inline: fully transparent so the canvas/cell/callout shows through
+          // (true in-place editing). blend: the box's own fill. else: opaque card.
+          background: inline ? 'transparent' : blend ? (fill || '#f1f5f9') : 'var(--canvas-bg, #fff)',
+          // inline/blend use a soft dashed accent (reads as "editing in place"),
+          // otherwise the bold blue editor border that looks like a popup.
+          border: (blend || inline) ? '1px dashed rgba(37,99,235,0.7)' : '2px solid #2563eb',
+          borderRadius: blend ? (cornerRadius || 3) : inline ? (cornerRadius || 2) : 3,
           outline: 'none',
-          padding: '2px 4px',
-          minWidth: Math.max(80, (width || 0) * zoom),
+          // inline aligns text to the rendered origin → minimal padding.
+          padding: inline ? '0 1px' : '2px 4px',
+          minWidth: inline ? Math.max(24, (width || 0) * zoom) : Math.max(80, (width || 0) * zoom),
           maxWidth: 600,
           ...(fixedSize && width
             ? { width: width * zoom, height: height * zoom, overflow: 'auto' }
-            : { minHeight: 20 }),
+            : { minHeight: inline ? baseFontSize * zoom : 20 }),
         }}
       />
     </div>

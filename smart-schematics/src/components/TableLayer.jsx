@@ -12,7 +12,7 @@ import { tableSize } from '../lib/tableModel'
 // click anywhere on the table selects/drags it. Double-click resolves the cell
 // under the cursor from the column/row offsets.
 
-function TableComp({ table, sel, zoom, onClick, onMouseDown, onCellDoubleClick }) {
+function TableComp({ table, sel, zoom, editingCell, onClick, onMouseDown, onCellDoubleClick }) {
   const { width, height } = tableSize(table)
   const { x, y, rows, cols, colWidths, rowHeights } = table
 
@@ -49,7 +49,7 @@ function TableComp({ table, sel, zoom, onClick, onMouseDown, onCellDoubleClick }
       {/* Background + header tint */}
       <rect x={x} y={y} width={width} height={height} fill={table.fill || 'var(--canvas-bg)'} />
       {table.headerRow && rows > 0 && (
-        <rect x={x} y={y} width={width} height={rowHeights[0]} fill="rgba(37,99,235,0.08)" />
+        <rect x={x} y={y} width={width} height={rowHeights[0]} fill={table.headerFill || 'rgba(37,99,235,0.08)'} />
       )}
 
       {/* Cell content */}
@@ -57,6 +57,8 @@ function TableComp({ table, sel, zoom, onClick, onMouseDown, onCellDoubleClick }
         rowCells.map((doc, c) => {
           if (!doc || isEmptyDoc(doc)) return null
           const cw = colWidths[c], ch = rowHeights[r]
+          // Hide the cell being edited so the inline editor doesn't double up.
+          const cellEditing = editingCell && editingCell.row === r && editingCell.col === c
           return (
             <foreignObject
               key={`cell-${r}-${c}`}
@@ -64,7 +66,7 @@ function TableComp({ table, sel, zoom, onClick, onMouseDown, onCellDoubleClick }
               y={y + rowY[r] + 2}
               width={Math.max(1, cw - 4)}
               height={Math.max(1, ch - 4)}
-              style={{ overflow: 'hidden', pointerEvents: 'none' }}
+              style={{ overflow: 'hidden', pointerEvents: 'none', visibility: cellEditing ? 'hidden' : 'visible' }}
             >
               <div
                 xmlns="http://www.w3.org/1999/xhtml"
@@ -101,7 +103,7 @@ function TableComp({ table, sel, zoom, onClick, onMouseDown, onCellDoubleClick }
   )
 }
 
-function TableLayer({ tables = [], selectedIds = [], zoom = 1, onTableClick, onTableMouseDown, onCellDoubleClick }) {
+function TableLayer({ tables = [], selectedIds = [], zoom = 1, editingCell = null, onTableClick, onTableMouseDown, onCellDoubleClick }) {
   return (
     <g>
       {tables.map(t => (
@@ -110,6 +112,7 @@ function TableLayer({ tables = [], selectedIds = [], zoom = 1, onTableClick, onT
           table={t}
           sel={selectedIds.includes(t.id)}
           zoom={zoom}
+          editingCell={editingCell && editingCell.tableId === t.id ? editingCell : null}
           onClick={onTableClick}
           onMouseDown={onTableMouseDown}
           onCellDoubleClick={onCellDoubleClick}

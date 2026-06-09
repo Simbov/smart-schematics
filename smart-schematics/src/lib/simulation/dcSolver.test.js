@@ -136,6 +136,43 @@ describe('dcSolver — degenerate circuits', () => {
   })
 })
 
+describe('dcSolver — solenoid relay (self-contained coil + SPDT contact)', () => {
+  // A1/A2 = coil; C/NO/NC = contact. Energising the coil throws C from NC to NO.
+  function solenoidRelay(a1, a2, c, no, nc, { designator = 'K1', id = 'sr1' } = {}) {
+    return {
+      id, type: 'solenoid_relay', designator, value: '', simParams: {},
+      pins: [
+        { id: 'A1', absX: a1[0], absY: a1[1] },
+        { id: 'A2', absX: a2[0], absY: a2[1] },
+        { id: 'C', absX: c[0], absY: c[1] },
+        { id: 'NO', absX: no[0], absY: no[1] },
+        { id: 'NC', absX: nc[0], absY: nc[1] },
+      ],
+    }
+  }
+
+  it('closes C→NO and lights an NO load when the coil is energised', () => {
+    const bt = battery([0, 0], [0, 100])                       // 9V across the coil
+    const sr = solenoidRelay([0, 0], [0, 100], [0, 0], [300, 0], [500, 0])
+    const la = lamp([300, 0], [0, 100])                        // NO → NEG
+    const res = runDCSimulation([bt, sr, la], [], {})
+    expect(res.componentStates[sr.id].on).toBe(true)           // coil energised
+    expect(res.componentStates[la.id].on).toBe(true)           // NO contact closed
+  })
+
+  it('rests on C→NC (NO load dark) when the coil is not energised', () => {
+    const bt = battery([0, 0], [0, 100])
+    // Coil floating (both pins on an isolated net) → 0 V → not energised.
+    const sr = solenoidRelay([900, 900], [900, 900], [0, 0], [300, 0], [500, 0])
+    const laNC = lamp([500, 0], [0, 100], { id: 'laNC' })      // NC → NEG (should light)
+    const laNO = lamp([300, 0], [0, 100], { id: 'laNO' })      // NO → NEG (should stay dark)
+    const res = runDCSimulation([bt, sr, laNC, laNO], [], {})
+    expect(res.componentStates[sr.id].on).toBe(false)
+    expect(res.componentStates['laNC'].on).toBe(true)
+    expect(res.componentStates['laNO'].on).toBe(false)
+  })
+})
+
 describe('dcSolver — multiple ground symbols are one node', () => {
   it('closes a circuit through two un-wired ground symbols', () => {
     // POS → lamp → ground#2 ;  battery NEG → ground#1.  The two ground symbols

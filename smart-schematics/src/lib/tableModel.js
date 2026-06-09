@@ -51,6 +51,7 @@ export function createTable({
   borderColor = DEFAULT_BORDER_COLOR,
   borderWidth = DEFAULT_BORDER_WIDTH,
   headerRow = false,
+  headerFill = null,    // custom header-row tint; null ⇒ default accent tint
   fill = null,
   grid = DEFAULT_TABLE_GRID,
   id = null,
@@ -76,6 +77,7 @@ export function createTable({
     borderColor,
     borderWidth,
     headerRow,
+    headerFill,
     // Optional background fill. `null` ⇒ the renderer falls back to the canvas
     // background (transparent-looking), preserving the pre-fill appearance.
     fill,
@@ -111,6 +113,58 @@ export function addCol(table, width = DEFAULT_COL_WIDTH, grid = DEFAULT_TABLE_GR
     colWidths: [...table.colWidths, snapDim(width, MIN_COL_WIDTH, grid)],
     cells: table.cells.map(row => [...row, emptyDoc()]),
   }
+}
+
+// Insert an empty row at index `i` (0..rows). Out-of-range clamps to an append/
+// prepend. Keeps rowHeights + cells rectangular.
+export function insertRow(table, i, height = DEFAULT_ROW_HEIGHT, grid = DEFAULT_TABLE_GRID) {
+  const at = Math.max(0, Math.min(table.rows, i))
+  const newRow = Array.from({ length: table.cols }, () => emptyDoc())
+  const rowHeights = [...table.rowHeights]
+  rowHeights.splice(at, 0, snapDim(height, MIN_ROW_HEIGHT, grid))
+  const cells = [...table.cells]
+  cells.splice(at, 0, newRow)
+  return { ...table, rows: table.rows + 1, rowHeights, cells }
+}
+
+// Insert an empty column at index `i` (0..cols). Keeps colWidths + cells rectangular.
+export function insertCol(table, i, width = DEFAULT_COL_WIDTH, grid = DEFAULT_TABLE_GRID) {
+  const at = Math.max(0, Math.min(table.cols, i))
+  const colWidths = [...table.colWidths]
+  colWidths.splice(at, 0, snapDim(width, MIN_COL_WIDTH, grid))
+  const cells = table.cells.map(row => {
+    const next = [...row]
+    next.splice(at, 0, emptyDoc())
+    return next
+  })
+  return { ...table, cols: table.cols + 1, colWidths, cells }
+}
+
+// Move row `from` to index `to` (reorder). No-op for out-of-range/same index.
+export function moveRow(table, from, to) {
+  if (from < 0 || from >= table.rows || to < 0 || to >= table.rows || from === to) return table
+  const rowHeights = [...table.rowHeights]
+  const cells = [...table.cells]
+  const [h] = rowHeights.splice(from, 1)
+  const [row] = cells.splice(from, 1)
+  rowHeights.splice(to, 0, h)
+  cells.splice(to, 0, row)
+  return { ...table, rowHeights, cells }
+}
+
+// Move column `from` to index `to` (reorder). No-op for out-of-range/same index.
+export function moveCol(table, from, to) {
+  if (from < 0 || from >= table.cols || to < 0 || to >= table.cols || from === to) return table
+  const colWidths = [...table.colWidths]
+  const [w] = colWidths.splice(from, 1)
+  colWidths.splice(to, 0, w)
+  const cells = table.cells.map(row => {
+    const next = [...row]
+    const [cell] = next.splice(from, 1)
+    next.splice(to, 0, cell)
+    return next
+  })
+  return { ...table, colWidths, cells }
 }
 
 // Remove row `r`. Refuses to drop the last row (a table keeps ≥1 row).
