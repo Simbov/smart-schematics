@@ -12,6 +12,8 @@ section with the version and date and starts a fresh Unreleased block.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-09
+
 ### Fixed
 - **Lost work when creating a New Project.** Making a new project could overwrite
   the previously-open project's file with a blank one on the next autosave. Every
