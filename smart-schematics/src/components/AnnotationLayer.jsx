@@ -17,6 +17,8 @@ export default function AnnotationLayer({
   annotations = [],
   selectedIds = [],
   zoom = 1,
+  editingId = null,   // annotation currently open in the inline editor — hide its
+                      // rendered text so it doesn't double up behind the overlay
   onAnnotationClick,
   onAnnotationMouseDown,
   onAnnotationDoubleClick,
@@ -25,15 +27,16 @@ export default function AnnotationLayer({
     <g style={{ color: 'var(--component-color)' }}>
       {annotations.map(ann => {
         const sel = selectedIds.includes(ann.id)
+        const editing = ann.id === editingId
         if (ann.type === 'text') return (
-          <TextAnnotation key={ann.id} ann={ann} sel={sel} zoom={zoom}
+          <TextAnnotation key={ann.id} ann={ann} sel={sel} zoom={zoom} editing={editing}
             onClick={onAnnotationClick}
             onMouseDown={onAnnotationMouseDown}
             onDoubleClick={onAnnotationDoubleClick}
           />
         )
         if (ann.type === 'callout') return (
-          <CalloutAnnotation key={ann.id} ann={ann} sel={sel} zoom={zoom}
+          <CalloutAnnotation key={ann.id} ann={ann} sel={sel} zoom={zoom} editing={editing}
             onClick={onAnnotationClick}
             onMouseDown={onAnnotationMouseDown}
             onDoubleClick={onAnnotationDoubleClick}
@@ -70,7 +73,7 @@ function FallbackText({ doc, x, y, fontSize, anchor = 'start' }) {
   )
 }
 
-function TextAnnotation({ ann, sel, zoom, onClick, onMouseDown, onDoubleClick }) {
+function TextAnnotation({ ann, sel, zoom, editing = false, onClick, onMouseDown, onDoubleClick }) {
   const fs = ann.fontSize || 14
   const doc = annDoc(ann)
   const plain = docToPlain(doc)
@@ -96,7 +99,7 @@ function TextAnnotation({ ann, sel, zoom, onClick, onMouseDown, onDoubleClick })
         y={box.y}
         width={box.width}
         height={box.height}
-        style={{ overflow: fixed ? 'hidden' : 'visible', pointerEvents: 'none' }}
+        style={{ overflow: fixed ? 'hidden' : 'visible', pointerEvents: 'none', visibility: editing ? 'hidden' : 'visible' }}
       >
         <div
           xmlns="http://www.w3.org/1999/xhtml"
@@ -133,7 +136,7 @@ function TextAnnotation({ ann, sel, zoom, onClick, onMouseDown, onDoubleClick })
   )
 }
 
-function CalloutAnnotation({ ann, sel, zoom, onClick, onMouseDown, onDoubleClick }) {
+function CalloutAnnotation({ ann, sel, zoom, editing = false, onClick, onMouseDown, onDoubleClick }) {
   const W = ann.width || 120
   const H = ann.height || 60
   const fs = ann.fontSize || 12
@@ -158,13 +161,15 @@ function CalloutAnnotation({ ann, sel, zoom, onClick, onMouseDown, onDoubleClick
         rx={3 / zoom}
       />
       <FallbackText doc={doc} x={ann.x + PAD} y={ann.y + PAD + fs} fontSize={fs} />
-      {/* Rich content, clipped to the fixed box and scrolled if it overflows. */}
+      {/* Rich content, clipped to the fixed box and scrolled if it overflows.
+          Hidden while editing so the inline editor's text doesn't double up
+          (the box border/fill above stays visible behind the editor). */}
       <foreignObject
         x={ann.x + PAD}
         y={ann.y + PAD}
         width={W - PAD * 2}
         height={H - PAD * 2}
-        style={{ overflow: 'hidden', pointerEvents: 'none' }}
+        style={{ overflow: 'hidden', pointerEvents: 'none', visibility: editing ? 'hidden' : 'visible' }}
       >
         <div
           xmlns="http://www.w3.org/1999/xhtml"

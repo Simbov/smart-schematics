@@ -19,7 +19,7 @@ import { resizeBox, snapBox, RESIZE_HANDLES, topImageAt, aspectFitSize, defaultP
 import { boxPinLabelPos } from '../lib/boxComponent'
 import RichTextEditor from './RichTextEditor'
 import { emptyDoc, plainToDoc, isEmptyDoc, docToPlain } from '../lib/richText'
-import { textOuterBox, outerBoxToAnnotation } from '../lib/annotationLayout'
+import { textOuterBox, outerBoxToAnnotation, TEXT_PAD } from '../lib/annotationLayout'
 import { createTable, setCell } from '../lib/tableModel'
 import TableLayer from './TableLayer'
 import { ELECTRICAL_SYMBOL_MAP } from '../lib/symbols/electrical'
@@ -592,7 +592,13 @@ export default function Canvas({ onCursorMove }) {
       pushUndo()
       addAnnotation(activeDrawingId, ann)
       setSelectedIds([ann.id])
-      setRichEdit({ annotationId: ann.id, worldX: x, worldY: y, width: W, height: H, doc: ann.doc, fixedSize: true, isNew: true })
+      setRichEdit({
+        annotationId: ann.id,
+        worldX: x + 6, worldY: y + 6,
+        width: W - 12, height: H - 12,
+        doc: ann.doc, fixedSize: true, isNew: true,
+        inline: true, baseFontSize: 12,
+      })
       setActiveTool('select')
       mouseDownPos.current = null
       // Leave didDrag.current as-is so onClick bails if a drag occurred
@@ -793,13 +799,18 @@ export default function Canvas({ onCursorMove }) {
       pushUndo()
       addAnnotation(state.activeDrawingId, ann)
       setSelectedIds([ann.id])
+      // Align the editor exactly over where the text will render (outer box
+      // top-left) and edit inline — no separate-looking popup box.
+      const ob = textOuterBox(ann, '')
       setRichEdit({
         annotationId: ann.id,
-        worldX: snapped.x,
-        worldY: snapped.y - 14,
+        worldX: ob.x,
+        worldY: ob.y,
         doc: ann.doc,
         fixedSize: false,
         isNew: true,
+        inline: true,
+        baseFontSize: ann.fontSize || 14,
       })
       return
     }
@@ -900,6 +911,8 @@ export default function Canvas({ onCursorMove }) {
       doc: cellBox.doc || emptyDoc(),
       fixedSize: true,
       isNew: false,
+      inline: true,        // transparent overlay so the cell tint shows through
+      baseFontSize: 11,    // matches TableLayer cell font
     })
   }, [])
 
@@ -1092,16 +1105,36 @@ export default function Canvas({ onCursorMove }) {
     const ann = (dr?.annotations || []).find(a => a.id === id)
     if (!ann) return
     const doc = ann.doc || plainToDoc(ann.text || '')
-    setRichEdit({
-      annotationId: id,
-      worldX: ann.x,
-      worldY: ann.type === 'callout' ? ann.y : ann.y - (ann.fontSize || 14),
-      width: ann.type === 'callout' ? (ann.width || 120) : undefined,
-      height: ann.type === 'callout' ? (ann.height || 60) : undefined,
-      doc,
-      fixedSize: ann.type === 'callout',
-      isNew: false,
-    })
+    const fs = ann.fontSize || (ann.type === 'callout' ? 12 : 14)
+    if (ann.type === 'callout') {
+      // Sit the editor inside the callout's padded interior so the callout's own
+      // border/fill stays visible behind it — edit in place, not in a popup.
+      const PAD = 6
+      setRichEdit({
+        annotationId: id,
+        worldX: ann.x + PAD,
+        worldY: ann.y + PAD,
+        width: (ann.width || 120) - PAD * 2,
+        height: (ann.height || 60) - PAD * 2,
+        doc,
+        fixedSize: true,
+        isNew: false,
+        inline: true,
+        baseFontSize: fs,
+      })
+    } else {
+      const ob = textOuterBox(ann, docToPlain(doc))
+      setRichEdit({
+        annotationId: id,
+        worldX: ob.x,
+        worldY: ob.y,
+        doc,
+        fixedSize: false,
+        isNew: false,
+        inline: true,
+        baseFontSize: fs,
+      })
+    }
   }, [activeTool, activeDrawingId])
 
   // Double-clicking a box opens the rich-text editor on its label, sized to the
@@ -1510,6 +1543,7 @@ export default function Canvas({ onCursorMove }) {
             annotations={visibleAnnotations}
             selectedIds={selectedIds}
             zoom={zoom}
+            editingId={richEdit?.annotationId || null}
             onAnnotationClick={handleAnnotationClick}
             onAnnotationMouseDown={handleAnnotationMouseDown}
             onAnnotationDoubleClick={handleAnnotationDoubleClick}
@@ -1519,6 +1553,7 @@ export default function Canvas({ onCursorMove }) {
             tables={effectiveTables}
             selectedIds={selectedIds}
             zoom={zoom}
+            editingCell={richEdit?.tableId ? { tableId: richEdit.tableId, row: richEdit.row, col: richEdit.col } : null}
             onTableClick={handleTableClick}
             onTableMouseDown={handleTableMouseDown}
             onCellDoubleClick={handleTableCellDoubleClick}
@@ -1728,6 +1763,7 @@ export default function Canvas({ onCursorMove }) {
           doc={richEdit.doc}
           fixedSize={richEdit.fixedSize}
           blend={richEdit.blend}
+          inline={richEdit.inline}
           fill={richEdit.fill}
           cornerRadius={richEdit.cornerRadius}
           baseFontSize={richEdit.baseFontSize}
