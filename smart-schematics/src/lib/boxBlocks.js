@@ -44,6 +44,8 @@ export function createBlock({ id = null, type = 'text', ...rest } = {}) {
       return { ...base, label: rest.label ?? '', value: rest.value ?? '', unit: rest.unit ?? '' }
     case 'image':
       return { ...base, src: rest.src ?? '', heading: rest.heading ?? '', size: rest.size ?? DEFAULT_HEADING_SIZE }
+    case 'link':
+      return { ...base, label: rest.label ?? '', url: rest.url ?? '' }
     case 'table': {
       const rows = Math.max(1, Math.round(rest.rows ?? 2))
       const cols = Math.max(1, Math.round(rest.cols ?? 2))

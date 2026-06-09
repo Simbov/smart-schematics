@@ -116,3 +116,17 @@ describe('boxBlocks — table block', () => {
     expect(blockTableRemoveCol(b, 0)).toBe(b)
   })
 })
+
+describe('boxBlocks — link block', () => {
+  it('createBlock(link) carries label + url', () => {
+    const b = createBlock({ type: 'link', label: 'Datasheet', url: 'https://x.com' })
+    expect(b.type).toBe('link')
+    expect(b.label).toBe('Datasheet')
+    expect(b.url).toBe('https://x.com')
+  })
+  it('defaults label/url to empty strings', () => {
+    const b = createBlock({ type: 'link' })
+    expect(b.label).toBe('')
+    expect(b.url).toBe('')
+  })
+})

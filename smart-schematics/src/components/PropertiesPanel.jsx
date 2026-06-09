@@ -192,6 +192,17 @@ function ContentBlocks({ blocks, editing, commit, onImageClick }) {
               </div>
             )
           }
+          if (b.type === 'link') {
+            return (
+              <div key={b.id} style={{ fontSize: 12 }}>
+                <a href={normalizeUrl(b.url)} target="_blank" rel="noreferrer"
+                  onClick={e => e.stopPropagation()}
+                  style={{ color: '#2563eb', textDecoration: 'underline', wordBreak: 'break-all' }}>
+                  {b.label || b.url || '—'}
+                </a>
+              </div>
+            )
+          }
           if (b.type === 'table') {
             return (
               <table key={b.id} style={{ borderCollapse: 'collapse', width: '100%', fontSize: 11 }}>
@@ -273,6 +284,14 @@ function ContentBlocks({ blocks, editing, commit, onImageClick }) {
               <img src={b.src} alt={b.heading || 'reference image'} title="Click to enlarge"
                 onClick={() => onImageClick?.(b.src)}
                 style={{ display: 'block', maxWidth: '100%', maxHeight: 160, margin: '0 auto', borderRadius: 3, cursor: 'zoom-in', background: 'rgba(0,0,0,0.04)' }} />
+            </>
+          )}
+          {b.type === 'link' && (
+            <>
+              <input className={INPUT_CLASS} style={INPUT_STYLE} placeholder="Link text (e.g. Datasheet)"
+                defaultValue={b.label} onBlur={e => commit(updateBlock(list, b.id, { label: e.target.value }))} />
+              <input className={INPUT_CLASS} style={INPUT_STYLE} placeholder="https://…"
+                defaultValue={b.url} onBlur={e => commit(updateBlock(list, b.id, { url: e.target.value }))} />
             </>
           )}
           {b.type === 'table' && (
@@ -1108,6 +1127,8 @@ export default function PropertiesPanel() {
                 onClick={() => { commitBlocks(addBlock(docBlocks, { type: 'text' })); setBoxEdit(true) }}>+ Text</MiniButton>
               <MiniButton title="Add a table"
                 onClick={() => { commitBlocks(addBlock(docBlocks, { type: 'table' })); setBoxEdit(true) }}>+ Table</MiniButton>
+              <MiniButton title="Add a hyperlink"
+                onClick={() => { commitBlocks(addBlock(docBlocks, { type: 'link' })); setBoxEdit(true) }}>+ Link</MiniButton>
               <MiniButton title="Add an image"
                 onClick={() => { setBoxEdit(true); boxImageInputRef.current?.click() }}>+ Image</MiniButton>
               <MiniButton title="Paste an image from the clipboard"
@@ -1269,6 +1290,8 @@ export default function PropertiesPanel() {
                       onClick={() => commitBlocks(addBlock(localBlocks, { type: 'text' }))}>+ Text</MiniButton>
                     <MiniButton title="Add a table"
                       onClick={() => commitBlocks(addBlock(localBlocks, { type: 'table' }))}>+ Table</MiniButton>
+                    <MiniButton title="Add a hyperlink"
+                      onClick={() => commitBlocks(addBlock(localBlocks, { type: 'link' }))}>+ Link</MiniButton>
                     <MiniButton title="Add an image"
                       onClick={() => boxImageInputRef.current?.click()}>+ Image</MiniButton>
                     <MiniButton title="Paste an image from the clipboard"

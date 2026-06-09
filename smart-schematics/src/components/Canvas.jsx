@@ -286,6 +286,11 @@ export default function Canvas({ onCursorMove }) {
         if (selComps.length === 1 && !e.ctrlKey && !e.metaKey) flipComponent(did, selComps[0].id, 'V')
         return
       }
+      // M = mirror (horizontal flip) — the natural shortcut users expect.
+      if (e.key === 'm' || e.key === 'M') {
+        if (selComps.length === 1 && !e.ctrlKey && !e.metaKey) flipComponent(did, selComps[0].id, 'H')
+        return
+      }
 
       if (e.key === 'Escape') {
         if (wirePointsRef.current.length > 0) { setWirePts([]); return }
@@ -372,7 +377,33 @@ export default function Canvas({ onCursorMove }) {
       for (const it of items) {
         if (it.type && it.type.startsWith('image/')) { file = it.getAsFile(); break }
       }
-      if (!file) return
+      // No image in the clipboard — fall back to pasting external TEXT as a text
+      // annotation on the canvas (previously text only pasted into Properties).
+      if (!file) {
+        const text = e.clipboardData?.getData('text/plain')
+        if (text && text.trim()) {
+          e.preventDefault()
+          const s2 = useSchematicStore.getState()
+          const grid = s2.settings.snapToGrid ? s2.settings.gridSize : 0
+          let cx, cy
+          if (lastWorldPoint.current) {
+            cx = lastWorldPoint.current.x; cy = lastWorldPoint.current.y
+          } else {
+            const dr = s2.drawings.find(d => d.id === did)
+            const { panX, panY, zoom } = dr?.viewState || { panX: 0, panY: 0, zoom: 1 }
+            cx = (window.innerWidth / 2 - panX) / zoom
+            cy = (window.innerHeight / 2 - panY) / zoom
+          }
+          const sx = grid > 0 ? Math.round(cx / grid) * grid : cx
+          const sy = grid > 0 ? Math.round(cy / grid) * grid : cy
+          const ann = { id: genId(), type: 'text', x: sx, y: sy, text, doc: plainToDoc(text), fontSize: 14 }
+          pushUndo()
+          addAnnotation(did, ann)
+          setSelectedIds([ann.id])
+          setActiveTool('select')
+        }
+        return
+      }
       e.preventDefault()
       const reader = new FileReader()
       reader.onload = () => {
@@ -403,7 +434,7 @@ export default function Canvas({ onCursorMove }) {
     }
     window.addEventListener('paste', onPaste)
     return () => window.removeEventListener('paste', onPaste)
-  }, [addImage, pushUndo, setSelectedIds, setActiveTool])
+  }, [addImage, addAnnotation, pushUndo, setSelectedIds, setActiveTool])
 
   const zoomAt = useCallback((factor, cx, cy) => {
     if (!activeDrawingId) return

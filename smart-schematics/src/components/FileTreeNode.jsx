@@ -106,11 +106,14 @@ export default function FileTreeNode({
       } : undefined}
     >
       <div
-        className="group flex items-center gap-1 pr-1 py-0.5 cursor-pointer rounded text-xs"
+        className="group flex items-center gap-1.5 pr-1 py-1 cursor-pointer rounded-md text-xs transition-colors hover:bg-black/5 dark:hover:bg-white/10"
         style={{
           paddingLeft: 4 + depth * 12,
-          background: isActive ? 'var(--toolbar-bg)' : 'transparent',
+          // Active drawing: subtle accent tint + left accent bar + emphasised text.
+          background: isActive ? 'rgba(37,99,235,0.12)' : 'transparent',
+          boxShadow: isActive ? 'inset 2px 0 0 #2563eb' : undefined,
           color: isActive ? 'var(--component-color)' : '#6b7280',
+          fontWeight: isActive ? 600 : 400,
         }}
         draggable={!editing}
         onDragStart={handleDragStart}
@@ -131,7 +134,7 @@ export default function FileTreeNode({
         <span className="flex-shrink-0 text-blue-500">
           {isFolder
             ? (isOpen ? <FolderOpen size={13} /> : <Folder size={13} />)
-            : <FileText size={13} className="text-gray-400" />}
+            : <FileText size={13} className={isActive ? 'text-blue-500' : 'text-gray-400'} />}
         </span>
 
         {/* Name / inline rename */}
