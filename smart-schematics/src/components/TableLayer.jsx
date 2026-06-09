@@ -49,7 +49,7 @@ function TableComp({ table, sel, zoom, editingCell, onClick, onMouseDown, onCell
       {/* Background + header tint */}
       <rect x={x} y={y} width={width} height={height} fill={table.fill || 'var(--canvas-bg)'} />
       {table.headerRow && rows > 0 && (
-        <rect x={x} y={y} width={width} height={rowHeights[0]} fill="rgba(37,99,235,0.08)" />
+        <rect x={x} y={y} width={width} height={rowHeights[0]} fill={table.headerFill || 'rgba(37,99,235,0.08)'} />
       )}
 
       {/* Cell content */}

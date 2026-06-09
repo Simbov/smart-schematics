@@ -44,10 +44,50 @@ export function createBlock({ id = null, type = 'text', ...rest } = {}) {
       return { ...base, label: rest.label ?? '', value: rest.value ?? '', unit: rest.unit ?? '' }
     case 'image':
       return { ...base, src: rest.src ?? '', heading: rest.heading ?? '', size: rest.size ?? DEFAULT_HEADING_SIZE }
+    case 'table': {
+      const rows = Math.max(1, Math.round(rest.rows ?? 2))
+      const cols = Math.max(1, Math.round(rest.cols ?? 2))
+      return { ...base, rows, cols, headerRow: rest.headerRow ?? false, cells: normalizeGrid(rest.cells, rows, cols) }
+    }
     case 'text':
     default:
       return { ...base, type: 'text', text: rest.text ?? '' }
   }
+}
+
+// ── Table-block grid helpers (plain-string cells; documentation tables in a box
+// Properties pane). Kept separate from the canvas tableModel which uses RichDoc
+// cells — here a simple string grid is enough and edits with plain inputs. ──────
+
+// Coerce any input into an exactly rows×cols grid of strings.
+export function normalizeGrid(cells, rows, cols) {
+  return Array.from({ length: rows }, (_, r) =>
+    Array.from({ length: cols }, (_, c) => String(cells?.[r]?.[c] ?? ''))
+  )
+}
+
+export function blockTableSetCell(block, r, c, value) {
+  if (r < 0 || r >= block.rows || c < 0 || c >= block.cols) return block
+  const cells = block.cells.map((row, ri) => ri === r ? row.map((v, ci) => ci === c ? String(value) : v) : row)
+  return { ...block, cells }
+}
+
+export function blockTableAddRow(block) {
+  return { ...block, rows: block.rows + 1, cells: [...block.cells, Array(block.cols).fill('')] }
+}
+
+export function blockTableAddCol(block) {
+  return { ...block, cols: block.cols + 1, cells: block.cells.map(row => [...row, '']) }
+}
+
+export function blockTableRemoveRow(block, r) {
+  if (block.rows <= 1 || r < 0 || r >= block.rows) return block
+  return { ...block, rows: block.rows - 1, cells: block.cells.filter((_, i) => i !== r) }
+}
+
+export function blockTableRemoveCol(block, c) {
+  if (block.cols <= 1 || c < 0 || c >= block.cols) return block
+  return { ...block, cols: block.cols - 1, cells: block.cells.map(row => row.filter((_, i) => i !== c)) }
 }
 
 // Append a block, guaranteeing a unique id within the list.
