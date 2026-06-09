@@ -45,6 +45,29 @@ function labelBox(side, ox, oy, hw, hh, lw, lh) {
 }
 
 const SIDES = ['top', 'bottom', 'right', 'left']
+const OPPOSITE = { top: 'bottom', bottom: 'top', left: 'right', right: 'left' }
+
+// Component half-extents accounting for rotation.
+function halfExtents(component, def) {
+  const w = def?.width || 40
+  const h = def?.height || 20
+  const rot = (((component.rotation || 0) % 360) + 360) % 360
+  const sideways = rot === 90 || rot === 270
+  return { hw: (sideways ? h : w) / 2, hh: (sideways ? w : h) / 2 }
+}
+
+// True when a label box on `side` is crossed by no wire segment.
+function sideIsClear(side, component, hw, hh, lw, lh, wires) {
+  const box = labelBox(side, component.x, component.y, hw, hh, lw, lh)
+  for (const wire of wires) {
+    const pts = wire.points || []
+    for (let i = 0; i < pts.length - 1; i++) {
+      if (segIntersectsRect(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y,
+                            box.x, box.y, box.w, box.h)) return false
+    }
+  }
+  return true
+}
 
 // Pick the best side ('top' | 'bottom' | 'right' | 'left') for a component's
 // designator label so it doesn't sit under a wire. Falls back to 'top' if every
@@ -52,29 +75,31 @@ const SIDES = ['top', 'bottom', 'right', 'left']
 export function chooseLabelSide(component, def, wires) {
   const text = component.designator || ''
   if (!text) return 'top'
-
-  const w = def?.width || 40
-  const h = def?.height || 20
-  const rot = (((component.rotation || 0) % 360) + 360) % 360
-  const sideways = rot === 90 || rot === 270
-  const hw = (sideways ? h : w) / 2
-  const hh = (sideways ? w : h) / 2
-
+  const { hw, hh } = halfExtents(component, def)
   const lw = text.length * CHAR_W + 4
-  const lh = LABEL_H
-
   for (const side of SIDES) {
-    const box = labelBox(side, component.x, component.y, hw, hh, lw, lh)
-    let hit = false
-    for (const wire of wires) {
-      const pts = wire.points || []
-      for (let i = 0; i < pts.length - 1 && !hit; i++) {
-        if (segIntersectsRect(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y,
-                              box.x, box.y, box.w, box.h)) hit = true
-      }
-      if (hit) break
-    }
-    if (!hit) return side
+    if (sideIsClear(side, component, hw, hh, lw, LABEL_H, wires)) return side
   }
   return 'top'
+}
+
+// Pick sides for BOTH the designator and the value so neither sits under a wire,
+// and the two don't share a side. Returns { designator, value }. Designators are
+// prioritised the top→bottom→right→left order; the value then takes the first
+// remaining clear side (preferring the designator's opposite), falling back to
+// the opposite side if all are obstructed.
+export function chooseLabelSides(component, def, wires, value = '') {
+  const desigSide = chooseLabelSide(component, def, wires)
+  const valText = String(value || '')
+  if (!valText) return { designator: desigSide, value: OPPOSITE[desigSide] }
+
+  const { hw, hh } = halfExtents(component, def)
+  const lw = valText.length * CHAR_W + 4
+  // Try the opposite side first (the classic layout), then the others — never the
+  // designator's own side.
+  const order = [OPPOSITE[desigSide], ...SIDES.filter(s => s !== desigSide && s !== OPPOSITE[desigSide])]
+  for (const side of order) {
+    if (sideIsClear(side, component, hw, hh, lw, LABEL_H, wires)) return { designator: desigSide, value: side }
+  }
+  return { designator: desigSide, value: OPPOSITE[desigSide] }
 }

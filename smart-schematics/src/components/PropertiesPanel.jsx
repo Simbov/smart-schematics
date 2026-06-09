@@ -12,6 +12,8 @@ import { addRow, addCol, removeRow, removeCol, insertRow, insertCol, moveRow, mo
 import { copyTableToClipboard } from '../lib/tableClipboard'
 import { RESISTOR_STYLES } from '../lib/resistorStyle'
 import Lightbox from './Lightbox'
+import ImageCropper from './ImageCropper'
+import { isCropped } from '../lib/imageUtils'
 
 function getAnyDef(type) { return getElectricalDef(type) || getHydraulicDef(type) }
 
@@ -356,6 +358,7 @@ export default function PropertiesPanel() {
   const [tblRow, setTblRow] = useState(1)
   const [tblCol, setTblCol] = useState(1)
   const [tableCopied, setTableCopied] = useState(false)
+  const [cropMode, setCropMode] = useState(false)
   // Box content view/edit toggle (clean read-only view by default; flip to Edit
   // for textboxes + delete + drag-reorder). Resets to view on selection change.
   const [boxEdit, setBoxEdit] = useState(false)
@@ -466,6 +469,7 @@ export default function PropertiesPanel() {
       })
     }
     setBoxEdit(false)
+    setCropMode(false)
     setConfigOpen(false)
   }, [selectedIds[0]])
 
@@ -1033,6 +1037,32 @@ export default function PropertiesPanel() {
                   onChange={e => commitImageField({ locked: e.target.checked })} />
               </div>
             </div>
+            <Section title="Crop" action={
+              <MiniButton title={cropMode ? 'Finish cropping' : 'Crop this image'}
+                onClick={() => { if (!cropMode) pushUndo(); setCropMode(m => !m) }}>
+                {cropMode ? 'Done' : '✂ Crop'}
+              </MiniButton>
+            }>
+              {cropMode ? (
+                <>
+                  <ImageCropper
+                    src={selected.src}
+                    crop={selected.crop}
+                    onChange={(cr) => updateImage(activeDrawingId, selected.id, { crop: cr })}
+                    onCommit={() => {}}
+                  />
+                  <button
+                    className="rounded px-2 py-0.5 mt-1"
+                    style={{ fontSize: 11, border: '1px solid var(--panel-border)', color: 'var(--component-color)' }}
+                    onClick={() => updateImage(activeDrawingId, selected.id, { crop: null })}
+                  >Reset crop</button>
+                </>
+              ) : (
+                <div className="text-gray-400" style={{ fontSize: 10 }}>
+                  {isCropped(selected.crop) ? 'Cropped. Click ✂ Crop to adjust.' : 'Click ✂ Crop to trim this image.'}
+                </div>
+              )}
+            </Section>
             <div className="flex gap-2">
               <button
                 className="rounded px-2 py-0.5"

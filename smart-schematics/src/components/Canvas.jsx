@@ -5,7 +5,7 @@ import { TOGGLE_TYPES } from '../lib/simulation/electricalSim'
 import { MANUAL_DCV_TYPES, defaultDCVPosition } from '../lib/simulation/hydraulicSim'
 import { genId } from '../store/schematicStore'
 import GridOverlay from './GridOverlay'
-import PlacedComponent from './PlacedComponent'
+import PlacedComponent, { getDisplayValue } from './PlacedComponent'
 import WireLayer from './WireLayer'
 import WireInProgress from './WireInProgress'
 import HydraulicFlowLayer from './HydraulicFlowLayer'
@@ -27,7 +27,7 @@ import { HYDRAULIC_SYMBOL_MAP } from '../lib/symbols/HydraulicSymbols'
 import { getElectricalDef } from '../lib/components/electrical'
 import { getHydraulicDef } from '../lib/components/hydraulic'
 import { getCustomDef } from '../lib/components/custom'
-import { chooseLabelSide } from '../lib/labelPlacement'
+import { chooseLabelSides } from '../lib/labelPlacement'
 import CustomSymbol from '../lib/symbols/CustomSymbol'
 
 const SYMBOL_MAP_ALL = { ...ELECTRICAL_SYMBOL_MAP, ...HYDRAULIC_SYMBOL_MAP }
@@ -117,6 +117,11 @@ export default function Canvas({ onCursorMove }) {
   const textResizeRef = useRef(null) // { annId, handle, startBox, z, startClient, lastBox, ann }
   const [textResizeState, setTextResizeState] = useState(null) // { annId, patch }
 
+  // Wire-endpoint/vertex drag — lets a placed wire be lengthened/reshaped after
+  // the fact. Live preview via wirePointDrag state; commit via updateWire.
+  const wirePointRef = useRef(null) // { wireId, index, z, startClient, points, pinA, pinB, lastPt }
+  const [wirePointDrag, setWirePointDrag] = useState(null) // { wireId, index, point }
+
   // Inline editor state (title-block cells only)
   const [inlineEdit, setInlineEdit] = useState(null)
   // { titleBlockField, worldX, worldY, value, multiline, isNew? }
@@ -156,6 +161,7 @@ export default function Canvas({ onCursorMove }) {
   const setActiveTool = useSchematicStore(s => s.setActiveTool)
   const addComponent = useSchematicStore(s => s.addComponent)
   const addWire = useSchematicStore(s => s.addWire)
+  const updateWire = useSchematicStore(s => s.updateWire)
   const addJunction = useSchematicStore(s => s.addJunction)
   const addJunctionNode = useSchematicStore(s => s.addJunctionNode)
   const addAnnotation = useSchematicStore(s => s.addAnnotation)
@@ -1054,6 +1060,58 @@ export default function Canvas({ onCursorMove }) {
     window.addEventListener('mouseup', onUp)
   }, [activeDrawingId, pushUndo, updateBox, updateComponent])
 
+  // Drag a single vertex of a selected wire to make it longer/shorter or reshape
+  // it. Dragging an endpoint that was bound to a pin unbinds that end (the user is
+  // repositioning it by hand). Grid-snaps on commit.
+  const startWirePointDrag = useCallback((wireId, index, e) => {
+    e.stopPropagation()
+    e.preventDefault()
+    const dr = useSchematicStore.getState().drawings.find(d => d.id === activeDrawingId)
+    const w = (dr?.wires || []).find(ww => ww.id === wireId)
+    if (!w) return
+    const z = dr.viewState?.zoom || 1
+    const last = w.points.length - 1
+    wirePointRef.current = {
+      wireId, index, z,
+      startClient: { x: e.clientX, y: e.clientY },
+      points: w.points.map(p => ({ ...p })),
+      pinA: w.pinA, pinB: w.pinB,
+      lastPt: { ...w.points[index] },
+    }
+
+    const onMove = (ev) => {
+      const r = wirePointRef.current
+      if (!r) return
+      const dx = (ev.clientX - r.startClient.x) / r.z
+      const dy = (ev.clientY - r.startClient.y) / r.z
+      const pt = { x: r.points[index].x + dx, y: r.points[index].y + dy }
+      r.lastPt = pt
+      setWirePointDrag({ wireId, index, point: pt })
+    }
+    const onUp = () => {
+      const r = wirePointRef.current
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      wirePointRef.current = null
+      setWirePointDrag(null)
+      if (!r) return
+      const { gridSize, snapToGrid } = useSchematicStore.getState().settings
+      const grid = snapToGrid ? gridSize : 0
+      const snapped = grid > 0
+        ? { x: Math.round(r.lastPt.x / grid) * grid, y: Math.round(r.lastPt.y / grid) * grid }
+        : r.lastPt
+      const points = r.points.map((p, i) => (i === index ? snapped : p))
+      const patch = { points }
+      // Unbind the moved endpoint from its pin (it no longer follows the pin).
+      if (index === 0 && r.pinA) patch.pinA = null
+      if (index === last && r.pinB) patch.pinB = null
+      pushUndo()
+      updateWire(activeDrawingId, wireId, patch)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [activeDrawingId, pushUndo, updateWire])
+
   const handleComponentClick = useCallback((id, e) => {
     if (isDraggingItems.current) return
     if (activeTool !== 'select') return
@@ -1304,6 +1362,10 @@ export default function Canvas({ onCursorMove }) {
     if (isDraggingNow && dragRef.current?.wireIds.includes(w.id)) {
       return { ...w, points: w.points.map(p => ({ x: p.x + dragDelta.dx, y: p.y + dragDelta.dy })) }
     }
+    // Live wire-vertex drag preview.
+    if (wirePointDrag && wirePointDrag.wireId === w.id) {
+      return { ...w, points: w.points.map((p, i) => (i === wirePointDrag.index ? wirePointDrag.point : p)) }
+    }
     return w
   })
   const effectiveAnnotations = (drawing?.annotations || []).map(a => {
@@ -1350,7 +1412,8 @@ export default function Canvas({ onCursorMove }) {
   const labelSides = useMemo(() => {
     const map = {}
     ;(comps || []).forEach(c => {
-      map[c.id] = chooseLabelSide(c, getAnyDef(c.type), wiresForLabels || [])
+      // Both the designator and the value dodge wires (and each other).
+      map[c.id] = chooseLabelSides(c, getAnyDef(c.type), wiresForLabels || [], getDisplayValue(c))
     })
     return map
   }, [comps, wiresForLabels])
@@ -1431,6 +1494,11 @@ export default function Canvas({ onCursorMove }) {
     return { id: a.id, ...box }
   })()
 
+  // The single wire (if any) that should show vertex drag handles.
+  const singleSelectedWire = (activeTool === 'select' && selectedIds.length === 1)
+    ? effectiveWires.find(w => w.id === selectedIds[0] && Array.isArray(w.points))
+    : null
+
   // Inline editor screen position
   const ieScreenX = inlineEdit ? inlineEdit.worldX * zoom + panX : 0
   const ieScreenY = inlineEdit ? inlineEdit.worldY * zoom + panY : 0
@@ -1508,7 +1576,8 @@ export default function Canvas({ onCursorMove }) {
               component={comp}
               selected={selectedIds.includes(comp.id)}
               showPins={activeTool === 'wire'}
-              labelSide={labelSides[comp.id]}
+              labelSide={labelSides[comp.id]?.designator}
+              valueSide={labelSides[comp.id]?.value}
               simState={componentStates[comp.id]}
               interactiveState={interactiveStates[comp.id]}
               hydSimState={hydComponentStates[comp.id]
@@ -1735,6 +1804,26 @@ export default function Canvas({ onCursorMove }) {
                 />
               )
             })
+          })()}
+
+          {/* Wire vertex handles — drag any point to lengthen/reshape the wire */}
+          {singleSelectedWire && (() => {
+            const HS = 9 / zoom
+            return (singleSelectedWire.points || []).map((p, i) => (
+              <rect
+                key={`wph-${i}`}
+                x={p.x - HS / 2}
+                y={p.y - HS / 2}
+                width={HS}
+                height={HS}
+                fill="var(--panel-bg)"
+                stroke="var(--selection-color)"
+                strokeWidth={1 / zoom}
+                rx={HS / 4}
+                style={{ cursor: 'move' }}
+                onMouseDown={(e) => startWirePointDrag(singleSelectedWire.id, i, e)}
+              />
+            ))
           })()}
         </g>
       </svg>

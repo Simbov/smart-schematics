@@ -98,6 +98,44 @@ export function topImageAt(images, wx, wy, { includeLocked = false } = {}) {
 // The eight resize-handle ids. Corners resize two sides; edges resize one.
 export const RESIZE_HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 
+// Full (uncropped) crop rect, in normalized [0,1] source coordinates.
+export const FULL_CROP = { x: 0, y: 0, w: 1, h: 1 }
+
+// True when a crop rect actually trims the image (i.e. is not the full frame).
+export function isCropped(crop) {
+  if (!crop) return false
+  return !(crop.x <= 0.0001 && crop.y <= 0.0001 && crop.w >= 0.9999 && crop.h >= 0.9999)
+}
+
+// Clamp/normalize a crop rect to valid [0,1] bounds with a minimum visible area.
+export function normalizeCrop(crop) {
+  if (!crop) return { ...FULL_CROP }
+  const MIN = 0.02
+  let x = Math.min(Math.max(0, crop.x ?? 0), 1 - MIN)
+  let y = Math.min(Math.max(0, crop.y ?? 0), 1 - MIN)
+  let w = Math.min(Math.max(MIN, crop.w ?? 1), 1 - x)
+  let h = Math.min(Math.max(MIN, crop.h ?? 1), 1 - y)
+  return { x, y, w, h }
+}
+
+// Geometry for rendering a cropped image in SVG: the image element is scaled up
+// so the crop region fills the displayed box (img.x/y/width/height), and a clip
+// rect hides everything outside that box. Returns the <image> placement + the
+// clip rect (which equals the display box). For an un-cropped image the image
+// placement equals the display box and no clip is needed.
+export function cropToImageRect(img) {
+  const crop = normalizeCrop(img.crop)
+  const fullW = img.width / crop.w
+  const fullH = img.height / crop.h
+  return {
+    imageX: img.x - crop.x * fullW,
+    imageY: img.y - crop.y * fullH,
+    imageW: fullW,
+    imageH: fullH,
+    clip: { x: img.x, y: img.y, w: img.width, h: img.height },
+  }
+}
+
 // Which edges a handle drags. left/top move the origin; right/bottom move the
 // far edge.
 function handleEdges(handle) {

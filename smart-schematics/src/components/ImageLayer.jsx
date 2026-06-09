@@ -1,4 +1,5 @@
 import React, { memo } from 'react'
+import { isCropped, cropToImageRect } from '../lib/imageUtils'
 
 // Renders inserted images inside the world <g>, BEHIND components and wires
 // (images are backdrops). Each image rotates about its own center and applies
@@ -21,19 +22,28 @@ function ImageLayer({ images, selectedIds, zoom }) {
         const cx = img.x + img.width / 2
         const cy = img.y + img.height / 2
         const rot = img.rotation || 0
+        const cropped = isCropped(img.crop)
+        const cr = cropped ? cropToImageRect(img) : null
+        const clipId = cropped ? `imgclip-${img.id}` : null
         return (
           <g
             key={img.id}
             transform={rot ? `rotate(${rot} ${cx} ${cy})` : undefined}
             opacity={img.opacity ?? 1}
           >
+            {cropped && (
+              <clipPath id={clipId}>
+                <rect x={cr.clip.x} y={cr.clip.y} width={cr.clip.w} height={cr.clip.h} />
+              </clipPath>
+            )}
             <image
               href={img.src}
-              x={img.x}
-              y={img.y}
-              width={img.width}
-              height={img.height}
+              x={cropped ? cr.imageX : img.x}
+              y={cropped ? cr.imageY : img.y}
+              width={cropped ? cr.imageW : img.width}
+              height={cropped ? cr.imageH : img.height}
               preserveAspectRatio="none"
+              clipPath={cropped ? `url(#${clipId})` : undefined}
             />
             {selected && (
               <rect
