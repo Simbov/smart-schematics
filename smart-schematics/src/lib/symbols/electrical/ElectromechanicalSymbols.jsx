@@ -117,6 +117,36 @@ export function SolenoidSymbol() {
   )
 }
 
+// Self-contained solenoid-operated relay: coil (A1/A2, left) mechanically linked
+// (dashed line) to an SPDT contact (C/NO/NC, right). When energised (state.on,
+// driven by the dcSolver coil current) the whole symbol turns amber and the
+// blade throws from NC to NO.
+export function SolenoidRelaySymbol({ state = {} }) {
+  const energised = !!state.on
+  const bladeY = energised ? -8 : 8
+  return (
+    <g style={energised ? { color: 'var(--sim-active-color, #f59e0b)' } : undefined}>
+      {/* Coil (left) */}
+      <line x1="-32" y1="-12" x2="-24" y2="-12" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
+      <line x1="-32" y1="12" x2="-24" y2="12" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
+      <rect x="-24" y="-12" width="14" height="24" stroke="currentColor" strokeWidth={SW} fill="none" />
+      <text x="-17" y="0" fontSize="9" fill="currentColor" textAnchor="middle" dominantBaseline="middle" fontWeight="bold">K</text>
+
+      {/* Mechanical link (dashed) coil → contact pivot */}
+      <line x1="-10" y1="0" x2="0" y2="0" stroke="currentColor" strokeWidth="1" strokeDasharray="2,2" />
+
+      {/* SPDT contact (right) */}
+      <circle cx="0" cy="0" r="2" fill="currentColor" />
+      <line x1="0" y1="0" x2="0" y2="24" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />{/* C lead → bottom */}
+      <circle cx="18" cy="-8" r="2" fill="currentColor" />
+      <line x1="18" y1="-8" x2="32" y2="-8" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />{/* NO */}
+      <circle cx="18" cy="8" r="2" fill="currentColor" />
+      <line x1="18" y1="8" x2="32" y2="8" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />{/* NC */}
+      <line x1="0" y1="0" x2="16" y2={bladeY} stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />{/* blade */}
+    </g>
+  )
+}
+
 export function MotorSymbol() {
   return (
     <g>

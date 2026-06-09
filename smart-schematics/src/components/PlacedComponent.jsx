@@ -106,6 +106,7 @@ function getSymbolState(type, simState, interactiveState, hydSimState, simParams
     case 'pushbutton_no':
     case 'pushbutton_nc':
       return { pressed: ist === 'pressed' }
+    case 'plc_output':
     case 'plc_digital_output':
     case 'plc_pwm_output':
       return { on: ist === 'closed' }
@@ -223,6 +224,8 @@ const PlacedComponent = memo(function PlacedComponent({
               : <SymbolComponent
                   state={getSymbolState(component.type, simState, interactiveState, hydSimState, component.simParams)}
                   params={component.simParams || {}}
+                  flipH={component.flipH}
+                  flipV={component.flipV}
                   resistorStyle={component.type === 'resistor'
                     ? resolveResistorStyle(component, { resistorStyle: resistorStyleDefault })
                     : undefined}

@@ -272,6 +272,16 @@ function _runDCSimulation(components, wires, interactiveStates) {
         case 'motor': case 'generator': stampResistor(id, 'A', 'B', 5); break
         case 'solenoid': stampResistor(id, 'A', 'B', 50); break
         case 'relay_coil': case 'contactor_coil': stampResistor(id, 'A1', 'A2', 200); break
+        // Self-contained solenoid relay: coil (A1/A2) + SPDT contact (C/NO/NC) in
+        // one part, mechanically linked. The coil always stamps; the contact
+        // follows the relay's own energization (keyed by its designator).
+        case 'solenoid_relay': {
+          stampResistor(id, 'A1', 'A2', 200)
+          const c = pn('C')
+          if (relayEnergized[comp.designator]) { const n = pn('NO'); if (c && n) stamp(c, n, 1 / 0.001) }
+          else { const n = pn('NC'); if (c && n) stamp(c, n, 1 / 0.001) }
+          break
+        }
         case 'ammeter': stampResistor(id, 'A', 'B', 0.001); break
         case 'voltmeter': case 'wattmeter': stampResistor(id, 'A', 'B', 1e9); break
         case 'capacitor': stampResistor(id, 'A', 'B', 1e9); break
@@ -408,6 +418,13 @@ function _runDCSimulation(components, wires, interactiveStates) {
           case 'motor': case 'generator': stampResistor(cid, 'A', 'B', 5); break
           case 'solenoid': stampResistor(cid, 'A', 'B', 50); break
           case 'relay_coil': case 'contactor_coil': stampResistor(cid, 'A1', 'A2', 200); break
+          case 'solenoid_relay': {
+            stampResistor(cid, 'A1', 'A2', 200)
+            const c = pn('C')
+            if (relayEnergized[comp.designator]) { const n = pn('NO'); if (c && n) stamp(c, n, 1000) }
+            else { const n = pn('NC'); if (c && n) stamp(c, n, 1000) }
+            break
+          }
           case 'ammeter': stampResistor(cid, 'A', 'B', 0.001); break
           case 'voltmeter': case 'wattmeter': stampResistor(cid, 'A', 'B', 1e9); break
           case 'capacitor': stampResistor(cid, 'A', 'B', 1e9); break
@@ -496,7 +513,7 @@ function _runDCSimulation(components, wires, interactiveStates) {
   for (let pass = 0; pass < 5; pass++) {
     const newRelayEnergized = {}
     for (const comp of components) {
-      if (comp.type !== 'relay_coil' && comp.type !== 'contactor_coil') continue
+      if (comp.type !== 'relay_coil' && comp.type !== 'contactor_coil' && comp.type !== 'solenoid_relay') continue
       const nA1 = pinNet[`${comp.id}.A1`]
       const nA2 = pinNet[`${comp.id}.A2`]
       if (!nA1 || !nA2) continue
@@ -569,6 +586,9 @@ function _runDCSimulation(components, wires, interactiveStates) {
       case 'motor': case 'generator': compV = V('A') - V('B'); compI = Math.abs(compV) / 5; compP = compI * compI * 5; on = compI > 1e-3; break
       case 'solenoid': compV = V('A') - V('B'); compI = Math.abs(compV) / 50; compP = compI * compI * 50; on = compI > 1e-3; break
       case 'relay_coil': case 'contactor_coil':
+        compV = V('A1') - V('A2'); compI = Math.abs(compV) / 200; compP = compI * compI * 200
+        on = relayEnergized[comp.designator] ?? false; break
+      case 'solenoid_relay':
         compV = V('A1') - V('A2'); compI = Math.abs(compV) / 200; compP = compI * compI * 200
         on = relayEnergized[comp.designator] ?? false; break
       case 'ammeter': compV = V('A') - V('B'); compI = Math.abs(compV) / 0.001; compP = compI * compI * 0.001; break

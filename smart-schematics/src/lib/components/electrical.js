@@ -443,6 +443,7 @@ export const ELECTRICAL_COMPONENTS = [
     simParams: {
       currentRating: { label: 'Current Rating (A)', type: 'number', default: 1, primary: true, unit: 'A' },
       voltageRating: { label: 'Voltage Rating (V)', type: 'number', default: 250 },
+      style: { label: 'Symbol Style', type: 'select', options: ['IEC', 'cartridge', 'ANSI'], default: 'IEC' },
     },
   },
 
@@ -961,6 +962,29 @@ export const ELECTRICAL_COMPONENTS = [
     simParams: {},
   },
   {
+    type: 'solenoid_relay',
+    label: 'Solenoid Relay',
+    tags: ['relay', 'solenoid', 'solenoid operated', 'electromechanical', 'SPDT', 'changeover', 'K'],
+    category: 'Electromechanical',
+    schematicType: 'electrical',
+    defaultDesignatorPrefix: 'K',
+    defaultValue: '24VDC',
+    width: 68,
+    height: 50,
+    viewBox: '-34 -22 68 50',
+    pins: [
+      { id: 'A1', relX: -32, relY: -12, direction: 'W' },
+      { id: 'A2', relX: -32, relY: 12, direction: 'W' },
+      { id: 'C', relX: 0, relY: 24, direction: 'S' },
+      { id: 'NO', relX: 32, relY: -8, direction: 'E' },
+      { id: 'NC', relX: 32, relY: 8, direction: 'E' },
+    ],
+    simParams: {
+      coilVoltage: { label: 'Coil Voltage (V)', type: 'number', default: 24 },
+      pickupVoltage: { label: 'Pickup Voltage (V)', type: 'number', default: 18 },
+    },
+  },
+  {
     type: 'solenoid',
     label: 'Solenoid',
     tags: ['solenoid', 'YV', 'coil', 'actuator'],
@@ -1189,53 +1213,19 @@ export const ELECTRICAL_COMPONENTS = [
   },
 
   // ── PLC I/O ─────────────────────────────────────────────────────────────────
+  // Consolidated, mode-switchable I/O. One Input toggles Digital ↔ Analogue;
+  // one Output toggles Digital ↔ PWM. The pin address + signal name show on the
+  // schematic; everything else (mode, electrical params, notes) is in Properties.
+  // Legacy plc_digital_input/plc_analog_input/plc_digital_output/plc_pwm_output
+  // are migrated to these on load (migrateDrawing in schematicStore.js).
   {
-    type: 'plc_digital_output',
-    label: 'PLC Digital Output',
-    tags: ['PLC', 'digital output', 'DO', 'discrete', 'Q', 'output'],
-    category: 'PLC I/O',
-    schematicType: 'electrical',
-    defaultDesignatorPrefix: 'DO',
-    defaultValue: 'Q0.0',
-    width: 44,
-    height: 36,
-    viewBox: '-22 -18 44 36',
-    pins: [
-      { id: 'OUT', relX: 20, relY: 0, direction: 'E' },
-    ],
-    simParams: {
-      voltage: { label: 'Output Voltage (V)', type: 'number', default: 24 },
-      maxCurrent: { label: 'Max Current (A)', type: 'number', default: 0.5 },
-    },
-  },
-  {
-    type: 'plc_pwm_output',
-    label: 'PLC PWM Output',
-    tags: ['PLC', 'PWM', 'pulse width modulation', 'output', 'Q'],
-    category: 'PLC I/O',
-    schematicType: 'electrical',
-    defaultDesignatorPrefix: 'PWM',
-    defaultValue: 'Q0.0',
-    width: 44,
-    height: 36,
-    viewBox: '-22 -18 44 36',
-    pins: [
-      { id: 'OUT', relX: 20, relY: 0, direction: 'E' },
-    ],
-    simParams: {
-      voltage: { label: 'Output Voltage (V)', type: 'number', default: 24 },
-      frequency: { label: 'Frequency (Hz)', type: 'number', default: 1000 },
-      dutyCycle: { label: 'Duty Cycle (%)', type: 'number', default: 50 },
-    },
-  },
-  {
-    type: 'plc_digital_input',
-    label: 'PLC Digital Input',
-    tags: ['PLC', 'digital input', 'DI', 'discrete', 'I', 'input'],
+    type: 'plc_input',
+    label: 'PLC Input',
+    tags: ['PLC', 'input', 'DI', 'AI', 'digital input', 'analogue input', 'analog input', 'discrete', 'I', 'IW'],
     category: 'PLC I/O',
     schematicType: 'electrical',
     defaultDesignatorPrefix: 'DI',
-    defaultValue: 'I0.0',
+    defaultValue: '',
     width: 44,
     height: 36,
     viewBox: '-22 -18 44 36',
@@ -1243,31 +1233,43 @@ export const ELECTRICAL_COMPONENTS = [
       { id: 'IN', relX: 20, relY: 0, direction: 'E' },
     ],
     simParams: {
+      address: { label: 'Pin Address', type: 'text', default: 'I0.0' },
+      name: { label: 'Signal Name', type: 'text', default: '' },
+      mode: { label: 'Mode', type: 'select', options: ['Digital', 'Analogue'], default: 'Digital' },
       threshold: { label: 'Switching Threshold (V)', type: 'number', default: 11 },
-    },
-  },
-  {
-    type: 'plc_analog_input',
-    label: 'PLC Analogue Input',
-    tags: ['PLC', 'analogue input', 'analog input', 'AI', 'IW', 'input'],
-    category: 'PLC I/O',
-    schematicType: 'electrical',
-    defaultDesignatorPrefix: 'AI',
-    defaultValue: 'IW64',
-    width: 44,
-    height: 36,
-    viewBox: '-22 -18 44 36',
-    pins: [
-      { id: 'IN', relX: 20, relY: 0, direction: 'E' },
-    ],
-    simParams: {
       range: {
-        label: 'Signal Range',
+        label: 'Analogue Range',
         type: 'select',
         options: ['0–10 V', '0–20 mA', '4–20 mA', '±10 V'],
         default: '0–10 V',
       },
       resolution: { label: 'Resolution (bits)', type: 'number', default: 12 },
+      notes: { label: 'Notes', type: 'textarea', default: '' },
+    },
+  },
+  {
+    type: 'plc_output',
+    label: 'PLC Output',
+    tags: ['PLC', 'output', 'DO', 'PWM', 'digital output', 'pulse width modulation', 'discrete', 'Q'],
+    category: 'PLC I/O',
+    schematicType: 'electrical',
+    defaultDesignatorPrefix: 'DO',
+    defaultValue: '',
+    width: 44,
+    height: 36,
+    viewBox: '-22 -18 44 36',
+    pins: [
+      { id: 'OUT', relX: 20, relY: 0, direction: 'E' },
+    ],
+    simParams: {
+      address: { label: 'Pin Address', type: 'text', default: 'Q0.0' },
+      name: { label: 'Signal Name', type: 'text', default: '' },
+      mode: { label: 'Mode', type: 'select', options: ['Digital', 'PWM'], default: 'Digital' },
+      voltage: { label: 'Output Voltage (V)', type: 'number', default: 24 },
+      maxCurrent: { label: 'Max Current (A)', type: 'number', default: 0.5 },
+      frequency: { label: 'PWM Frequency (Hz)', type: 'number', default: 1000 },
+      dutyCycle: { label: 'PWM Duty Cycle (%)', type: 'number', default: 50 },
+      notes: { label: 'Notes', type: 'textarea', default: '' },
     },
   },
 

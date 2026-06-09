@@ -1251,6 +1251,32 @@ export default function PropertiesPanel() {
                       />
                     )
                   }
+                  if (paramDef.type === 'textarea') {
+                    return (
+                      <div key={key} className="mb-1">
+                        <div className="text-gray-400 mb-0.5" style={{ fontSize: 10 }}>{paramDef.label}</div>
+                        <textarea
+                          className="w-full px-1 py-0.5 rounded border bg-transparent"
+                          style={{ borderColor: 'var(--panel-border)', fontSize: 11, minHeight: 44, resize: 'vertical' }}
+                          value={localSim[key] ?? paramDef.default ?? ''}
+                          onChange={e => setLocalSim(s => ({ ...s, [key]: e.target.value }))}
+                          onBlur={() => commitSimParam(key, localSim[key] ?? '')}
+                        />
+                      </div>
+                    )
+                  }
+                  if (paramDef.type === 'text') {
+                    return (
+                      <Field
+                        key={key}
+                        label={paramDef.label}
+                        type="text"
+                        value={localSim[key] ?? paramDef.default ?? ''}
+                        onChange={v => setLocalSim(s => ({ ...s, [key]: v }))}
+                        onBlur={() => commitSimParam(key, localSim[key] ?? '')}
+                      />
+                    )
+                  }
                   return (
                     <Field
                       key={key}

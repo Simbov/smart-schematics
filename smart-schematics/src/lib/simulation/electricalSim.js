@@ -120,7 +120,8 @@ export const INTERACTIVE_TYPES = new Set([
   'pushbutton_no', 'pushbutton_nc',
   'limit_switch', 'proximity_switch', 'pressure_switch',
   'temperature_switch', 'circuit_breaker',
-  'plc_digital_output', 'plc_pwm_output',
+  // Consolidated output + legacy output types (kept for un-migrated data).
+  'plc_output', 'plc_digital_output', 'plc_pwm_output',
 ])
 
 export const MOMENTARY_TYPES = new Set(['pushbutton_no', 'pushbutton_nc'])
@@ -129,8 +130,8 @@ export const TOGGLE_TYPES = new Set([
   'switch_no', 'switch_nc', 'switch_spdt',
   'limit_switch', 'proximity_switch', 'pressure_switch',
   'temperature_switch', 'circuit_breaker',
-  'plc_digital_output', 'plc_pwm_output',
+  'plc_output', 'plc_digital_output', 'plc_pwm_output',
 ])
 
 // Outputs whose ON state is represented by the 'closed' interactive state.
-export const PLC_OUTPUT_TYPES = new Set(['plc_digital_output', 'plc_pwm_output'])
+export const PLC_OUTPUT_TYPES = new Set(['plc_output', 'plc_digital_output', 'plc_pwm_output'])

@@ -18,7 +18,7 @@ function describe(type, interactiveState, dcvPosition, initialPos) {
   if (MOMENTARY_TYPES.has(type)) {
     return { label: 'Hold', active: ist === 'pressed', momentary: true }
   }
-  if (type === 'plc_digital_output' || type === 'plc_pwm_output') {
+  if (type === 'plc_output' || type === 'plc_digital_output' || type === 'plc_pwm_output') {
     const on = ist === 'closed'
     return { label: on ? 'On' : 'Off', active: on }
   }

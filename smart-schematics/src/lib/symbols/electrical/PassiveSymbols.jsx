@@ -150,12 +150,29 @@ export function PhotodiodeSymbol() {
   )
 }
 
-export function FuseSymbol() {
+// Fuse with selectable style (params.style):
+//   'IEC'       — rectangle with a line through it (IEC 60617, default)
+//   'cartridge' — rectangle with a center line + end caps
+//   'ANSI'      — the S/squiggle element
+export function FuseSymbol({ params = {} }) {
+  const style = params.style || 'IEC'
   return (
     <g>
       <line x1="-20" y1="0" x2="-12" y2="0" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
       <rect x="-12" y="-7" width="24" height="14" stroke="currentColor" strokeWidth={SW} fill="none" />
-      <path d="M -7,5 C -7,-2 0,-2 0,0 C 0,2 7,2 7,-5" stroke="currentColor" strokeWidth={SW} fill="none" strokeLinecap="round" />
+      {style === 'ANSI' && (
+        <path d="M -7,5 C -7,-2 0,-2 0,0 C 0,2 7,2 7,-5" stroke="currentColor" strokeWidth={SW} fill="none" strokeLinecap="round" />
+      )}
+      {style === 'IEC' && (
+        <line x1="-12" y1="0" x2="12" y2="0" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
+      )}
+      {style === 'cartridge' && (
+        <>
+          <line x1="-12" y1="0" x2="12" y2="0" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
+          <line x1="-9" y1="-7" x2="-9" y2="7" stroke="currentColor" strokeWidth={SW} />
+          <line x1="9" y1="-7" x2="9" y2="7" stroke="currentColor" strokeWidth={SW} />
+        </>
+      )}
       <line x1="12" y1="0" x2="20" y2="0" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
     </g>
   )

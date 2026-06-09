@@ -68,6 +68,7 @@ export {
   ContactorNOSymbol,
   ContactorNCSymbol,
   SolenoidSymbol,
+  SolenoidRelaySymbol,
   MotorSymbol,
   GeneratorSymbol,
 } from './ElectromechanicalSymbols'
@@ -82,6 +83,8 @@ export {
 } from './OutputSymbols'
 
 export {
+  PLCInputSymbol,
+  PLCOutputSymbol,
   PLCDigitalOutputSymbol,
   PLCPWMOutputSymbol,
   PLCDigitalInputSymbol,
@@ -168,6 +171,7 @@ import {
   ContactorNOSymbol,
   ContactorNCSymbol,
   SolenoidSymbol,
+  SolenoidRelaySymbol,
   MotorSymbol,
   GeneratorSymbol,
 } from './ElectromechanicalSymbols'
@@ -182,6 +186,8 @@ import {
 } from './OutputSymbols'
 
 import {
+  PLCInputSymbol,
+  PLCOutputSymbol,
   PLCDigitalOutputSymbol,
   PLCPWMOutputSymbol,
   PLCDigitalInputSymbol,
@@ -250,6 +256,7 @@ export const ELECTRICAL_SYMBOL_MAP = {
   relay_contact_nc: RelayContactNCSymbol,
   relay_contact_spdt: RelaySPDTSymbol,
   solenoid: SolenoidSymbol,
+  solenoid_relay: SolenoidRelaySymbol,
   motor: MotorSymbol,
   generator: GeneratorSymbol,
   contactor_coil: ContactorCoilSymbol,
@@ -261,6 +268,9 @@ export const ELECTRICAL_SYMBOL_MAP = {
   voltmeter: VoltmeterSymbol,
   ammeter: AmmeterSymbol,
   wattmeter: WattmeterSymbol,
+  plc_input: PLCInputSymbol,
+  plc_output: PLCOutputSymbol,
+  // Legacy types — still mapped so an un-migrated file renders before migration.
   plc_digital_output: PLCDigitalOutputSymbol,
   plc_pwm_output: PLCPWMOutputSymbol,
   plc_digital_input: PLCDigitalInputSymbol,

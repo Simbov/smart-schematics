@@ -6,6 +6,7 @@ import { createBox } from '../lib/boxComponent'
 import { normalizeBoxImages } from '../lib/boxImages'
 import { migrateBlocks } from '../lib/boxBlocks'
 import { createJunction } from '../lib/junctions'
+import { migratePlcComponent } from '../lib/plcMigration'
 import {
   isRunningInTauri,
   openFileDialog, saveFileDialog,
@@ -69,6 +70,11 @@ function migrateDrawing(d) {
     if ((a.type === 'text' || a.type === 'callout') && !a.doc) {
       a.doc = plainToDoc(a.text || '')
     }
+  }
+  // Smart Schematics update: collapse the four legacy PLC I/O types into the two
+  // mode-switchable plc_input/plc_output (pin address moved into simParams).
+  for (const c of (d.components || [])) {
+    migratePlcComponent(c)
   }
   // v0.2.0 (v3 → v4): every pin gains an optional `label` (default '').
   for (const c of (d.components || [])) {
