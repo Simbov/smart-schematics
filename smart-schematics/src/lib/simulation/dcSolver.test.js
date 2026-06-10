@@ -303,3 +303,73 @@ describe('dcSolver — real createBox() box is inert (Stage 5)', () => {
     if (bxState) expect(Math.abs(bxState.I || 0)).toBeLessThan(1e-9)
   })
 })
+
+describe('dcSolver — PLC I/O terminals (PLC release)', () => {
+  const plc = (type, pinId, xy, id) => ({
+    id, type, designator: id, value: '',
+    simParams: { address: pinId === 'IN' ? 'I0.0' : 'Q0.0', mode: 'Digital' },
+    pins: [{ id: pinId, absX: xy[0], absY: xy[1] }],
+  })
+
+  it('is inert (no stamp, no current) and does not disturb the circuit', () => {
+    const bt = battery([0, 0], [0, 100])
+    const la = lamp([0, 0], [0, 100])
+    const base = runDCSimulation([bt, la], [], {})
+    const baseI = base.componentStates[la.id].I
+
+    const di = plc('plc_input', 'IN', [0, 0], 'di1')   // tied to the POS net
+    const res = runDCSimulation([bt, la, di], [], {})
+    expect(res.componentStates[la.id].I).toBeCloseTo(baseI, 6)
+    expect(res.componentStates[di.id].I).toBe(0)
+  })
+
+  it('reports the field-pin voltage', () => {
+    const bt = battery([0, 0], [0, 100])
+    const la = lamp([0, 0], [0, 100])
+    const di = plc('plc_input', 'IN', [0, 0], 'di1')   // on the 9V POS net
+    const res = runDCSimulation([bt, la, di], [], {})
+    expect(res.componentStates[di.id].V).toBeCloseTo(9, 3)
+  })
+
+  it('digital input toggles High/Low via interactiveStates (simulatable in both states)', () => {
+    const di = plc('plc_input', 'IN', [0, 0], 'di1')
+    const low = runDCSimulation([di], [], {})
+    expect(low.componentStates[di.id].on).toBe(false)
+    const high = runDCSimulation([di], [], { [di.id]: { state: 'closed' } })
+    expect(high.componentStates[di.id].on).toBe(true)
+  })
+
+  it('output toggles On/Off via interactiveStates', () => {
+    const dout = plc('plc_output', 'OUT', [0, 0], 'do1')
+    const off = runDCSimulation([dout], [], {})
+    expect(off.componentStates[dout.id].on).toBe(false)
+    const on = runDCSimulation([dout], [], { [dout.id]: { state: 'closed' } })
+    expect(on.componentStates[dout.id].on).toBe(true)
+  })
+})
+
+describe('dcSolver — horn and valve electronics (batch 2)', () => {
+  it('horn draws current PWR→GND and turns on', () => {
+    const bt = battery([0, 0], [0, 100])
+    const horn = {
+      id: 'ha1', type: 'horn', designator: 'HA1', value: '24V', simParams: {},
+      pins: [pinAt('PWR', 0, 0), pinAt('GND', 0, 100)],
+    }
+    const res = runDCSimulation([bt, horn], [], {})
+    expect(res.componentStates[horn.id].on).toBe(true)
+    expect(res.componentStates[horn.id].I).toBeCloseTo(9 / 8, 3)
+  })
+
+  it('valve electronics loads Us–GND; Udc and Error stay inert', () => {
+    const bt = battery([0, 0], [0, 100])
+    const valve = {
+      id: 'yv1', type: 'valve_electronics', designator: 'YV1', value: '', simParams: {},
+      pins: [pinAt('Us', 0, 0), pinAt('Error', 50, 50), pinAt('GND', 0, 100), pinAt('Udc', 60, 60)],
+    }
+    const res = runDCSimulation([bt, valve], [], {})
+    expect(res.componentStates[valve.id].on).toBe(true)
+    expect(res.componentStates[valve.id].I).toBeCloseTo(9 / 100, 4)
+  })
+})
+
+function pinAt(id, x, y) { return { id, absX: x, absY: y } }

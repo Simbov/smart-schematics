@@ -120,8 +120,10 @@ export const INTERACTIVE_TYPES = new Set([
   'pushbutton_no', 'pushbutton_nc',
   'limit_switch', 'proximity_switch', 'pressure_switch',
   'temperature_switch', 'circuit_breaker',
-  // Consolidated output + legacy output types (kept for un-migrated data).
+  // Consolidated I/O + legacy types (kept for un-migrated data). Digital inputs
+  // are user-toggleable High/Low during simulation, just like outputs On/Off.
   'plc_output', 'plc_digital_output', 'plc_pwm_output',
+  'plc_input', 'plc_digital_input',
 ])
 
 export const MOMENTARY_TYPES = new Set(['pushbutton_no', 'pushbutton_nc'])
@@ -131,7 +133,13 @@ export const TOGGLE_TYPES = new Set([
   'limit_switch', 'proximity_switch', 'pressure_switch',
   'temperature_switch', 'circuit_breaker',
   'plc_output', 'plc_digital_output', 'plc_pwm_output',
+  'plc_input', 'plc_digital_input',
 ])
 
 // Outputs whose ON state is represented by the 'closed' interactive state.
 export const PLC_OUTPUT_TYPES = new Set(['plc_output', 'plc_digital_output', 'plc_pwm_output'])
+
+// Inputs whose HIGH state is represented by the 'closed' interactive state.
+// (The consolidated plc_input only toggles in Digital mode — an analogue input
+// has no binary state; isControllable checks the component's mode.)
+export const PLC_INPUT_TYPES = new Set(['plc_input', 'plc_digital_input'])

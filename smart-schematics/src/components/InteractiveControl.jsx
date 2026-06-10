@@ -2,13 +2,16 @@ import React from 'react'
 import { getElectricalDef } from '../lib/components/electrical'
 import { getHydraulicDef } from '../lib/components/hydraulic'
 import { getCustomDef } from '../lib/components/custom'
-import { MOMENTARY_TYPES, TOGGLE_TYPES } from '../lib/simulation/electricalSim'
+import { MOMENTARY_TYPES, TOGGLE_TYPES, PLC_INPUT_TYPES } from '../lib/simulation/electricalSim'
 import { MANUAL_DCV_TYPES } from '../lib/simulation/hydraulicSim'
 
 function getAnyDef(type) { return getElectricalDef(type) || getHydraulicDef(type) || getCustomDef(type) }
 
 // True for any component whose state the user can change via the floating control.
-export function isControllable(type) {
+// `simParams` (optional) lets mode-switchable types opt out: an analogue PLC
+// input has no binary state to toggle.
+export function isControllable(type, simParams) {
+  if (PLC_INPUT_TYPES.has(type) && simParams?.mode === 'Analogue') return false
   return TOGGLE_TYPES.has(type) || MOMENTARY_TYPES.has(type) || MANUAL_DCV_TYPES.has(type)
 }
 
@@ -21,6 +24,10 @@ function describe(type, interactiveState, dcvPosition, initialPos) {
   if (type === 'plc_output' || type === 'plc_digital_output' || type === 'plc_pwm_output') {
     const on = ist === 'closed'
     return { label: on ? 'On' : 'Off', active: on }
+  }
+  if (type === 'plc_input' || type === 'plc_digital_input') {
+    const high = ist === 'closed'
+    return { label: high ? 'High' : 'Low', active: high }
   }
   if (type === 'switch_spdt') {
     const effective = ist ?? initialPos ?? 'NO'

@@ -68,18 +68,38 @@ const WirePath = memo(function WirePath({ wire, crossings, selected, onClick, on
         onClick={e => { e.stopPropagation(); onClick?.(e) }}
         style={{ cursor: 'pointer', pointerEvents: wireMode ? 'none' : 'auto' }}
       />
-      {/* Visible wire */}
-      <path
-        id={`wire-vis-${wire.id}`}
-        d={d}
-        stroke={selected ? '#2563eb' : (wire.color || 'var(--wire-color)')}
-        strokeWidth={sw}
-        strokeDasharray={dasharray}
-        fill="none"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        style={{ pointerEvents: 'none' }}
-      />
+      {/* Visible wire. The 'can' skin draws a CAN bus as a twisted yellow/green
+          pair: a yellow base line with green dashes alternating over it. */}
+      {wire.skin === 'can' ? (
+        <>
+          {selected && (
+            <path d={d} stroke="#2563eb" strokeWidth={sw + 2.5} fill="none"
+              strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: 'none' }} />
+          )}
+          <path
+            id={`wire-vis-${wire.id}`}
+            d={d} stroke="#eab308" strokeWidth={sw} fill="none"
+            strokeLinecap="round" strokeLinejoin="round" style={{ pointerEvents: 'none' }}
+          />
+          <path
+            d={d} stroke="#16a34a" strokeWidth={sw} fill="none"
+            strokeDasharray="5,5" strokeLinecap="butt" strokeLinejoin="round"
+            style={{ pointerEvents: 'none' }}
+          />
+        </>
+      ) : (
+        <path
+          id={`wire-vis-${wire.id}`}
+          d={d}
+          stroke={selected ? '#2563eb' : (wire.color || 'var(--wire-color)')}
+          strokeWidth={sw}
+          strokeDasharray={dasharray}
+          fill="none"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          style={{ pointerEvents: 'none' }}
+        />
+      )}
       {/* Flow animation overlay — driven by RAF loop via id */}
       <path
         id={`wire-flow-${wire.id}`}
@@ -167,13 +187,44 @@ export default function WireLayer({ wires, junctions, selectedIds, onWireClick, 
               <circle cx={j.x} cy={j.y} r={r + 3} fill="none"
                 stroke="#2563eb" strokeWidth={1.5 / zoom} style={{ pointerEvents: 'none' }} />
             )}
-            <circle
-              cx={j.x}
-              cy={j.y}
-              r={r}
-              fill="var(--wire-color)"
-              style={{ pointerEvents: 'none' }}
-            />
+            {/* Connection-end glyph: a plain dot by default, or a mating-end
+                marker so a cable's pin / receptacle / clevis side is visible. */}
+            {j.style === 'pin' ? (
+              <g style={{ pointerEvents: 'none' }} transform={`translate(${j.x}, ${j.y})`}>
+                <path d="M -5 -4 L 5 0 L -5 4 Z" fill="var(--wire-color)" />
+              </g>
+            ) : j.style === 'receptacle' ? (
+              <g style={{ pointerEvents: 'none' }} transform={`translate(${j.x}, ${j.y})`}>
+                <path d="M 4 -5.5 A 6 6 0 0 0 4 5.5" fill="none"
+                  stroke="var(--wire-color)" strokeWidth="2" strokeLinecap="round" />
+              </g>
+            ) : j.style === 'clevis' ? (
+              <g style={{ pointerEvents: 'none' }} transform={`translate(${j.x}, ${j.y})`}>
+                <path d="M 5 -5 L -2 -5 L -2 5 L 5 5" fill="none"
+                  stroke="var(--wire-color)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </g>
+            ) : (
+              <circle
+                cx={j.x}
+                cy={j.y}
+                r={r}
+                fill="var(--wire-color)"
+                style={{ pointerEvents: 'none' }}
+              />
+            )}
+            {/* Junction name on the schematic — per-junction toggle. */}
+            {j.showLabel && j.label && (
+              <text
+                x={j.x}
+                y={j.y - (r + 5)}
+                textAnchor="middle"
+                fontSize={8}
+                fill="var(--component-color)"
+                style={{ userSelect: 'none', pointerEvents: 'none' }}
+              >
+                {j.label}
+              </text>
+            )}
             {/* Fat invisible hit area for select/drag. In wire mode it's
                 click-through so the canvas can still snap wires onto the node. */}
             <circle

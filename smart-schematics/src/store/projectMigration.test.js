@@ -41,6 +41,8 @@ describe('Stage 7 — v2 fixture migrates to v3', () => {
     // New project-level fields.
     expect(p.folders).toEqual([])
     expect(p.attachments).toEqual([])
+    // PLC release: hardware registry backfilled empty.
+    expect(p.plcDevices).toEqual([])
 
     // New drawing-level fields.
     expect(d.images).toEqual([])

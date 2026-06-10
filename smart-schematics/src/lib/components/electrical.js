@@ -1101,6 +1101,26 @@ export const ELECTRICAL_COMPONENTS = [
 
   // ── Outputs / Indicators ────────────────────────────────────────────────────
   {
+    type: 'horn',
+    label: 'Horn',
+    tags: ['horn', 'klaxon', 'hooter', 'siren', 'HA', 'audio', 'alarm'],
+    category: 'Outputs',
+    schematicType: 'electrical',
+    defaultDesignatorPrefix: 'HA',
+    defaultValue: '24V',
+    width: 44,
+    height: 28,
+    viewBox: '-22 -16 44 32',
+    pins: [
+      { id: 'PWR', relX: -20, relY: 0, direction: 'W' },
+      { id: 'GND', relX: 20, relY: 0, direction: 'E' },
+    ],
+    simParams: {
+      voltage: { label: 'Rated Voltage (V)', type: 'number', default: 24 },
+      current: { label: 'Current (A)', type: 'number', default: 3 },
+    },
+  },
+  {
     type: 'buzzer',
     label: 'Buzzer',
     tags: ['buzzer', 'BZ', 'alarm', 'audio', 'piezo'],
@@ -1212,6 +1232,30 @@ export const ELECTRICAL_COMPONENTS = [
     simParams: {},
   },
 
+  {
+    type: 'valve_electronics',
+    label: 'Valve (Electronic)',
+    tags: ['valve', 'proportional valve', 'PVG', 'valve driver', 'Us', 'Udc', 'error', 'YV'],
+    category: 'Electromechanical',
+    schematicType: 'electrical',
+    defaultDesignatorPrefix: 'YV',
+    defaultValue: '',
+    width: 60,
+    height: 50,
+    viewBox: '-30 -25 60 50',
+    pins: [
+      { id: 'Us', relX: -30, relY: -15, direction: 'W' },
+      { id: 'Error', relX: -30, relY: -5, direction: 'W' },
+      { id: 'GND', relX: -30, relY: 5, direction: 'W' },
+      { id: 'Udc', relX: -30, relY: 15, direction: 'W' },
+    ],
+    simParams: {
+      voltage: { label: 'Supply Voltage (V)', type: 'number', default: 24 },
+      signal: { label: 'Control Signal', type: 'select', options: ['0–10 V', '4–20 mA', 'PWM', 'Ratiometric'], default: 'Ratiometric' },
+      notes: { label: 'Notes', type: 'textarea', default: '' },
+    },
+  },
+
   // ── PLC I/O ─────────────────────────────────────────────────────────────────
   // Consolidated, mode-switchable I/O. One Input toggles Digital ↔ Analogue;
   // one Output toggles Digital ↔ PWM. The pin address + signal name show on the
@@ -1233,17 +1277,24 @@ export const ELECTRICAL_COMPONENTS = [
       { id: 'IN', relX: 20, relY: 0, direction: 'E' },
     ],
     simParams: {
+      // `modes` restricts a param to the listed signal modes (omitted = always
+      // shown). The PLC Properties section filters on it so e.g. a Digital
+      // input never shows an analogue range.
+      device: { label: 'Device', type: 'text', default: '' },
+      location: { label: 'Location', type: 'text', default: '' },
       address: { label: 'Pin Address', type: 'text', default: 'I0.0' },
       name: { label: 'Signal Name', type: 'text', default: '' },
       mode: { label: 'Mode', type: 'select', options: ['Digital', 'Analogue'], default: 'Digital' },
-      threshold: { label: 'Switching Threshold (V)', type: 'number', default: 11 },
+      voltage: { label: 'Input Voltage (V)', type: 'number', default: 24, modes: ['Digital'] },
+      threshold: { label: 'Switching Threshold (V)', type: 'number', default: 11, modes: ['Digital'] },
       range: {
         label: 'Analogue Range',
         type: 'select',
         options: ['0–10 V', '0–20 mA', '4–20 mA', '±10 V'],
         default: '0–10 V',
+        modes: ['Analogue'],
       },
-      resolution: { label: 'Resolution (bits)', type: 'number', default: 12 },
+      resolution: { label: 'Resolution (bits)', type: 'number', default: 12, modes: ['Analogue'] },
       notes: { label: 'Notes', type: 'textarea', default: '' },
     },
   },
@@ -1262,13 +1313,15 @@ export const ELECTRICAL_COMPONENTS = [
       { id: 'OUT', relX: 20, relY: 0, direction: 'E' },
     ],
     simParams: {
+      device: { label: 'Device', type: 'text', default: '' },
+      location: { label: 'Location', type: 'text', default: '' },
       address: { label: 'Pin Address', type: 'text', default: 'Q0.0' },
       name: { label: 'Signal Name', type: 'text', default: '' },
       mode: { label: 'Mode', type: 'select', options: ['Digital', 'PWM'], default: 'Digital' },
       voltage: { label: 'Output Voltage (V)', type: 'number', default: 24 },
       maxCurrent: { label: 'Max Current (A)', type: 'number', default: 0.5 },
-      frequency: { label: 'PWM Frequency (Hz)', type: 'number', default: 1000 },
-      dutyCycle: { label: 'PWM Duty Cycle (%)', type: 'number', default: 50 },
+      frequency: { label: 'PWM Frequency (Hz)', type: 'number', default: 1000, modes: ['PWM'] },
+      dutyCycle: { label: 'PWM Duty Cycle (%)', type: 'number', default: 50, modes: ['PWM'] },
       notes: { label: 'Notes', type: 'textarea', default: '' },
     },
   },

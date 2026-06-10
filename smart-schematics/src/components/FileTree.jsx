@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react'
-import { FolderPlus, FilePlus, Paperclip, Plus, X, Download } from 'lucide-react'
+import { FolderPlus, FilePlus, Paperclip, Plus, X, Download, Cpu } from 'lucide-react'
 import useSchematicStore from '../store/schematicStore'
 import { buildTree, findNode, canMove } from '../lib/fileTree'
 import FileTreeNode from './FileTreeNode'
@@ -34,8 +34,11 @@ export default function FileTree() {
   const deleteFolder = useSchematicStore(s => s.deleteFolder)
   const moveFolder = useSchematicStore(s => s.moveFolder)
   const moveDrawingToFolder = useSchematicStore(s => s.moveDrawingToFolder)
+  const reorderDrawing = useSchematicStore(s => s.reorderDrawing)
   const addAttachment = useSchematicStore(s => s.addAttachment)
   const removeAttachment = useSchematicStore(s => s.removeAttachment)
+  const showPlcDeviceManager = useSchematicStore(s => s.showPlcDeviceManager)
+  const setShowPlcDeviceManager = useSchematicStore(s => s.setShowPlcDeviceManager)
 
   const [expanded, setExpanded] = useState(() => new Set())
   const [dragId, setDragId] = useState(null)
@@ -92,11 +95,17 @@ export default function FileTree() {
 
   // Validate the move with the pure canMove() before mutating the store, then
   // dispatch the right action depending on whether a folder or drawing moved.
+  // A drawing dropped ON another drawing is a reorder (insert before it).
   const handleDrop = (dId, dropId) => {
-    if (dId == null) return
-    if (!canMove(tree, dId, dropId)) return
+    if (dId == null || dId === dropId) return
     const node = findNode(tree, dId)
     if (!node) return
+    const dropNode = dropId != null ? findNode(tree, dropId) : null
+    if (node.type === 'drawing' && dropNode?.type === 'drawing') {
+      reorderDrawing(dId, dropId)
+      return
+    }
+    if (!canMove(tree, dId, dropId)) return
     if (node.type === 'folder') moveFolder(dId, dropId)
     else moveDrawingToFolder(dId, dropId)
     if (dropId != null) setExpanded(prev => new Set(prev).add(dropId))
@@ -180,7 +189,7 @@ export default function FileTree() {
               key={node.id}
               node={node}
               depth={0}
-              activeDrawingId={activeDrawingId}
+              activeDrawingId={showPlcDeviceManager ? null : activeDrawingId}
               expanded={expanded}
               onToggle={toggle}
               onSelectDrawing={setActiveDrawing}
@@ -194,6 +203,28 @@ export default function FileTree() {
             />
           ))
         )}
+      </div>
+
+      {/* Project pages — fixed entries that open a full page instead of a
+          drawing. Currently just the PLC devices registry. */}
+      <div className="border-t flex-shrink-0 py-0.5 px-1" style={{ borderColor: 'var(--panel-border)' }}>
+        <div
+          className="flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer"
+          style={showPlcDeviceManager ? {
+            background: 'rgba(37,99,235,0.12)',
+            boxShadow: 'inset 2px 0 0 #2563eb',
+            color: 'var(--component-color)',
+            fontWeight: 600,
+          } : { color: '#6b7280' }}
+          title="Open the project's PLC devices page"
+          onClick={() => setShowPlcDeviceManager(true)}
+        >
+          <Cpu size={12} className="flex-shrink-0 text-blue-500" />
+          <span className="flex-1 truncate">PLC Devices</span>
+          <span className="text-gray-400" style={{ fontSize: 10 }}>
+            {(project.plcDevices || []).length || ''}
+          </span>
+        </div>
       </div>
 
       {/* Attachments section */}

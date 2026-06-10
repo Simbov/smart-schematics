@@ -269,8 +269,12 @@ function _runDCSimulation(components, wires, interactiveStates) {
         case 'inductor': stampResistor(id, 'A', 'B', 0.001); break
         case 'lamp': stampResistor(id, 'A', 'B', 10); break
         case 'buzzer': case 'speaker': stampResistor(id, 'A', 'B', 8); break
+        case 'horn': stampResistor(id, 'PWR', 'GND', 8); break
         case 'motor': case 'generator': stampResistor(id, 'A', 'B', 5); break
         case 'solenoid': stampResistor(id, 'A', 'B', 50); break
+        // Valve driver electronics: the supply (Us–GND) is the load; Udc (command)
+        // and Error (status) are signal pins with no stamp.
+        case 'valve_electronics': stampResistor(id, 'Us', 'GND', 100); break
         case 'relay_coil': case 'contactor_coil': stampResistor(id, 'A1', 'A2', 200); break
         // Self-contained solenoid relay: coil (A1/A2) + SPDT contact (C/NO/NC) in
         // one part, mechanically linked. The coil always stamps; the contact
@@ -415,8 +419,10 @@ function _runDCSimulation(components, wires, interactiveStates) {
           case 'inductor': stampResistor(cid, 'A', 'B', 0.001); break
           case 'lamp': stampResistor(cid, 'A', 'B', 10); break
           case 'buzzer': case 'speaker': stampResistor(cid, 'A', 'B', 8); break
+          case 'horn': stampResistor(cid, 'PWR', 'GND', 8); break
           case 'motor': case 'generator': stampResistor(cid, 'A', 'B', 5); break
           case 'solenoid': stampResistor(cid, 'A', 'B', 50); break
+          case 'valve_electronics': stampResistor(cid, 'Us', 'GND', 100); break
           case 'relay_coil': case 'contactor_coil': stampResistor(cid, 'A1', 'A2', 200); break
           case 'solenoid_relay': {
             stampResistor(cid, 'A1', 'A2', 200)
@@ -583,6 +589,8 @@ function _runDCSimulation(components, wires, interactiveStates) {
       case 'inductor': compV = V('A') - V('B'); compI = Math.abs(compV) / 0.001; compP = compI * compI * 0.001; break
       case 'lamp': compV = V('A') - V('B'); compI = Math.abs(compV) / 10; compP = compI * compI * 10; on = compI > 1e-3; break
       case 'buzzer': case 'speaker': compV = V('A') - V('B'); compI = Math.abs(compV) / 8; compP = compI * compI * 8; on = compI > 1e-3; break
+      case 'horn': compV = V('PWR') - V('GND'); compI = Math.abs(compV) / 8; compP = compI * compI * 8; on = compI > 1e-3; break
+      case 'valve_electronics': compV = V('Us') - V('GND'); compI = Math.abs(compV) / 100; compP = compI * compI * 100; on = compI > 1e-3; break
       case 'motor': case 'generator': compV = V('A') - V('B'); compI = Math.abs(compV) / 5; compP = compI * compI * 5; on = compI > 1e-3; break
       case 'solenoid': compV = V('A') - V('B'); compI = Math.abs(compV) / 50; compP = compI * compI * 50; on = compI > 1e-3; break
       case 'relay_coil': case 'contactor_coil':
@@ -637,6 +645,15 @@ function _runDCSimulation(components, wires, interactiveStates) {
         on = relayEnergized[comp.designator] ?? false
         compV = on ? (V('C') - V('NO')) : (V('C') - V('NC'))
         compI = Math.abs(compV) / 0.001; compP = compI * compI * 0.001; break
+      case 'plc_input': case 'plc_digital_input': case 'plc_analog_input':
+      case 'plc_output': case 'plc_digital_output': case 'plc_pwm_output': {
+        // Interface terminals — no stamp, so no current. Report the field-pin
+        // voltage and the user-toggled state (output On / digital input High).
+        const pin = pn('IN') ? 'IN' : pn('OUT') ? 'OUT' : null
+        compV = pin ? V(pin) : 0
+        on = interactiveStates[comp.id]?.state === 'closed'
+        break
+      }
       default:
         compV = 0; compI = 0; compP = 0; on = false
     }
@@ -706,6 +723,10 @@ function _runDCSimulation(components, wires, interactiveStates) {
         loadPair(comp, 'A', 'B'); break
       case 'relay_coil': case 'contactor_coil':
         loadPair(comp, 'A1', 'A2'); break
+      case 'horn':
+        loadPair(comp, 'PWR', 'GND'); break
+      case 'valve_electronics':
+        loadPair(comp, 'Us', 'GND'); break
       case 'electrolytic_capacitor':
         loadPair(comp, pinNet[`${comp.id}.A`] ? 'A' : 'POS', pinNet[`${comp.id}.B`] ? 'B' : 'NEG'); break
       case 'led': case 'diode': case 'zener_diode': case 'photodiode':

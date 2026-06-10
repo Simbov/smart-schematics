@@ -1549,6 +1549,11 @@ export default function Canvas({ onCursorMove }) {
           height: '100%',
           background: 'var(--canvas-bg)',
           display: 'block',
+          // Never let a rubber-band or item drag start a native text selection
+          // (annotation/table foreignObject text was getting selected instead
+          // of dragging — the "selecting multiple things is hard" bug).
+          userSelect: 'none',
+          WebkitUserSelect: 'none',
         }}
         onWheel={onWheel}
         onMouseDown={onCanvasMouseDown}
@@ -1626,7 +1631,7 @@ export default function Canvas({ onCursorMove }) {
 
           {/* Floating state-change controls above selected interactive components */}
           {activeTool === 'select' && visibleComponents
-            .filter(comp => selectedIds.includes(comp.id) && isControllable(comp.type))
+            .filter(comp => selectedIds.includes(comp.id) && isControllable(comp.type, comp.simParams))
             .map(comp => (
               <InteractiveControl
                 key={`ctrl-${comp.id}`}

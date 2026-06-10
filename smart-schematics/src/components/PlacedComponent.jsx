@@ -110,12 +110,28 @@ function getSymbolState(type, simState, interactiveState, hydSimState, simParams
     case 'plc_digital_output':
     case 'plc_pwm_output':
       return { on: ist === 'closed' }
+    case 'plc_input':
+    case 'plc_digital_input':
+      // A digital input is user-toggleable High/Low during simulation; the
+      // symbol turns amber when high. (Analogue inputs have no binary state.)
+      return { on: ist === 'closed' }
     default:
       // Directional valves slide their spool to the active envelope.
       if (MANUAL_DCV_TYPES.has(type)) return { position: hydSimState?.position }
       return simState ?? {}
   }
 }
+
+// PLC I/O draws its own signal name (above) + pin address (below) inside the
+// symbol; the generic designator/value labels are suppressed so nothing collides.
+const PLC_IO_TYPES = new Set([
+  'plc_input', 'plc_output',
+  'plc_digital_input', 'plc_analog_input', 'plc_digital_output', 'plc_pwm_output',
+])
+
+// Types whose symbol already carries its own heading text ("VCC"/"VSS"), so the
+// designator would render as a second heading right on top of it.
+const HIDE_DESIGNATOR_TYPES = new Set([...PLC_IO_TYPES, 'vcc_rail', 'vss_rail'])
 
 const PlacedComponent = memo(function PlacedComponent({
   component,
@@ -218,8 +234,9 @@ const PlacedComponent = memo(function PlacedComponent({
           stroke="none"
         />
 
-        {/* Symbol */}
-        <g style={{ color: isRunning && simState?.on ? 'var(--sim-active-color, #f59e0b)' : 'var(--component-color)' }}>
+        {/* Symbol — an optional per-component colour overrides the theme stroke;
+            the sim-active amber always wins while powered. */}
+        <g style={{ color: isRunning && simState?.on ? 'var(--sim-active-color, #f59e0b)' : (component.color || 'var(--component-color)') }}>
           {isBox
             ? <BoxSymbol box={component.box} instanceId={component.id} />
             : isCustom
@@ -239,7 +256,7 @@ const PlacedComponent = memo(function PlacedComponent({
 
       {/* Upright labels — positioned outside the rotation so text stays readable,
           and on a side chosen to avoid wires running through them. */}
-      {component.designator && (
+      {component.designator && !HIDE_DESIGNATOR_TYPES.has(component.type) && (
         <text
           x={designatorPos.x}
           y={designatorPos.y}
@@ -252,7 +269,7 @@ const PlacedComponent = memo(function PlacedComponent({
         </text>
       )}
 
-      {getDisplayValue(component) && (
+      {getDisplayValue(component) && !PLC_IO_TYPES.has(component.type) && (
         <text
           x={valuePos.x}
           y={valuePos.y}

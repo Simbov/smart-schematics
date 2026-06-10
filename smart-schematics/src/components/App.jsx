@@ -11,6 +11,7 @@ import FileMenu from './FileMenu'
 import SimulationControls from './SimulationControls'
 import StatusBar from './StatusBar'
 import ProjectBrowser from './ProjectBrowser'
+import PlcDevicePage from './PlcDeviceManager'
 import ExternalChangeBanner from './ExternalChangeBanner'
 import ErrorBoundary from './ErrorBoundary'
 import { setWindowTitle, basename } from '../lib/tauriFs'
@@ -27,6 +28,7 @@ export default function App() {
   const newDrawing = useSchematicStore(s => s.newDrawing)
   const showProjectBrowser = useSchematicStore(s => s.showProjectBrowser)
   const setShowProjectBrowser = useSchematicStore(s => s.setShowProjectBrowser)
+  const showPlcDeviceManager = useSchematicStore(s => s.showPlcDeviceManager)
   const drawings = useSchematicStore(s => s.drawings)
   const currentFilePath = useSchematicStore(s => s.currentFilePath)
   const projects = useSchematicStore(s => s.projects)
@@ -173,16 +175,25 @@ export default function App() {
         {/* Left file rail (Stage 6 file tree lives here) */}
         <SidebarLeft />
 
-        {/* Canvas */}
-        <div className="flex-1 flex flex-col overflow-hidden relative">
-          <ErrorBoundary name="Canvas">
-            <Canvas onCursorMove={setCursorPos} />
+        {/* Canvas — or the full-page PLC devices editor when its file-tree
+            entry is open (the page takes the canvas + right-rail space). */}
+        {showPlcDeviceManager ? (
+          <ErrorBoundary name="PLC Devices">
+            <PlcDevicePage />
           </ErrorBoundary>
-        </div>
+        ) : (
+          <>
+            <div className="flex-1 flex flex-col overflow-hidden relative">
+              <ErrorBoundary name="Canvas">
+                <Canvas onCursorMove={setCursorPos} />
+              </ErrorBoundary>
+            </div>
 
-        {/* Right rail: Properties when something is selected, else the component
-            library (Stage 6). One rail, no bottom strip. */}
-        {hasSelection ? <PropertiesPanel /> : <ComponentLibrary />}
+            {/* Right rail: Properties when something is selected, else the component
+                library (Stage 6). One rail, no bottom strip. */}
+            {hasSelection ? <PropertiesPanel /> : <ComponentLibrary />}
+          </>
+        )}
       </div>
 
       {/* Status bar */}

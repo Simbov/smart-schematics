@@ -15,16 +15,13 @@ function CounterFlip({ flipH, flipV, children }) {
 }
 
 // Shared module box (28×30) with a single field-side lead on the right (pin at x=20).
-// `dir` = 'out' (signal leaves the PLC → arrow toward the pin) or
-//         'in'  (signal enters the PLC → arrow toward the box).
-// `address` (pin address, e.g. I0.0/Q0.0) renders above the box; `name` (signal
-// name) renders below — both shown on the schematic, both kept upright on mirror.
-function IOFrame({ dir, glyph, label, labelSize = 9, state, params = {}, flipH, flipV }) {
-  const arrow =
-    dir === 'out'
-      ? '12,-3.5 18,0 12,3.5' // points right, toward the field pin
-      : '18,-3.5 12,0 18,3.5' // points left, into the module
-  // Energised outputs turn amber (color change only — no overlay rects).
+// `name` (signal name) renders above the box; `address` (pin address, e.g.
+// I0.0/Q0.0) renders below — the component's designator is NOT drawn for PLC I/O
+// (PlacedComponent suppresses it), so these two labels never collide with a ref.
+// Both are kept upright on mirror. No flow-direction arrows — the DI/DO/AI/PWM
+// glyphs already say which way the signal goes.
+function IOFrame({ glyph, label, labelSize = 9, state, params = {}, flipH, flipV }) {
+  // Energised I/O turns amber (color change only — no overlay rects).
   const energised = state?.on
   const address = params.address || ''
   const name = params.name || ''
@@ -37,16 +34,15 @@ function IOFrame({ dir, glyph, label, labelSize = 9, state, params = {}, flipH, 
           {label}
         </text>
       </CounterFlip>
-      {/* field-side lead + signal-direction arrow (arrowhead sits on the lead line) */}
+      {/* field-side lead */}
       <line x1="10" y1="0" x2="20" y2="0" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
-      <polygon points={arrow} fill="currentColor" stroke="none" />
       {(address || name) && (
         <CounterFlip flipH={flipH} flipV={flipV}>
-          {address && (
-            <text x="-4" y="-19" fontSize={7} fill="currentColor" textAnchor="middle" fontWeight="bold">{address}</text>
-          )}
           {name && (
-            <text x="-4" y="25" fontSize={7} fill="currentColor" textAnchor="middle">{name}</text>
+            <text x="-4" y="-20" fontSize={7} fill="currentColor" textAnchor="middle">{name}</text>
+          )}
+          {address && (
+            <text x="-4" y="25" fontSize={7} fill="currentColor" textAnchor="middle" fontWeight="bold">{address}</text>
           )}
         </CounterFlip>
       )}
@@ -97,7 +93,6 @@ export function PLCInputSymbol({ state, params = {}, flipH, flipV }) {
   const analogue = params.mode === 'Analogue'
   return (
     <IOFrame
-      dir="in"
       glyph={analogue ? SineGlyph : SquareWaveGlyph}
       label={analogue ? 'AI' : 'DI'}
       state={state}
@@ -112,7 +107,6 @@ export function PLCOutputSymbol({ state, params = {}, flipH, flipV }) {
   const pwm = params.mode === 'PWM'
   return (
     <IOFrame
-      dir="out"
       glyph={pwm ? PWMGlyph : SquareWaveGlyph}
       label={pwm ? 'PWM' : 'DO'}
       labelSize={pwm ? 7 : 9}

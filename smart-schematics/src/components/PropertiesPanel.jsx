@@ -11,6 +11,7 @@ import { normalizeUrl } from '../lib/boxLinks'
 import { addRow, addCol, removeRow, removeCol, insertRow, insertCol, moveRow, moveCol, resizeRow, resizeCol } from '../lib/tableModel'
 import { copyTableToClipboard } from '../lib/tableClipboard'
 import { RESISTOR_STYLES } from '../lib/resistorStyle'
+import { findDeviceByName, pinsForIoType, bindingParams } from '../lib/plcDevices'
 import Lightbox from './Lightbox'
 import ImageCropper from './ImageCropper'
 import { isCropped } from '../lib/imageUtils'
@@ -90,6 +91,33 @@ function SelectField({ label, value, options, onChange }) {
         onChange={e => onChange(e.target.value)}
       >
         {options.map(o => <option key={o} value={o}>{o}</option>)}
+      </select>
+    </div>
+  )
+}
+
+// SelectField variant with an explicit empty option and optional per-option
+// display labels (used by the PLC device/pin pickers, where the stored value is
+// an address but the menu shows "I0.0 — Start button").
+function SelectFieldWithEmpty({ label, value, options, optionLabels, emptyLabel, onChange }) {
+  return (
+    <div className="flex items-center gap-1 min-w-0">
+      <span className="text-gray-400 flex-shrink-0" style={{ fontSize: 10 }}>{label}</span>
+      <select
+        className="flex-1 min-w-0 rounded px-1 outline-none"
+        style={{
+          fontSize: 11,
+          height: 18,
+          background: 'var(--input-bg, rgba(0,0,0,0.06))',
+          border: '1px solid var(--panel-border)',
+          color: 'var(--component-color)',
+          minWidth: 0,
+        }}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+      >
+        <option value="">{emptyLabel}</option>
+        {options.map((o, i) => <option key={o} value={o}>{optionLabels?.[i] ?? o}</option>)}
       </select>
     </div>
   )
@@ -350,6 +378,8 @@ export default function PropertiesPanel() {
   const removeTable = useSchematicStore(s => s.removeTable)
   const updateJunction = useSchematicStore(s => s.updateJunction)
   const deleteIds = useSchematicStore(s => s.deleteIds)
+  const setShowPlcDeviceManager = useSchematicStore(s => s.setShowPlcDeviceManager)
+  const plcDevices = useSchematicStore(s => s.projects.find(p => p.id === s.activeProjectId)?.plcDevices) || []
 
   const isRunning = useSimulationStore(s => s.isRunning)
   const simCompState = useSimulationStore(s => s.componentStates[selectedIds[0]])
@@ -371,7 +401,7 @@ export default function PropertiesPanel() {
   // Junction documentation (shares the block model with boxes).
   const [localJunction, setLocalJunction] = useState({ label: '' })
   const [localJunctionBlocks, setLocalJunctionBlocks] = useState([])
-  const [localWire, setLocalWire] = useState({ color: '', style: 'solid', weight: 1 })
+  const [localWire, setLocalWire] = useState({ color: '', style: 'solid', weight: 1, skin: '' })
   const [localTable, setLocalTable] = useState({ borderColor: '#334155', borderWidth: 1, headerRow: false, headerFill: '', fill: '' })
   // 1-based row/col targets for insert/move/resize ops in the table editor.
   const [tblRow, setTblRow] = useState(1)
@@ -413,6 +443,8 @@ export default function PropertiesPanel() {
   const isAnnotation = selected && selected !== 'multi' && !isJunction && !isImage && !isTable && (selected.type === 'text' || selected.type === 'callout')
   const isComponent = selected && selected !== 'multi' && !isJunction && !isAnnotation && !isImage && !isTable && selected.designator !== undefined
   const isBox = isComponent && selected.type === 'box'
+  // Consolidated PLC I/O gets its own clean document-style section (PLC release).
+  const isPlc = isComponent && (selected.type === 'plc_input' || selected.type === 'plc_output')
   const isWire = selected && selected !== 'multi' && !isJunction && !isComponent && !isAnnotation && !isImage && !isTable && Array.isArray(selected.points)
 
   // Sync local state when selection changes
@@ -476,6 +508,7 @@ export default function PropertiesPanel() {
         color: selected.color ?? '',
         style: selected.style ?? 'solid',
         weight: selected.weight ?? 1,
+        skin: selected.skin ?? '',
       })
     }
     if (isTable) {
@@ -521,6 +554,16 @@ export default function PropertiesPanel() {
     pushUndo()
     updateComponentSimParam(activeDrawingId, localOwnerId, key, stored)
   }, [activeDrawingId, localOwnerId, getOwnerComponent, pushUndo, updateComponentSimParam])
+
+  // Multi-key simParams commit — used by the PLC device/pin binding, which sets
+  // device + location + address + name + mode in ONE undoable update.
+  const commitSimParams = useCallback((patch) => {
+    const owner = getOwnerComponent()
+    if (!owner) return
+    pushUndo()
+    updateComponent(activeDrawingId, localOwnerId, { simParams: { ...(owner.simParams || {}), ...patch } })
+    setLocalSim(s => ({ ...s, ...patch }))
+  }, [activeDrawingId, localOwnerId, getOwnerComponent, pushUndo, updateComponent])
 
   // The current doc for the selected annotation (tolerates legacy text-only).
   const annDoc = isAnnotation ? (selected.doc || plainToDoc(selected.text ?? '')) : null
@@ -820,6 +863,10 @@ export default function PropertiesPanel() {
                 onChange={v => setLocalWire(w => ({ ...w, weight: Number(v) }))}
                 onBlur={() => commitWire({ weight: Math.max(0.5, Number(localWire.weight) || 1) })} />
             </div>
+            {/* Special wire skins — CAN renders a yellow/green twisted pair. */}
+            <SelectFieldWithEmpty label="Skin" value={localWire.skin}
+              emptyLabel="Default" options={['can']} optionLabels={['CAN (yellow/green)']}
+              onChange={v => { setLocalWire(w => ({ ...w, skin: v })); commitWire({ skin: v || undefined }) }} />
             {isRunning && simWireState && (
               <div className="mt-1 flex gap-3 flex-wrap" style={{ fontSize: 11 }}>
                 <span><span className="text-gray-400">V: </span>{fmtVal(simWireState.voltage ?? 0, 'V')}</span>
@@ -1107,6 +1154,16 @@ export default function PropertiesPanel() {
               onChange={v => setLocalJunction({ label: v })}
               onBlur={() => { pushUndo(); updateJunction(activeDrawingId, selected.id, { label: localJunction.label }) }}
               placeholder="e.g. Node A" />
+            <label className="flex items-center gap-1.5" style={{ fontSize: 11 }}>
+              <input type="checkbox" checked={!!selected.showLabel}
+                onChange={e => { pushUndo(); updateJunction(activeDrawingId, selected.id, { showLabel: e.target.checked }) }} />
+              <span className="text-gray-400" style={{ fontSize: 10 }}>Show name on schematic</span>
+            </label>
+            {/* Mating-end marker — which side is the pin / receptacle / clevis. */}
+            <SelectFieldWithEmpty label="End style" value={selected.style ?? ''}
+              emptyLabel="Dot" options={['pin', 'receptacle', 'clevis']}
+              optionLabels={['Pin (male)', 'Receptacle (female)', 'Clevis (fork)']}
+              onChange={v => { pushUndo(); updateJunction(activeDrawingId, selected.id, { style: v || undefined }) }} />
 
             <div className="pt-2 mt-2 border-t flex items-center justify-between" style={{ borderColor: 'var(--panel-border)' }}>
               <span className="text-gray-400 font-semibold uppercase" style={{ fontSize: 11, letterSpacing: '0.04em' }}>Documentation</span>
@@ -1147,8 +1204,9 @@ export default function PropertiesPanel() {
         {isComponent && (
           <div className="space-y-1.5">
             {/* Non-box components keep the compact Ref / Value / Desc fields.
-                Boxes use the document layout below (big Ref title + description). */}
-            {!isBox && (<>
+                Boxes use the document layout below (big Ref title + description);
+                PLC I/O uses its own document-style section further down. */}
+            {!isBox && !isPlc && (<>
             {/* Basic fields row */}
             <div className="grid gap-1.5" style={{ gridTemplateColumns: hasPrimaryParam ? '1fr 1.5fr' : '1fr 1fr 1.5fr' }}>
               <Field
@@ -1176,6 +1234,24 @@ export default function PropertiesPanel() {
                 onBlur={() => commitField('description', local.description)}
                 placeholder="Description"
               />
+            </div>
+
+            {/* Device colour — optional per-component override of the theme stroke. */}
+            <div className="flex items-center gap-2" style={{ fontSize: 11 }}>
+              <label className="flex items-center gap-1" title="Symbol colour">
+                <span className="text-gray-400" style={{ fontSize: 10 }}>Colour</span>
+                <input type="color" value={selected.color || '#1e293b'}
+                  onChange={e => commitField('color', e.target.value)}
+                  style={{ width: 28, height: 20, border: 'none', background: 'transparent', cursor: 'pointer', padding: 0 }} />
+              </label>
+              {selected.color && (
+                <button type="button"
+                  className="rounded px-1.5 py-0.5 hover:bg-black/5 dark:hover:bg-white/10"
+                  style={{ fontSize: 10, border: '1px solid var(--panel-border)', color: 'var(--component-color)' }}
+                  onClick={() => commitField('color', undefined)}
+                  title="Use the default theme colour"
+                >Default</button>
+              )}
             </div>
 
             {/* Ref label size + (resistors) symbol style */}
@@ -1409,8 +1485,172 @@ export default function PropertiesPanel() {
               </div>
             )}
 
+            {/* PLC I/O — clean document view by default, Edit flips to inputs.
+                Mode-aware: digital fields hide analogue ones and vice versa; a
+                device + pin picked from the project's PLC registry auto-fills
+                device / location / address / name / mode. */}
+            {isPlc && (() => {
+              const plcMode = localSim.mode ?? simParamDefs.mode?.default ?? 'Digital'
+              const modeOptions = simParamDefs.mode?.options ?? []
+              // Identification keys are laid out by hand; the rest (electrical
+              // characteristics) render generically, filtered by mode.
+              const ID_KEYS = ['device', 'location', 'address', 'name', 'mode', 'notes']
+              const electrical = Object.entries(simParamDefs)
+                .filter(([key]) => !ID_KEYS.includes(key))
+                .filter(([, p]) => !p.modes || p.modes.includes(plcMode))
+              const valOf = key => {
+                const v = localSim[key]
+                return v != null && v !== '' ? v : (simParamDefs[key]?.default ?? '')
+              }
+              const device = findDeviceByName(plcDevices, localSim.device)
+              const devicePins = pinsForIoType(device, selected.type)
+              const isInput = selected.type === 'plc_input'
+              const modeBadge = plcMode === 'Analogue' ? 'AI' : plcMode === 'PWM' ? 'PWM' : (isInput ? 'DI' : 'DO')
+
+              // One read-only label/value row of the document view.
+              const Row = ({ label, children }) => (
+                <div className="flex gap-2" style={{ fontSize: 11 }}>
+                  <span className="text-gray-400 flex-shrink-0" style={{ width: 86 }}>{label}</span>
+                  <span className="min-w-0" style={{ wordBreak: 'break-word' }}>{children}</span>
+                </div>
+              )
+
+              return (
+                <div>
+                  {/* Header: mode chip + Edit toggle */}
+                  <div className="flex items-center justify-between">
+                    <span className="rounded px-1.5 py-0.5 font-bold"
+                      style={{ fontSize: 10, background: 'rgba(37,99,235,0.12)', color: '#2563eb', letterSpacing: '0.04em' }}>
+                      PLC {isInput ? 'Input' : 'Output'} · {modeBadge}
+                    </span>
+                    <MiniButton title={boxEdit ? 'Finish editing' : 'Edit these properties'}
+                      onClick={() => setBoxEdit(e => !e)}>{boxEdit ? 'Done' : 'Edit'}</MiniButton>
+                  </div>
+
+                  {!boxEdit ? (
+                    <>
+                      {/* Document view — big signal name, then scannable rows. */}
+                      <div className="mt-1" style={{ fontSize: 17, fontWeight: 800, lineHeight: 1.15, wordBreak: 'break-word' }}>
+                        {valOf('name') || <span className="text-gray-400">Unnamed signal</span>}
+                      </div>
+                      <div className="text-gray-400 mb-1.5" style={{ fontSize: 12, fontStyle: 'italic' }}>
+                        {valOf('address') || 'No pin address'}
+                      </div>
+                      <div className="space-y-1">
+                        {valOf('device') && <Row label="Device">{valOf('device')}</Row>}
+                        {valOf('location') && <Row label="Location">{valOf('location')}</Row>}
+                        <Row label="Mode">{plcMode}</Row>
+                        {electrical.map(([key, p]) => (
+                          <Row key={key} label={p.label}>{String(valOf(key))}</Row>
+                        ))}
+                      </div>
+                      {valOf('notes') && (
+                        <div className="mt-1.5 pt-1.5 border-t" style={{ borderColor: 'var(--panel-border)', fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                          {renderRichText(valOf('notes'))}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {/* Edit view — hardware binding first, then signal fields. */}
+                      <Section title="Hardware" action={
+                        <MiniButton title="Define this project's PLC devices and pin tables"
+                          onClick={() => setShowPlcDeviceManager(true)}>Manage…</MiniButton>
+                      }>
+                        <SelectFieldWithEmpty
+                          label="Device"
+                          value={device ? device.name : ''}
+                          emptyLabel="— manual —"
+                          options={plcDevices.map(d => d.name)}
+                          onChange={name => {
+                            const dev = findDeviceByName(plcDevices, name)
+                            if (dev) commitSimParams({ device: dev.name, location: dev.location || '' })
+                            else commitSimParams({ device: '' })
+                          }}
+                        />
+                        {device ? (
+                          <SelectFieldWithEmpty
+                            label="Pin"
+                            value={devicePins.some(p => p.address === localSim.address) ? localSim.address : ''}
+                            emptyLabel={devicePins.length ? '— pick a pin —' : 'no matching pins on device'}
+                            options={devicePins.map(p => p.address)}
+                            optionLabels={devicePins.map(p => p.name ? `${p.address} — ${p.name}` : p.address)}
+                            onChange={addr => {
+                              const pin = devicePins.find(p => p.address === addr)
+                              if (pin) commitSimParams(bindingParams(device, pin))
+                            }}
+                          />
+                        ) : (
+                          <Field label="Pin Address" value={localSim.address ?? ''}
+                            onChange={v => setLocalSim(s => ({ ...s, address: v }))}
+                            onBlur={() => commitSimParam('address', localSim.address ?? '')}
+                            placeholder={isInput ? 'I0.0' : 'Q0.0'} />
+                        )}
+                        <Field label="Location" value={localSim.location ?? ''}
+                          onChange={v => setLocalSim(s => ({ ...s, location: v }))}
+                          onBlur={() => commitSimParam('location', localSim.location ?? '')}
+                          placeholder="e.g. Cabinet A" />
+                      </Section>
+
+                      <Section title="Signal">
+                        <Field label="Name" value={localSim.name ?? ''}
+                          onChange={v => setLocalSim(s => ({ ...s, name: v }))}
+                          onBlur={() => commitSimParam('name', localSim.name ?? '')}
+                          placeholder="e.g. Start button" />
+                        <SelectField label="Mode" value={plcMode} options={modeOptions}
+                          onChange={v => commitSimParams({ mode: v })} />
+                        {electrical.map(([key, p]) => p.type === 'select' ? (
+                          <SelectField key={key} label={p.label} value={valOf(key)} options={p.options}
+                            onChange={v => commitSimParams({ [key]: v })} />
+                        ) : (
+                          <Field key={key} label={p.label} type="number" value={localSim[key] ?? p.default ?? ''}
+                            onChange={v => setLocalSim(s => ({ ...s, [key]: v }))}
+                            onBlur={() => commitSimParam(key, localSim[key])} />
+                        ))}
+                      </Section>
+
+                      <Section title="Notes">
+                        <textarea
+                          className="w-full px-1 py-0.5 rounded border bg-transparent"
+                          style={{ borderColor: 'var(--panel-border)', fontSize: 11, minHeight: 52, resize: 'vertical', color: 'var(--component-color)' }}
+                          value={localSim.notes ?? ''}
+                          onChange={e => setLocalSim(s => ({ ...s, notes: e.target.value }))}
+                          onBlur={() => commitSimParam('notes', localSim.notes ?? '')}
+                        />
+                      </Section>
+
+                      <Section title="Reference">
+                        <Field label="Ref" value={local.designator}
+                          onChange={v => setLocal(l => ({ ...l, designator: v }))}
+                          onBlur={() => commitField('designator', local.designator)}
+                          placeholder={isInput ? 'DI1' : 'DO1'} />
+                        <div className="flex items-center gap-2" style={{ fontSize: 11 }}>
+                          <label className="flex items-center gap-1" title="Symbol colour">
+                            <span className="text-gray-400" style={{ fontSize: 10 }}>Colour</span>
+                            <input type="color" value={selected.color || '#1e293b'}
+                              onChange={e => commitField('color', e.target.value)}
+                              style={{ width: 28, height: 20, border: 'none', background: 'transparent', cursor: 'pointer', padding: 0 }} />
+                          </label>
+                          {selected.color && (
+                            <button type="button"
+                              className="rounded px-1.5 py-0.5 hover:bg-black/5 dark:hover:bg-white/10"
+                              style={{ fontSize: 10, border: '1px solid var(--panel-border)', color: 'var(--component-color)' }}
+                              onClick={() => commitField('color', undefined)}
+                            >Default</button>
+                          )}
+                        </div>
+                        <div className="text-gray-400" style={{ fontSize: 10 }}>
+                          Ref is not drawn on the schematic — the symbol shows the signal name and pin address instead.
+                        </div>
+                      </Section>
+                    </>
+                  )}
+                </div>
+              )
+            })()}
+
             {/* Sim params */}
-            {hasSimParams && (
+            {hasSimParams && !isPlc && (
               <div
                 className="grid gap-1.5 pt-1 border-t"
                 style={{

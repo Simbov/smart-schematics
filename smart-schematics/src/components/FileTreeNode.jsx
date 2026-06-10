@@ -65,10 +65,11 @@ export default function FileTreeNode({
     e.dataTransfer.effectAllowed = 'move'
     e.dataTransfer.setData('text/plain', node.id)
   }
+  // Folders accept drops (move INTO); drawings accept drops too (reorder —
+  // the dragged drawing is inserted BEFORE this one; FileTree disambiguates).
   const allowDrop = e => {
-    if (!isFolder) return // only folders accept drops
     e.preventDefault()
-    e.stopPropagation() // innermost folder wins; keeps the root zone inactive
+    e.stopPropagation() // innermost target wins; keeps the root zone inactive
     e.dataTransfer.dropEffect = 'move'
     if (!dropHover) setDropHover(true)
   }
@@ -77,7 +78,6 @@ export default function FileTreeNode({
     if (dropHover) setDropHover(false)
   }
   const handleDrop = e => {
-    if (!isFolder) return
     e.preventDefault()
     e.stopPropagation()
     setDropHover(false)
@@ -95,15 +95,18 @@ export default function FileTreeNode({
 
   return (
     <div
-      onDragOver={isFolder ? allowDrop : undefined}
-      onDragEnter={isFolder ? allowDrop : undefined}
-      onDragLeave={isFolder ? handleDragLeave : undefined}
-      onDrop={isFolder ? handleDrop : undefined}
-      style={isFolder && dropHover ? {
+      onDragOver={allowDrop}
+      onDragEnter={allowDrop}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      style={dropHover ? (isFolder ? {
         background: 'rgba(59,130,246,0.10)',
         outline: '1px dashed #3b82f6',
         borderRadius: 4,
-      } : undefined}
+      } : {
+        // Drawing rows: an insertion bar above the row ("drops before me").
+        boxShadow: 'inset 0 2px 0 #3b82f6',
+      }) : undefined}
     >
       <div
         className="group flex items-center gap-1.5 pr-1 py-1 cursor-pointer rounded-md text-xs transition-colors hover:bg-black/5 dark:hover:bg-white/10"

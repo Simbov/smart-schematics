@@ -71,10 +71,12 @@ export {
   SolenoidRelaySymbol,
   MotorSymbol,
   GeneratorSymbol,
+  ValveElectronicsSymbol,
 } from './ElectromechanicalSymbols'
 
 export {
   LampSymbol,
+  HornSymbol,
   BuzzerSymbol,
   SpeakerSymbol,
   VoltmeterSymbol,
@@ -174,10 +176,12 @@ import {
   SolenoidRelaySymbol,
   MotorSymbol,
   GeneratorSymbol,
+  ValveElectronicsSymbol,
 } from './ElectromechanicalSymbols'
 
 import {
   LampSymbol,
+  HornSymbol,
   BuzzerSymbol,
   SpeakerSymbol,
   VoltmeterSymbol,
@@ -215,6 +219,8 @@ export const ELECTRICAL_SYMBOL_MAP = {
   relay_coil: RelayCoilSymbol,
   relay_contact_no: RelayContactNOSymbol,
   lamp: LampSymbol,
+  horn: HornSymbol,
+  valve_electronics: ValveElectronicsSymbol,
   dc_current_source: DCCurrentSourceSymbol,
   ac_voltage_source: ACVoltageSourceSymbol,
   vcc_rail: VCCRailSymbol,

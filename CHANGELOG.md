@@ -12,6 +12,50 @@ section with the version and date and starts a fresh Unreleased block.
 
 ## [Unreleased]
 
+### Added
+- **PLC Devices page.** Every project now has a **PLC Devices** page in the file
+  tree (also under **File → PLC Devices…** or **Manage…** in a PLC component's
+  Properties): define each PLC once — name, location, and its connector/pin list
+  (address, DI/DO/AI/PWM, connector, signal name, notes). Any placed PLC
+  input/output can then pick a Device and Pin and its device, location, pin
+  address, signal name and mode fill in automatically.
+- **CAN bus wires.** A wire's new **Skin** option renders it as a yellow/green
+  twisted pair.
+- **Junction display options.** Toggle a junction's name on/off on the schematic,
+  and mark which end of a cable it is with an end-style marker — plain dot,
+  pin (male), receptacle (female), or clevis (fork).
+- **Horn** component (PWR/GND) — the sound arcs pulse while it's powered.
+- **Valve (Electronic)** component — proportional-valve driver block with the
+  standard Us / Error / GND / Udc pins; powering Us–GND simulates.
+- **Device colours.** Any component can be given its own colour in Properties
+  (the simulation's powered-amber still wins while running).
+- **File tree keeps your order.** Drawings are no longer sorted alphabetically —
+  drag a drawing onto another to reorder it (drops before it; dropping onto a
+  drawing in a folder also moves it there).
+- **Device & Location fields** on every PLC input/output.
+- **Digital inputs are simulatable.** Select a digital PLC input while the
+  simulation runs and toggle it **High/Low** with the floating pill — the
+  symbol lights up amber when high (outputs keep their On/Off toggle).
+
+### Changed
+- **PLC properties read like a document.** Selecting a PLC input/output shows a
+  clean summary — signal name, pin address, device, location and the relevant
+  electrical values — with an **Edit** button that flips to grouped fields.
+- **Mode-aware fields.** A Digital input no longer shows analogue range or
+  resolution (it gains an Input Voltage instead); an Analogue input hides the
+  digital voltage/threshold; a Digital output no longer shows PWM frequency or
+  duty cycle.
+- **Cleaner PLC symbols.** The signal name now sits above the symbol and the
+  pin address below — nothing overlaps. The reference designator is no longer
+  drawn for PLC I/O, and the flow-direction arrows are gone (the DI/DO/AI/PWM
+  glyphs already say which way the signal goes).
+
+### Fixed
+- **VCC/VSS rails no longer show two headings** — the designator is suppressed
+  (the symbol's own VCC/VSS text plus the voltage remain).
+- **Multi-select dragging is reliable** — dragging across text on the canvas no
+  longer starts a text selection instead of moving the items.
+
 ## [0.5.0] - 2026-06-09
 
 ### Fixed

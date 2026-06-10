@@ -168,3 +168,53 @@ export function GeneratorSymbol() {
     </g>
   )
 }
+
+// Electronically-driven (proportional) valve: control-electronics block with the
+// four standard driver pins on the left (Us supply, Error status, GND, Udc
+// command signal) and a solenoid-valve glyph inside. Pin labels stay readable
+// when the part is mirrored (inverse-scale wrapper, same trick as PLC I/O).
+export function ValveElectronicsSymbol({ state, flipH, flipV }) {
+  const labels = [
+    { id: 'Us', y: -15 },
+    { id: 'Error', y: -5 },
+    { id: 'GND', y: 5 },
+    { id: 'Udc', y: 15 },
+  ]
+  const sx = flipH ? -1 : 1
+  const sy = flipV ? -1 : 1
+  return (
+    <g style={state?.on ? { color: 'var(--sim-active-color, #f59e0b)' } : undefined}>
+      {/* pin leads into the electronics block */}
+      {labels.map(l => (
+        <line key={l.id} x1="-30" y1={l.y} x2="-22" y2={l.y}
+          stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
+      ))}
+      <rect x="-22" y="-22" width="50" height="44" rx="2"
+        stroke="currentColor" strokeWidth={SW} fill="none" />
+      {/* pin labels just inside the box edge, kept upright on mirror */}
+      {(flipH || flipV) ? (
+        <g transform={`scale(${sx}, ${sy})`}>
+          {labels.map(l => (
+            <text key={l.id} x={(-20) * sx} y={l.y * sy + 2} fontSize="5.5" fill="currentColor"
+              textAnchor={flipH ? 'end' : 'start'}>{l.id}</text>
+          ))}
+        </g>
+      ) : (
+        labels.map(l => (
+          <text key={l.id} x="-20" y={l.y + 2} fontSize="5.5" fill="currentColor" textAnchor="start">{l.id}</text>
+        ))
+      )}
+      {/* solenoid-valve glyph: coil box with diagonal + flow square below */}
+      <g transform="translate(11, 0)">
+        <rect x="-7" y="-14" width="14" height="9" stroke="currentColor" strokeWidth={1.2} fill="none" />
+        <line x1="-7" y1="-5" x2="7" y2="-14" stroke="currentColor" strokeWidth={1.2} />
+        <rect x="-7" y="-1" width="14" height="14" stroke="currentColor" strokeWidth={1.2} fill="none" />
+        {/* flow arrow through the valve square */}
+        <line x1="0" y1="1" x2="0" y2="9" stroke="currentColor" strokeWidth={1.2} />
+        <path d="M -2.5,8 L 0,12 L 2.5,8 Z" fill="currentColor" stroke="none" />
+        {/* mechanical link coil → valve */}
+        <line x1="0" y1="-5" x2="0" y2="-1" stroke="currentColor" strokeWidth={1.2} strokeDasharray="1.5,1.5" />
+      </g>
+    </g>
+  )
+}

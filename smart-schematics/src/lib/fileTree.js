@@ -15,9 +15,11 @@
 //
 // Folders nest to arbitrary depth via parentId. Drawings attach to the folder
 // named by their folderId (or root when folderId is null). Folders are listed
-// before drawings at each level, each alphabetised by name for stable ordering.
-// Orphaned references (folderId/parentId pointing at a missing folder, or a
-// cycle) are treated as root so nothing silently disappears.
+// before drawings at each level; within each group the USER'S order is kept
+// (folders follow project.folders order, drawings follow project.drawingIds
+// order — NOT alphabetised, so drag-reordering sticks). Orphaned references
+// (folderId/parentId pointing at a missing folder, or a cycle) are treated as
+// root so nothing silently disappears.
 export function buildTree(project, drawings = []) {
   const folders = (project && project.folders) || []
   const folderById = new Map(folders.map(f => [f.id, f]))
@@ -75,11 +77,12 @@ export function buildTree(project, drawings = []) {
   return roots
 }
 
-// Folders first, then drawings; each group alphabetised (case-insensitive).
+// Folders first, then drawings; within each group the insertion order is kept
+// (Array.prototype.sort is stable) so the user's manual ordering is respected.
 function sortNodes(nodes) {
   nodes.sort((a, b) => {
     if (a.type !== b.type) return a.type === 'folder' ? -1 : 1
-    return (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })
+    return 0
   })
   for (const n of nodes) {
     if (n.children) sortNodes(n.children)

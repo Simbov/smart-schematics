@@ -111,6 +111,8 @@ function migrateProject(p) {
   p.folders ??= []
   p.attachments ??= []
   p.filePath ??= null   // per-project on-disk path (save-safety fix); null = never saved to a file
+  // PLC release: projects gain a PLC hardware registry (lib/plcDevices.js).
+  p.plcDevices ??= []
   return p
 }
 
@@ -149,6 +151,7 @@ const createBlankProject = (name = 'Project 1') => {
       activeDrawingId: drawing.id,
       folders: [],        // nested file-tree folders: { id, name, parentId }
       attachments: [],    // embedded sub-files: { id, name, mime, data, addedAt }
+      plcDevices: [],     // PLC hardware registry: { id, name, location, pins } (plcDevices.js)
       filePath: null,     // on-disk .scpro path for THIS project (null = unsaved)
       lastSaved: null,
     },
@@ -181,6 +184,7 @@ const useSchematicStore = create((set, get) => ({
     showCurrentValues: false,
   },
   showProjectBrowser: false,
+  showPlcDeviceManager: false,
 
   // File state (Phase 15 / 16)
   currentFilePath: null,       // path of the active project's file on disk
@@ -196,6 +200,7 @@ const useSchematicStore = create((set, get) => ({
 
   // Project browser visibility
   setShowProjectBrowser(v) { set({ showProjectBrowser: v }) },
+  setShowPlcDeviceManager(v) { set({ showPlcDeviceManager: v }) },
 
   // Helpers
   getActiveProject() {
@@ -309,6 +314,8 @@ const useSchematicStore = create((set, get) => ({
     set(state => ({
       activeDrawingId: id,
       selectedIds: [],
+      // Selecting a drawing always returns from the PLC devices page.
+      showPlcDeviceManager: false,
       projects: state.projects.map(p =>
         p.id === activeProjectId ? { ...p, activeDrawingId: id } : p
       ),
@@ -1060,6 +1067,46 @@ const useSchematicStore = create((set, get) => ({
   },
 
   // ─── Folders (file tree) ──────────────────────────────────────────────────
+
+  // Reorder a drawing within the active project: move `dragId` so it sits
+  // immediately BEFORE `targetId` in drawingIds, and adopt the target's folder
+  // so a drop onto a drawing in another folder both moves and positions it.
+  reorderDrawing(dragId, targetId) {
+    if (!dragId || !targetId || dragId === targetId) return
+    const { activeProjectId } = get()
+    set(state => {
+      const target = state.drawings.find(d => d.id === targetId)
+      if (!target) return {}
+      return {
+        projects: state.projects.map(p => {
+          if (p.id !== activeProjectId) return p
+          if (!p.drawingIds.includes(dragId) || !p.drawingIds.includes(targetId)) return p
+          const ids = p.drawingIds.filter(id => id !== dragId)
+          ids.splice(ids.indexOf(targetId), 0, dragId)
+          return { ...p, drawingIds: ids }
+        }),
+        drawings: state.drawings.map(d =>
+          d.id === dragId ? { ...d, folderId: target.folderId ?? null, isDirty: true } : d
+        ),
+      }
+    })
+  },
+
+  // ── PLC device registry (PLC release) ───────────────────────────────────
+  // One setter covering add/edit/remove: callers build the next list with the
+  // pure helpers in lib/plcDevices.js and commit it here. The active drawing is
+  // marked dirty so the autosave debounce picks up the project-level change.
+  setPlcDevices(devices) {
+    const { activeProjectId, activeDrawingId } = get()
+    set(state => ({
+      projects: state.projects.map(p =>
+        p.id === activeProjectId ? { ...p, plcDevices: devices } : p
+      ),
+      drawings: state.drawings.map(d =>
+        d.id === activeDrawingId ? { ...d, isDirty: true } : d
+      ),
+    }))
+  },
 
   addFolder(name = 'New Folder', parentId = null) {
     const { activeProjectId } = get()

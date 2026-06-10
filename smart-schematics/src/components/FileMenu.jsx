@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import {
   ChevronDown, ChevronRight, FilePlus, Copy, Download, Upload,
-  FolderOpen, Save, SaveAll, Clock, X, RefreshCw, Paperclip, Trash2,
+  FolderOpen, Save, SaveAll, Clock, X, RefreshCw, Paperclip, Trash2, Cpu,
 } from 'lucide-react'
 import useSchematicStore from '../store/schematicStore'
 import { isRunningInTauri, basename } from '../lib/tauriFs'
@@ -44,6 +44,7 @@ export default function FileMenu() {
   const exportProjectJSON = useSchematicStore(s => s.exportProjectJSON)
   const importProjectJSON = useSchematicStore(s => s.importProjectJSON)
   const setShowProjectBrowser = useSchematicStore(s => s.setShowProjectBrowser)
+  const setShowPlcDeviceManager = useSchematicStore(s => s.setShowPlcDeviceManager)
   const openProjectFile = useSchematicStore(s => s.openProjectFile)
   const saveProjectFile = useSchematicStore(s => s.saveProjectFile)
   const saveProjectFileAs = useSchematicStore(s => s.saveProjectFileAs)
@@ -347,6 +348,14 @@ export default function FileMenu() {
           <MenuItem icon={<Paperclip size={12} />}
             label={`Manage Attachments…${attachments.length ? ` (${attachments.length})` : ''}`}
             onClick={action(() => setManageOpen(true))} disabled={!activeProjectId} style={menuItemStyle} />
+
+          <div style={separatorStyle} />
+
+          {/* PLC hardware registry — define devices + pins once, I/O components
+              auto-populate from it (PLC release). */}
+          <MenuItem icon={<Cpu size={12} />} label="PLC Devices…"
+            onClick={action(() => setShowPlcDeviceManager(true))} disabled={!activeProjectId}
+            style={menuItemStyle} />
 
           <div style={separatorStyle} />
 

@@ -54,7 +54,7 @@ describe('fileTree.buildTree', () => {
     expect(tree.map(n => n.id).sort()).toEqual(['x', 'y', 'z'])
   })
 
-  it('sorts folders before drawings, alphabetically', () => {
+  it('sorts folders before drawings', () => {
     const project = { folders: [{ id: 'zf', name: 'Zeta', parentId: null }] }
     const drawings = [
       { id: 'a', name: 'apple', folderId: null },
@@ -62,6 +62,20 @@ describe('fileTree.buildTree', () => {
     const tree = buildTree(project, drawings)
     expect(tree[0].type).toBe('folder') // folder first despite name "Zeta"
     expect(tree[1].id).toBe('a')
+  })
+
+  it('keeps the user order within each group — NOT alphabetical (manual ordering)', () => {
+    const project = { folders: [
+      { id: 'f2', name: 'Beta', parentId: null },
+      { id: 'f1', name: 'Alpha', parentId: null },
+    ] }
+    const drawings = [
+      { id: 'd2', name: 'zebra', folderId: null },
+      { id: 'd1', name: 'apple', folderId: null },
+    ]
+    const tree = buildTree(project, drawings)
+    // Folders keep project.folders order; drawings keep the given (drawingIds) order.
+    expect(tree.map(n => n.id)).toEqual(['f2', 'f1', 'd2', 'd1'])
   })
 
   it('handles an empty/absent project safely', () => {
@@ -171,5 +185,46 @@ describe('fileTree store integration', () => {
     useSchematicStore.getState().moveFolder(a, b)
     project = useSchematicStore.getState().projects.find(p => p.id === useSchematicStore.getState().activeProjectId)
     expect(project.folders.find(f => f.id === a).parentId).toBeNull()
+  })
+})
+
+// Manual ordering (PLC release batch 2): a drawing dropped on another drawing is
+// inserted before it in project.drawingIds (and adopts its folder).
+describe('fileTree store integration — reorderDrawing', () => {
+  beforeEach(() => {
+    useSchematicStore.getState().newProject('Reorder Test')
+  })
+
+  function ids() {
+    const s = useSchematicStore.getState()
+    return s.projects.find(p => p.id === s.activeProjectId).drawingIds
+  }
+
+  it('moves the dragged drawing immediately before the target', () => {
+    const s = useSchematicStore.getState()
+    s.newDrawing() // d2
+    useSchematicStore.getState().newDrawing() // d3
+    const [d1, d2, d3] = ids()
+    useSchematicStore.getState().reorderDrawing(d3, d1)
+    expect(ids()).toEqual([d3, d1, d2])
+  })
+
+  it('adopts the target drawing folder when reordering across folders', () => {
+    const s = useSchematicStore.getState()
+    const fid = s.addFolder('F', null)
+    useSchematicStore.getState().newDrawing(fid)        // d2 inside F
+    const [d1, d2] = ids()
+    useSchematicStore.getState().reorderDrawing(d1, d2) // drop d1 onto d2
+    expect(ids()).toEqual([d1, d2])
+    const moved = useSchematicStore.getState().drawings.find(d => d.id === d1)
+    expect(moved.folderId).toBe(fid)
+  })
+
+  it('is a no-op for self-drops and unknown ids', () => {
+    const [d1] = ids()
+    useSchematicStore.getState().reorderDrawing(d1, d1)
+    useSchematicStore.getState().reorderDrawing(d1, 'nope')
+    useSchematicStore.getState().reorderDrawing(null, d1)
+    expect(ids()).toEqual([d1])
   })
 })
