@@ -12,6 +12,8 @@ section with the version and date and starts a fresh Unreleased block.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-10
+
 ### Added
 - **PLC Devices page.** Every project now has a **PLC Devices** page in the file
   tree (also under **File → PLC Devices…** or **Manage…** in a PLC component's
