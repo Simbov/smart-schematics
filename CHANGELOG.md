@@ -12,6 +12,8 @@ section with the version and date and starts a fresh Unreleased block.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-14
+
 ### Added
 - **Steering cylinder.** New double-acting **through-rod** cylinder (Hydraulic →
   Actuators) — the rigid rod passes through both ends and strokes left/right
