@@ -75,7 +75,7 @@ function CylinderExtensionOverlay({ type, extension }) {
       />
     )
   }
-  if (type === 'hyd_cylinder_double' || type === 'hyd_cylinder_telescopic') {
+  if (type === 'hyd_cylinder_double' || type === 'hyd_cylinder_telescopic' || type === 'hyd_cylinder_steering') {
     // Barrel interior approx x=-21 to x=21 (42 units wide)
     return (
       <rect
@@ -118,9 +118,19 @@ function getSymbolState(type, simState, interactiveState, hydSimState, simParams
     default:
       // Directional valves slide their spool to the active envelope.
       if (MANUAL_DCV_TYPES.has(type)) return { position: hydSimState?.position }
+      // Cylinders stroke their rod from the simulated extension.
+      if (CYLINDER_SIM_TYPES.has(type)) return { extension: hydSimState?.extension }
+      // Pressure/check valve poppets lift off their seat when flowing.
+      if (type === 'hyd_relief_valve') return { relieving: hydSimState?.relieving }
+      if (type === 'hyd_check_valve') return { flowing: hydSimState?.flowing }
       return simState ?? {}
   }
 }
+
+const CYLINDER_SIM_TYPES = new Set([
+  'hyd_cylinder_single', 'hyd_cylinder_double',
+  'hyd_cylinder_telescopic', 'hyd_cylinder_steering',
+])
 
 // PLC I/O draws its own signal name (above) + pin address (below) inside the
 // symbol; the generic designator/value labels are suppressed so nothing collides.

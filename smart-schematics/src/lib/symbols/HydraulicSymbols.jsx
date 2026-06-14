@@ -97,24 +97,38 @@ export function HydAccumulatorSymbol() {
 
 // ── Actuators ────────────────────────────────────────────────────────────────
 
-export function HydCylinderSingleSymbol() {
+// Piston/rod travel from the simulated extension (0–100). `rest` is the % that
+// maps to no displacement (0 for spring-return single-acting, 50 for the
+// centred double/steering rod); `travel` is the on-canvas swing in either
+// direction. A short CSS transition makes the stroke read as motion.
+function cylDx(extension, rest, travel) {
+  if (extension == null) return 0
+  const e = Math.max(0, Math.min(100, extension))
+  return ((e - rest) / 100) * travel
+}
+const ROD_MOVE = { transition: 'transform 0.18s linear' }
+
+export function HydCylinderSingleSymbol({ state = {} }) {
+  const dx = cylDx(state.extension, 0, 12)
   return (
     <g fill="none" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" strokeLinejoin="round">
       {/* Barrel */}
       <rect x={-24} y={-10} width={32} height={20} />
       {/* End cap */}
       <line x1={-24} y1={-12} x2={-24} y2={12} strokeWidth={SW * 1.5} />
-      {/* Piston */}
-      <line x1={-4} y1={-8} x2={-4} y2={8} />
-      {/* Rod extending right */}
-      <line x1={8} y1={0} x2={26} y2={0} />
       {/* Port */}
       <line x1={-28} y1={0} x2={-24} y2={0} />
+      {/* Piston + rod — slides out with extension */}
+      <g transform={`translate(${dx},0)`} style={ROD_MOVE}>
+        <line x1={-4} y1={-8} x2={-4} y2={8} />
+        <line x1={8} y1={0} x2={26} y2={0} />
+      </g>
     </g>
   )
 }
 
-export function HydCylinderDoubleSymbol() {
+export function HydCylinderDoubleSymbol({ state = {} }) {
+  const dx = cylDx(state.extension, 50, 12)
   return (
     <g fill="none" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" strokeLinejoin="round">
       {/* Barrel */}
@@ -122,28 +136,57 @@ export function HydCylinderDoubleSymbol() {
       {/* End caps */}
       <line x1={-22} y1={-12} x2={-22} y2={12} strokeWidth={SW * 1.5} />
       <line x1={22} y1={-12} x2={22} y2={12} strokeWidth={SW * 1.5} />
-      {/* Piston */}
-      <line x1={0} y1={-8} x2={0} y2={8} />
-      {/* Rods */}
+      {/* Port stubs (fixed to the barrel) */}
       <line x1={-26} y1={0} x2={-22} y2={0} />
       <line x1={22} y1={0} x2={26} y2={0} />
+      {/* Piston + single rod (exits right) — slides with extension */}
+      <g transform={`translate(${dx},0)`} style={ROD_MOVE}>
+        <line x1={0} y1={-8} x2={0} y2={8} />
+        <line x1={0} y1={0} x2={30} y2={0} />
+      </g>
     </g>
   )
 }
 
-export function HydCylinderTelescopicSymbol() {
+// Double-acting through-rod (steering) cylinder: the rod passes fully through
+// both end caps and exits on both sides, ports on the barrel underside. Rest at
+// mid-stroke; the rigid rod slides left/right with the simulated extension.
+export function HydCylinderSteeringSymbol({ state = {} }) {
+  const dx = cylDx(state.extension, 50, 10)
+  return (
+    <g fill="none" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" strokeLinejoin="round">
+      {/* Barrel */}
+      <rect x={-22} y={-10} width={44} height={20} />
+      {/* End caps */}
+      <line x1={-22} y1={-12} x2={-22} y2={12} strokeWidth={SW * 1.5} />
+      <line x1={22} y1={-12} x2={22} y2={12} strokeWidth={SW * 1.5} />
+      {/* Ports A (left) / B (right) on the barrel underside */}
+      <line x1={-16} y1={10} x2={-16} y2={16} />
+      <line x1={16} y1={10} x2={16} y2={16} />
+      {/* Through-rod + piston — rigid, slides with extension */}
+      <g transform={`translate(${dx},0)`} style={ROD_MOVE}>
+        <line x1={-32} y1={0} x2={32} y2={0} />
+        <line x1={0} y1={-8} x2={0} y2={8} strokeWidth={SW * 1.4} />
+      </g>
+    </g>
+  )
+}
+
+export function HydCylinderTelescopicSymbol({ state = {} }) {
+  const dx = cylDx(state.extension, 0, 10)
   return (
     <g fill="none" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" strokeLinejoin="round">
       {/* Stage 1 (largest) */}
       <rect x={-24} y={-10} width={20} height={20} />
       {/* Stage 2 */}
       <rect x={-14} y={-7} width={14} height={14} />
-      {/* Stage 3 (smallest) */}
-      <rect x={-6} y={-4} width={20} height={8} />
-      {/* Rod tip */}
-      <line x1={14} y1={0} x2={26} y2={0} />
       {/* Port */}
       <line x1={-28} y1={0} x2={-24} y2={0} />
+      {/* Stage 3 (smallest) + rod tip — extends with the simulated stroke */}
+      <g transform={`translate(${dx},0)`} style={ROD_MOVE}>
+        <rect x={-6} y={-4} width={20} height={8} />
+        <line x1={14} y1={0} x2={26} y2={0} />
+      </g>
     </g>
   )
 }
@@ -390,21 +433,37 @@ export function HydDCV32Symbol({ params = {}, state = {} }) {
 
 // ── Valves – Pressure ─────────────────────────────────────────────────────────
 
-export function HydReliefValveSymbol() {
+// Normally-closed pressure-relief valve drawn as a ball poppet seated on a
+// conical (triangle) seat, held shut by a bias spring. P (inlet) is at the
+// bottom, T (tank) at the top. When the sim cracks it (`state.relieving`) the
+// ball lifts off its seat and a flow arrow shows P→T.
+export function HydReliefValveSymbol({ state = {} }) {
+  const relieving = !!state.relieving
+  const ballY = relieving ? -7 : -2        // lifts up off the seat when cracking
   return (
     <g fill="none" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" strokeLinejoin="round">
-      {/* Box */}
+      {/* Body */}
       <rect x={-12} y={-16} width={24} height={32} />
-      {/* Arrow from P to T with arrowhead */}
-      <line x1={0} y1={12} x2={0} y2={-8} />
-      <polygon points="0,-8 -3,-2 3,-2" fill="currentColor" stroke="none" />
-      {/* Spring symbol on right */}
-      <path d="M12,-14 Q14,-10 12,-6 Q14,-2 12,2 Q14,6 12,10 Q14,14 12,16" strokeWidth={1.2} />
-      {/* Pilot internal line */}
-      <line x1={-12} y1={-14} x2={-16} y2={-14} strokeDasharray="2,2" />
-      <line x1={-16} y1={-14} x2={-16} y2={8} strokeDasharray="2,2" />
-      <line x1={-16} y1={8} x2={12} y2={8} strokeDasharray="2,2" />
-      {/* Port stubs */}
+      {/* Conical seat (triangle) at the inlet, apex up where the ball sits */}
+      <path d="M-6,8 L0,1 L6,8" />
+      {/* Inlet feed from P up to the seat */}
+      <line x1={0} y1={16} x2={0} y2={8} />
+      {/* Ball poppet (lifts when relieving) */}
+      <circle cx={0} cy={ballY} r={4} fill={relieving ? 'currentColor' : 'none'} fillOpacity={relieving ? 0.18 : 0} />
+      {/* Bias spring above the ball, pressed down onto the seat */}
+      <path d="M-4,-15 L4,-13 L-4,-11 L4,-9 L-4,-7" strokeWidth={1.2} />
+      {/* Flow arrow P→T while cracking */}
+      {relieving && (
+        <>
+          <line x1={0} y1={6} x2={0} y2={-12} stroke="currentColor" strokeWidth={1.1} />
+          <polygon points="0,-13 -2.6,-8 2.6,-8" fill="currentColor" stroke="none" />
+        </>
+      )}
+      {/* External pilot reference line */}
+      <line x1={-12} y1={12} x2={-16} y2={12} strokeDasharray="2,2" />
+      <line x1={-16} y1={12} x2={-16} y2={-12} strokeDasharray="2,2" />
+      <line x1={-16} y1={-12} x2={-12} y2={-12} strokeDasharray="2,2" />
+      {/* Port stubs: P bottom, T top */}
       <line x1={0} y1={-16} x2={0} y2={-20} />
       <line x1={0} y1={16} x2={0} y2={20} />
     </g>
@@ -460,17 +519,25 @@ export function HydCounterbalanceSymbol() {
 
 // ── Valves – Flow ─────────────────────────────────────────────────────────────
 
-export function HydCheckValveSymbol() {
+// Check (non-return) valve drawn as a ball on a conical (triangle) seat. The
+// seat mouth faces the inlet A (left); the ball rests just downstream of the
+// throat, sealing reverse flow B→A. Forward flow A→B pushes the ball off the
+// seat — when the sim has forward flow (`state.flowing`) the ball lifts clear.
+export function HydCheckValveSymbol({ state = {} }) {
+  const flowing = !!state.flowing
+  const ballX = flowing ? 6 : 3            // unseats downstream when flowing forward
   return (
     <g fill="none" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" strokeLinejoin="round">
-      {/* Flow line */}
-      <line x1={-14} y1={0} x2={14} y2={0} />
-      {/* Ball/poppet */}
-      <circle cx={2} cy={0} r={5} />
-      {/* Seat (vertical bar) */}
-      <line x1={-3} y1={-8} x2={-3} y2={8} />
-      {/* Arrow showing allowed direction */}
-      <polygon points="-10,0 -6,-3 -6,3" fill="currentColor" stroke="none" />
+      {/* Inlet A */}
+      <line x1={-14} y1={0} x2={-8} y2={0} />
+      {/* Conical seat (triangle), mouth open toward A, throat at x=-1 */}
+      <path d="M-8,-7 L-1,0 L-8,7" />
+      {/* Ball poppet (lifts downstream when flowing) */}
+      <circle cx={ballX} cy={0} r={4.2} fill={flowing ? 'currentColor' : 'none'} fillOpacity={flowing ? 0.18 : 0} />
+      {/* Outlet B */}
+      <line x1={ballX + 4} y1={0} x2={14} y2={0} style={ROD_MOVE} />
+      {/* Allowed-direction arrow */}
+      <polygon points="-13,0 -9,-3 -9,3" fill="currentColor" stroke="none" />
     </g>
   )
 }
@@ -647,6 +714,7 @@ export const HYDRAULIC_SYMBOL_MAP = {
   hyd_cylinder_single:  HydCylinderSingleSymbol,
   hyd_cylinder_double:  HydCylinderDoubleSymbol,
   hyd_cylinder_telescopic: HydCylinderTelescopicSymbol,
+  hyd_cylinder_steering: HydCylinderSteeringSymbol,
   hyd_dcv_4_2:          HydDCV42Symbol,
   hyd_dcv_4_3_open:     HydDCV43OpenSymbol,
   hyd_dcv_4_3_closed:   HydDCV43ClosedSymbol,

@@ -30,6 +30,7 @@ export const HYD_ACTUATOR_TYPES = new Set([
   'hyd_cylinder_single',
   'hyd_cylinder_double',
   'hyd_cylinder_telescopic',
+  'hyd_cylinder_steering',
   'hyd_motor_fixed',
   'hyd_motor_variable',
 ])
@@ -145,7 +146,7 @@ function getConductingPairs(comp, dcvPositions) {
     case 'hyd_flow_divider':   return [['P', 'A'], ['P', 'B']]
     case 'hyd_shuttle_valve':  return [['A', 'Y'], ['B', 'Y']]
     case 'hyd_junction':       return [['A', 'B'], ['B', 'C'], ['A', 'C']]
-    case 'hyd_check_valve':    return [['A', 'B']]  // simplified: bidirectional
+    case 'hyd_check_valve':    return []  // directional — handled via directedAdj (A→B only)
     case 'hyd_pilot_check':    return [['A', 'B']]  // simplified: ignore pilot
     case 'hyd_sequence_valve':    return [['P', 'A']]
     case 'hyd_pressure_reducing': return [['P', 'A']]
@@ -205,6 +206,21 @@ export function runHydraulicSimulation(components, wires, dcvPositions, relayEne
     })
   })
 
+  // Directed conductors: a check valve only passes flow A→B (forward). Both the
+  // pressurize and the return BFS traverse these in the forward direction only,
+  // so a reverse-pressurized check valve blocks (the ball seats).
+  const directedAdj = {} // from-net → Set<to-net>
+  const addDirected = (from, to) => {
+    if (!from || !to || from === to) return
+    ;(directedAdj[from] ??= new Set()).add(to)
+  }
+  hydComps.forEach(comp => {
+    if (comp.type === 'hyd_check_valve') {
+      addDirected(getNet(comp.id, 'A'), getNet(comp.id, 'B'))
+    }
+  })
+  const neighbours = net => [...(netAdj[net] || []), ...(directedAdj[net] || [])]
+
   // Step 3: Mark source nets (pump outlets) and tank nets (reservoir pins, pump inlets)
   const tankNets = new Set()
   const pumpOutletNets = new Set()
@@ -235,7 +251,7 @@ export function runHydraulicSimulation(components, wires, dcvPositions, relayEne
   const pQueue = [...pumpOutletNets]
   while (pQueue.length) {
     const cur = pQueue.shift()
-    for (const next of (netAdj[cur] || [])) {
+    for (const next of neighbours(cur)) {
       if (!pressurized.has(next) && !tankNets.has(next)) {
         pressurized.add(next)
         pQueue.push(next)
@@ -260,7 +276,7 @@ export function runHydraulicSimulation(components, wires, dcvPositions, relayEne
   const rQueue = [...tankNets]
   while (rQueue.length) {
     const cur = rQueue.shift()
-    for (const next of (netAdj[cur] || [])) {
+    for (const next of neighbours(cur)) {
       if (!returnNets.has(next) && !pressurized.has(next)) {
         returnNets.add(next)
         rQueue.push(next)
@@ -306,7 +322,7 @@ export function runHydraulicSimulation(components, wires, dcvPositions, relayEne
       }
       componentStates[id] = { extension: cylinderPositions[id] ?? ext, extending, retracting }
 
-    } else if (type === 'hyd_cylinder_double' || type === 'hyd_cylinder_telescopic') {
+    } else if (type === 'hyd_cylinder_double' || type === 'hyd_cylinder_telescopic' || type === 'hyd_cylinder_steering') {
       const nA = getNet(id, 'A')
       const nB = getNet(id, 'B')
       const aP = nA ? pressurized.has(nA) : false
@@ -327,7 +343,17 @@ export function runHydraulicSimulation(components, wires, dcvPositions, relayEne
     } else if (type === 'hyd_relief_valve') {
       const pNet = getNet(id, 'P')
       const open = pNet ? pressurized.has(pNet) : false
-      componentStates[id] = { open }
+      // `relieving` lifts the ball off its seat in the symbol while cracking.
+      componentStates[id] = { open, relieving: open }
+
+    } else if (type === 'hyd_check_valve') {
+      // Directional: forward flow A→B unseats the ball; reverse pressure seats it.
+      const nA = getNet(id, 'A')
+      const nB = getNet(id, 'B')
+      const aP = nA ? pressurized.has(nA) : false
+      const bDownstream = nB ? (pressurized.has(nB) || returnNets.has(nB)) : false
+      const flowing = aP && bDownstream
+      componentStates[id] = { open: flowing, flowing }
 
     } else if (HYD_VALVE_TYPES.has(type)) {
       const pairs = getConductingPairs(comp, dcvPositions)

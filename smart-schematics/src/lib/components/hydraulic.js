@@ -179,6 +179,27 @@ export const HYDRAULIC_COMPONENTS = [
       stroke: { label: 'Total Stroke (mm)', type: 'number', default: 600 },
     },
   },
+  {
+    type: 'hyd_cylinder_steering',
+    label: 'Steering Cylinder',
+    tags: ['cylinder', 'steering', 'double', 'acting', 'through rod', 'double rod', 'ram', 'linear', 'actuator', 'CYL'],
+    category: 'Actuators',
+    schematicType: 'hydraulic',
+    defaultDesignatorPrefix: 'CYL',
+    defaultValue: '',
+    width: 64,
+    height: 38,
+    viewBox: '-36 -22 72 44',
+    pins: [
+      { id: 'A', relX: -16, relY: 16, direction: 'S' },
+      { id: 'B', relX:  16, relY: 16, direction: 'S' },
+    ],
+    simParams: {
+      bore:   { label: 'Bore (mm)', type: 'number', default: 50 },
+      rodDia: { label: 'Rod Dia (mm)', type: 'number', default: 28 },
+      stroke: { label: 'Stroke (mm)', type: 'number', default: 200 },
+    },
+  },
 
   // ── Valves – Directional ──────────────────────────────────────────────────
   {

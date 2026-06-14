@@ -12,6 +12,43 @@ section with the version and date and starts a fresh Unreleased block.
 
 ## [Unreleased]
 
+### Added
+- **Steering cylinder.** New double-acting **through-rod** cylinder (Hydraulic →
+  Actuators) — the rigid rod passes through both ends and strokes left/right
+  while the simulation runs. All cylinders (single/double/telescopic/steering)
+  now visibly move their rod during simulation, not just a fill bar.
+- **PLC devices export to CSV.** The PLC Devices page has an **Export CSV** button
+  that writes the whole connector/pin list (device, location, connector, address,
+  channel, type, capabilities, signal name, notes) as a spreadsheet-ready file.
+- **Channel column** on every PLC pin, and **pin capabilities** — mark what a pin
+  *can* do (DI/DO/AI/PWM) separately from what it's currently set to (e.g. a
+  PWM-capable pin used as a DO).
+- **Reorder PLC pins** with ▲/▼ buttons; the page now groups pins under their
+  **connector** so it reads like a real connector list.
+- **Location photos on a PLC** — attach pictures of where each device physically
+  sits, shown on the PLC Devices page (click to zoom).
+- **Show / hide on the symbol.** Each placed PLC input/output has toggles for
+  signal name, pin address, device name, and (outputs) the **current rating** —
+  so you control exactly what's drawn on the schematic.
+- **Colour presets.** Wire and component colour pickers now offer a palette of
+  default swatches plus your own saved colours, shared across the whole program.
+- **Export to PDF.** **File → Export Page as PDF** (the current drawing) and
+  **Export Project as PDF** (one page per drawing), each with a clean title block.
+
+### Changed
+- **PLC registry is now the single source of truth.** When a PLC input/output is
+  linked to a device pin, its signal name, connector, channel, location and notes
+  come live from the PLC Devices page and are read-only on the component — edit
+  them once on the device page and every linked symbol updates. Unlink (set the
+  device to *manual*) to type values directly.
+- **Relief and check valves redrawn** to the standard ball-on-seat (poppet) style.
+  The check valve is now **directional** in simulation — it passes forward flow
+  and blocks reverse — and both valves animate their ball when flowing.
+
+### Fixed
+- Existing PLC pins and device bindings are preserved unchanged when opening files
+  from earlier versions (new fields are added, nothing is overwritten).
+
 ## [0.6.0] - 2026-06-10
 
 ### Added

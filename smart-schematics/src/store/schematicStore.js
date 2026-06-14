@@ -7,6 +7,7 @@ import { normalizeBoxImages } from '../lib/boxImages'
 import { migrateBlocks } from '../lib/boxBlocks'
 import { createJunction } from '../lib/junctions'
 import { migratePlcComponent } from '../lib/plcMigration'
+import { migratePlcDevice, resyncPlcComponents } from '../lib/plcDevices'
 import {
   isRunningInTauri,
   openFileDialog, saveFileDialog,
@@ -113,6 +114,9 @@ function migrateProject(p) {
   p.filePath ??= null   // per-project on-disk path (save-safety fix); null = never saved to a file
   // PLC release: projects gain a PLC hardware registry (lib/plcDevices.js).
   p.plcDevices ??= []
+  // v0.7.0: backfill pin capabilities/channel/connector + device images, additive
+  // so PLC pins set up in a prior release are never disturbed.
+  p.plcDevices = p.plcDevices.map(migratePlcDevice)
   return p
 }
 
@@ -1097,15 +1101,24 @@ const useSchematicStore = create((set, get) => ({
   // pure helpers in lib/plcDevices.js and commit it here. The active drawing is
   // marked dirty so the autosave debounce picks up the project-level change.
   setPlcDevices(devices) {
-    const { activeProjectId, activeDrawingId } = get()
-    set(state => ({
-      projects: state.projects.map(p =>
-        p.id === activeProjectId ? { ...p, plcDevices: devices } : p
-      ),
-      drawings: state.drawings.map(d =>
-        d.id === activeDrawingId ? { ...d, isDirty: true } : d
-      ),
-    }))
+    const { activeProjectId } = get()
+    set(state => {
+      const project = state.projects.find(p => p.id === activeProjectId)
+      const drawingIds = new Set(project?.drawingIds || [])
+      return {
+        projects: state.projects.map(p =>
+          p.id === activeProjectId ? { ...p, plcDevices: devices } : p
+        ),
+        // Registry is master: re-sync every bound PLC component in this project's
+        // drawings so a registry edit shows live on the schematic. Only drawings
+        // whose components actually change are marked dirty.
+        drawings: state.drawings.map(d => {
+          if (!drawingIds.has(d.id)) return d
+          const components = resyncPlcComponents(d.components, devices)
+          return components === d.components ? { ...d, isDirty: true } : { ...d, components, isDirty: true }
+        }),
+      }
+    })
   },
 
   addFolder(name = 'New Folder', parentId = null) {

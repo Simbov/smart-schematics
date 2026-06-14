@@ -7,6 +7,7 @@ import useSchematicStore from '../store/schematicStore'
 import { isRunningInTauri, basename } from '../lib/tauriFs'
 import { checkForUpdates } from '../lib/updater'
 import { projectSize, formatBytes, isOverSizeLimit } from '../lib/projectFile'
+import { fitImageToArea, titleBlockLayout, pageLabel } from '../lib/pdfExport'
 
 function downloadBlob(blob, filename) {
   const a = document.createElement('a')
@@ -19,6 +20,80 @@ function downloadBlob(blob, filename) {
 function getSVGElement() {
   return document.querySelector('svg[data-schematic]')
 }
+
+// Tight content bounds (world coords) for any drawing — module-level so both the
+// active-drawing exports and the multi-page project PDF can reuse it.
+function boundsFromDrawing(drawing, pad = 30) {
+  if (!drawing) return null
+  const xs = [], ys = []
+  for (const c of (drawing.components || [])) {
+    xs.push(c.x - 40, c.x + 40)
+    ys.push(c.y - 40, c.y + 40)
+  }
+  for (const w of (drawing.wires || [])) {
+    for (const p of w.points) { xs.push(p.x); ys.push(p.y) }
+  }
+  for (const a of (drawing.annotations || [])) {
+    xs.push(a.x); ys.push(a.y)
+    if (a.type === 'callout') {
+      xs.push(a.x + (a.width || 120))
+      ys.push(a.y + (a.height || 60))
+    }
+  }
+  if (!xs.length) return null
+  return {
+    minX: Math.min(...xs) - pad,
+    minY: Math.min(...ys) - pad,
+    maxX: Math.max(...xs) + pad,
+    maxY: Math.max(...ys) + pad,
+  }
+}
+
+// Rasterise the live schematic SVG to a PNG data URL at 3×, trimmed to `bounds`.
+// Returns { dataUrl, width, height } (world units) or null. Reused by PDF export.
+function captureSvgPng(bounds) {
+  return new Promise(resolve => {
+    const svgEl = getSVGElement()
+    if (!svgEl) return resolve(null)
+    const clone = svgEl.cloneNode(true)
+    const gridG = Array.from(clone.children).find(el => el.tagName === 'g' && !el.hasAttribute('transform'))
+    if (gridG) clone.removeChild(gridG)
+    const contentG = clone.querySelector('g[transform]')
+    if (contentG) contentG.removeAttribute('transform')
+    let vbWidth, vbHeight
+    if (bounds) {
+      vbWidth = bounds.maxX - bounds.minX
+      vbHeight = bounds.maxY - bounds.minY
+      clone.setAttribute('viewBox', `${bounds.minX} ${bounds.minY} ${vbWidth} ${vbHeight}`)
+    } else {
+      vbWidth = 800; vbHeight = 600
+      clone.setAttribute('viewBox', '0 0 800 600')
+    }
+    clone.setAttribute('width', vbWidth)
+    clone.setAttribute('height', vbHeight)
+    clone.removeAttribute('style')
+    const scale = 3
+    const str = new XMLSerializer().serializeToString(clone)
+    const url = URL.createObjectURL(new Blob([str], { type: 'image/svg+xml' }))
+    const img = new Image()
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = vbWidth * scale
+      canvas.height = vbHeight * scale
+      const ctx = canvas.getContext('2d')
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      ctx.scale(scale, scale)
+      ctx.drawImage(img, 0, 0)
+      URL.revokeObjectURL(url)
+      resolve({ dataUrl: canvas.toDataURL('image/png'), width: vbWidth, height: vbHeight })
+    }
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null) }
+    img.src = url
+  })
+}
+
+const nextFrame = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))
 
 export default function FileMenu() {
   const [open, setOpen] = useState(false)
@@ -38,6 +113,7 @@ export default function FileMenu() {
   const drawing = drawings.find(d => d.id === activeDrawingId)
 
   const newDrawing = useSchematicStore(s => s.newDrawing)
+  const setActiveDrawing = useSchematicStore(s => s.setActiveDrawing)
   const duplicateDrawing = useSchematicStore(s => s.duplicateDrawing)
   const exportDrawingJSON = useSchematicStore(s => s.exportDrawingJSON)
   const importDrawingJSON = useSchematicStore(s => s.importDrawingJSON)
@@ -83,32 +159,8 @@ export default function FileMenu() {
 
   const action = useCallback((fn) => () => { setOpen(false); setRecentOpen(false); fn() }, [])
 
-  // Compute tight content bounds from drawing data (world coords)
-  const getContentBounds = useCallback((pad = 30) => {
-    if (!drawing) return null
-    const xs = [], ys = []
-    for (const c of (drawing.components || [])) {
-      xs.push(c.x - 40, c.x + 40)
-      ys.push(c.y - 40, c.y + 40)
-    }
-    for (const w of (drawing.wires || [])) {
-      for (const p of w.points) { xs.push(p.x); ys.push(p.y) }
-    }
-    for (const a of (drawing.annotations || [])) {
-      xs.push(a.x); ys.push(a.y)
-      if (a.type === 'callout') {
-        xs.push(a.x + (a.width || 120))
-        ys.push(a.y + (a.height || 60))
-      }
-    }
-    if (!xs.length) return null
-    return {
-      minX: Math.min(...xs) - pad,
-      minY: Math.min(...ys) - pad,
-      maxX: Math.max(...xs) + pad,
-      maxY: Math.max(...ys) + pad,
-    }
-  }, [drawing])
+  // Compute tight content bounds for the active drawing (world coords)
+  const getContentBounds = useCallback((pad = 30) => boundsFromDrawing(drawing, pad), [drawing])
 
   const exportSVG = useCallback(() => {
     const svgEl = getSVGElement()
@@ -186,6 +238,64 @@ export default function FileMenu() {
     img.onerror = () => URL.revokeObjectURL(url)
     img.src = url
   }, [drawing, getContentBounds])
+
+  // Draw one captured drawing onto a jsPDF page: artwork fit to the area, with a
+  // clean PDF-native title block band along the footer.
+  const addPdfPage = useCallback((pdf, capture, { drawingName, projectName, index, total }) => {
+    if (capture) {
+      const rect = fitImageToArea(capture.width, capture.height)
+      pdf.addImage(capture.dataUrl, 'PNG', rect.x, rect.y, rect.w, rect.h)
+    }
+    const tb = titleBlockLayout()
+    pdf.setDrawColor(120); pdf.setLineWidth(0.3)
+    pdf.rect(tb.x, tb.y, tb.w, tb.h)
+    pdf.line(tb.cells[1].x, tb.y, tb.cells[1].x, tb.y + tb.h)
+    pdf.line(tb.cells[2].x, tb.y, tb.cells[2].x, tb.y + tb.h)
+    const label = (cell, caption, value, big = false) => {
+      pdf.setFontSize(6); pdf.setTextColor(130)
+      pdf.text(caption, cell.x + 2, tb.y + 4)
+      pdf.setFontSize(big ? 12 : 9); pdf.setTextColor(20)
+      pdf.text(String(value || '—'), cell.x + 2, tb.y + 12, { maxWidth: cell.w - 4 })
+    }
+    label(tb.cells[0], 'DRAWING', drawingName, true)
+    label(tb.cells[1], 'PROJECT', projectName)
+    pdf.setFontSize(6); pdf.setTextColor(130)
+    pdf.text('DATE', tb.cells[2].x + 2, tb.y + 4)
+    pdf.setFontSize(8); pdf.setTextColor(20)
+    pdf.text(new Date().toLocaleDateString(), tb.cells[2].x + 2, tb.y + 10)
+    pdf.text(pageLabel(index, total), tb.cells[2].x + 2, tb.y + 17)
+  }, [])
+
+  // jsPDF is heavy (~130 KB gzip) and rarely the first action — load it on demand.
+  const newPdf = async () => {
+    const { jsPDF } = await import('jspdf')
+    return new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+  }
+
+  const exportPagePdf = useCallback(async () => {
+    const capture = await captureSvgPng(boundsFromDrawing(drawing, 30))
+    const pdf = await newPdf()
+    addPdfPage(pdf, capture, { drawingName: drawing?.name, projectName: project?.name, index: 0, total: 1 })
+    pdf.save(`${drawing?.name || 'schematic'}.pdf`)
+  }, [drawing, project, addPdfPage])
+
+  const exportProjectPdf = useCallback(async () => {
+    const ordered = (project?.drawingIds || []).map(id => drawings.find(d => d.id === id)).filter(Boolean)
+    if (!ordered.length) return
+    const restore = activeDrawingId
+    const pdf = await newPdf()
+    for (let i = 0; i < ordered.length; i++) {
+      const d = ordered[i]
+      // Render each drawing into the live canvas, then capture it.
+      setActiveDrawing(d.id)
+      await nextFrame()
+      const capture = await captureSvgPng(boundsFromDrawing(d, 30))
+      if (i > 0) pdf.addPage('a4', 'landscape')
+      addPdfPage(pdf, capture, { drawingName: d.name, projectName: project?.name, index: i, total: ordered.length })
+    }
+    if (restore) { setActiveDrawing(restore); await nextFrame() }
+    pdf.save(`${project?.name || 'project'}.pdf`)
+  }, [project, drawings, activeDrawingId, setActiveDrawing, addPdfPage])
 
   const handleImportDrawing = useCallback(e => {
     const file = e.target.files?.[0]
@@ -326,6 +436,8 @@ export default function FileMenu() {
             onClick={action(exportSVG)} disabled={!activeDrawingId} style={menuItemStyle} />
           <MenuItem icon={<Download size={12} />} label="Export Drawing as PNG"
             onClick={action(exportPNG)} disabled={!activeDrawingId} style={menuItemStyle} />
+          <MenuItem icon={<Download size={12} />} label="Export Page as PDF"
+            onClick={action(exportPagePdf)} disabled={!activeDrawingId} style={menuItemStyle} />
           <MenuItem icon={<Upload size={12} />} label="Import Drawing from JSON"
             onClick={action(() => importRef.current?.click())} style={menuItemStyle} />
 
@@ -335,6 +447,8 @@ export default function FileMenu() {
           <MenuItem icon={<Download size={12} />} label="Export Project as JSON"
             onClick={action(() => activeProjectId && exportProjectJSON(activeProjectId))}
             disabled={!activeProjectId} style={menuItemStyle} />
+          <MenuItem icon={<Download size={12} />} label="Export Project as PDF"
+            onClick={action(exportProjectPdf)} disabled={!activeProjectId} style={menuItemStyle} />
           {!inTauri && (
             <MenuItem icon={<Upload size={12} />} label="Import Project from JSON"
               onClick={action(() => importProjectRef.current?.click())} style={menuItemStyle} />

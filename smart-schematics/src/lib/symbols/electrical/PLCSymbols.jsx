@@ -23,8 +23,12 @@ function CounterFlip({ flipH, flipV, children }) {
 function IOFrame({ glyph, label, labelSize = 9, state, params = {}, flipH, flipV }) {
   // Energised I/O turns amber (color change only — no overlay rects).
   const energised = state?.on
-  const address = params.address || ''
-  const name = params.name || ''
+  // Display toggles — what the symbol draws. name/address default ON, device/
+  // current default OFF (older saved components have no flags → sensible default).
+  const showName = params.showName !== false && params.name
+  const showAddress = params.showAddress !== false && params.address
+  const showDevice = params.showDevice === true && params.device
+  const showCurrent = params.showCurrent === true && params.maxCurrent != null && params.maxCurrent !== ''
   return (
     <g style={energised ? { color: 'var(--sim-active-color, #f59e0b)' } : undefined}>
       <rect x="-18" y="-15" width="28" height="30" rx="2" stroke="currentColor" strokeWidth={SW} fill="none" />
@@ -36,16 +40,20 @@ function IOFrame({ glyph, label, labelSize = 9, state, params = {}, flipH, flipV
       </CounterFlip>
       {/* field-side lead */}
       <line x1="10" y1="0" x2="20" y2="0" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
-      {(address || name) && (
-        <CounterFlip flipH={flipH} flipV={flipV}>
-          {name && (
-            <text x="-4" y="-20" fontSize={7} fill="currentColor" textAnchor="middle">{name}</text>
-          )}
-          {address && (
-            <text x="-4" y="25" fontSize={7} fill="currentColor" textAnchor="middle" fontWeight="bold">{address}</text>
-          )}
-        </CounterFlip>
-      )}
+      <CounterFlip flipH={flipH} flipV={flipV}>
+        {showDevice && (
+          <text x="-4" y="-29" fontSize={6} fill="currentColor" textAnchor="middle" opacity="0.75">{params.device}</text>
+        )}
+        {showName && (
+          <text x="-4" y="-20" fontSize={7} fill="currentColor" textAnchor="middle">{params.name}</text>
+        )}
+        {showAddress && (
+          <text x="-4" y="25" fontSize={7} fill="currentColor" textAnchor="middle" fontWeight="bold">{params.address}</text>
+        )}
+        {showCurrent && (
+          <text x="-4" y="33" fontSize={6} fill="currentColor" textAnchor="middle" opacity="0.85">{`${params.maxCurrent} A`}</text>
+        )}
+      </CounterFlip>
     </g>
   )
 }

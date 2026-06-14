@@ -1282,9 +1282,15 @@ export const ELECTRICAL_COMPONENTS = [
       // input never shows an analogue range.
       device: { label: 'Device', type: 'text', default: '' },
       location: { label: 'Location', type: 'text', default: '' },
+      connector: { label: 'Connector', type: 'text', default: '' },
+      channel: { label: 'Channel', type: 'text', default: '' },
       address: { label: 'Pin Address', type: 'text', default: 'I0.0' },
       name: { label: 'Signal Name', type: 'text', default: '' },
       mode: { label: 'Mode', type: 'select', options: ['Digital', 'Analogue'], default: 'Digital' },
+      // Display toggles — what the symbol draws on the schematic.
+      showName: { label: 'Signal name', type: 'boolean', default: true },
+      showAddress: { label: 'Pin address', type: 'boolean', default: true },
+      showDevice: { label: 'Device name', type: 'boolean', default: false },
       voltage: { label: 'Input Voltage (V)', type: 'number', default: 24, modes: ['Digital'] },
       threshold: { label: 'Switching Threshold (V)', type: 'number', default: 11, modes: ['Digital'] },
       range: {
@@ -1315,9 +1321,16 @@ export const ELECTRICAL_COMPONENTS = [
     simParams: {
       device: { label: 'Device', type: 'text', default: '' },
       location: { label: 'Location', type: 'text', default: '' },
+      connector: { label: 'Connector', type: 'text', default: '' },
+      channel: { label: 'Channel', type: 'text', default: '' },
       address: { label: 'Pin Address', type: 'text', default: 'Q0.0' },
       name: { label: 'Signal Name', type: 'text', default: '' },
       mode: { label: 'Mode', type: 'select', options: ['Digital', 'PWM'], default: 'Digital' },
+      // Display toggles — what the symbol draws on the schematic.
+      showName: { label: 'Signal name', type: 'boolean', default: true },
+      showAddress: { label: 'Pin address', type: 'boolean', default: true },
+      showDevice: { label: 'Device name', type: 'boolean', default: false },
+      showCurrent: { label: 'Current rating', type: 'boolean', default: false },
       voltage: { label: 'Output Voltage (V)', type: 'number', default: 24 },
       maxCurrent: { label: 'Max Current (A)', type: 'number', default: 0.5 },
       frequency: { label: 'PWM Frequency (Hz)', type: 'number', default: 1000, modes: ['PWM'] },
