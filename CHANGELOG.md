@@ -12,6 +12,8 @@ section with the version and date and starts a fresh Unreleased block.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-06-15
+
 ### Fixed
 - **PLC devices no longer disappear.** Reopening a saved project (or importing one)
   was silently wiping the PLC device registry — your devices, pins and wiring
