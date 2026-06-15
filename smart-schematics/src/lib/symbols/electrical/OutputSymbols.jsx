@@ -14,22 +14,25 @@ export function LampSymbol() {
   )
 }
 
-// Horn / klaxon: driver disc + flaring trumpet, sound arcs in front. When
-// powered the arcs pulse outward one after another — the "volume" animates.
+// Horn / klaxon: both terminals enter from the LEFT (wired from one side, like a
+// real horn block); the driver + flaring trumpet face RIGHT so the "speaker"
+// projects outward. When powered the sound arcs pulse outward one after another.
 export function HornSymbol({ state }) {
   const on = state?.on
   const arcs = [
-    { d: 'M 8,-4 A 6,6 0 0 1 8,4', delay: '0s' },
-    { d: 'M 11,-6.5 A 9,9 0 0 1 11,6.5', delay: '0.25s' },
-    { d: 'M 14,-9 A 12,12 0 0 1 14,9', delay: '0.5s' },
+    { d: 'M 11,-5 A 7,7 0 0 1 11,5', delay: '0s' },
+    { d: 'M 14,-7 A 10,10 0 0 1 14,7', delay: '0.25s' },
+    { d: 'M 17,-9 A 13,13 0 0 1 17,9', delay: '0.5s' },
   ]
   return (
     <g>
-      <line x1="-20" y1="0" x2="-14" y2="0" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
+      {/* both leads enter from the left, then turn into the driver back */}
+      <polyline points="-20,-10 -9,-10 -9,-6" stroke="currentColor" strokeWidth={SW} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      <polyline points="-20,10 -9,10 -9,6" stroke="currentColor" strokeWidth={SW} fill="none" strokeLinecap="round" strokeLinejoin="round" />
       {/* driver body */}
-      <circle cx="-9" cy="0" r="5" stroke="currentColor" strokeWidth={SW} fill="none" />
-      {/* trumpet flare */}
-      <path d="M -4,-3 L 5,-9 L 5,9 L -4,3 Z" stroke="currentColor" strokeWidth={SW} fill="none" strokeLinejoin="round" />
+      <rect x="-9" y="-6" width="5" height="12" stroke="currentColor" strokeWidth={SW} fill="none" />
+      {/* trumpet flare opening to the right */}
+      <path d="M -4,-6 L 8,-12 L 8,12 L -4,6 Z" stroke="currentColor" strokeWidth={SW} fill="none" strokeLinejoin="round" />
       {/* sound arcs — static & faint when off; pulsing when powered */}
       {arcs.map((a, i) => (
         <path key={i} d={a.d} stroke="currentColor" strokeWidth={SW} fill="none" strokeLinecap="round"
@@ -40,7 +43,6 @@ export function HornSymbol({ state }) {
           )}
         </path>
       ))}
-      <line x1="16" y1="0" x2="20" y2="0" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
     </g>
   )
 }

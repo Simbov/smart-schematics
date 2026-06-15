@@ -6,6 +6,7 @@ import {
   addDeviceImage, removeDeviceImage,
   findDevice, findDeviceByName, pinsForIoType, modeForKind, bindingParams,
   pinIsCapable, resolveBinding, devicesToCsv, groupPinsByConnector, migratePlcDevice,
+  sortPins,
   resyncPlcComponents,
   PIN_KINDS,
 } from './plcDevices'
@@ -99,6 +100,7 @@ describe('PLC device registry model', () => {
       name: 'Tank level',
       channel: 'CH3',
       connector: 'X2',
+      maxCurrent: '',
       notes: '0–10V',
       mode: 'Analogue',
       pinId: pin.id,
@@ -177,12 +179,13 @@ describe('PLC device registry model', () => {
     let devices = addDevice([], 'PLC1')
     const id = devices[0].id
     devices = updateDevice(devices, id, { location: 'Cab, A' })
-    devices = addPin(devices, id, { address: 'I0.0', name: 'Start', kind: 'DI', connector: 'X1', channel: 'CH1' })
+    devices = addPin(devices, id, { address: 'I0.0', name: 'Start', kind: 'DI', connector: 'X1', channel: 'CH1', maxCurrent: '0.5' })
     const csv = devicesToCsv(devices)
     const lines = csv.split('\n')
-    expect(lines[0]).toBe('Device,Location,Connector,Address,Channel,Type,Capabilities,Signal name,Notes')
+    expect(lines[0]).toBe('Device,Location,Connector,Address,Channel,Type,Capabilities,Max current (A),Signal name,Notes')
     expect(lines[1]).toContain('"Cab, A"')
     expect(lines[1]).toContain('I0.0')
+    expect(lines[1]).toContain('0.5')
     expect(lines).toHaveLength(2)
   })
 
@@ -229,7 +232,44 @@ describe('PLC device registry model', () => {
     expect(migrated.pins[0].capabilities).toEqual(['DI'])
     expect(migrated.pins[0].channel).toBe('')
     expect(migrated.pins[0].connector).toBe('')
+    expect(migrated.pins[0].maxCurrent).toBe('')
     expect(migrated.pins[0].address).toBe('I0.0') // untouched
     expect(migrated.pins[0].name).toBe('Start')
+  })
+
+  describe('sortPins', () => {
+    // Stored order is C, A, B across mixed connectors/channels/kinds.
+    const device = { pins: [
+      { id: 'p1', address: 'C', connector: 'X2', channel: 'CH10', kind: 'DO' },
+      { id: 'p2', address: 'A', connector: 'X1', channel: 'CH2', kind: 'PWM' },
+      { id: 'p3', address: 'B', connector: 'X10', channel: 'CH1', kind: 'DI' },
+    ] }
+    const addrs = mode => sortPins(device, mode).map(p => p.address)
+
+    it('manual mode returns the stored order', () => {
+      expect(addrs('manual')).toEqual(['C', 'A', 'B'])
+      expect(addrs(undefined)).toEqual(['C', 'A', 'B'])
+    })
+    it('connector mode sorts naturally (X1 < X2 < X10)', () => {
+      expect(addrs('connector')).toEqual(['A', 'C', 'B'])
+    })
+    it('channel mode sorts naturally (CH1 < CH2 < CH10)', () => {
+      expect(addrs('channel')).toEqual(['B', 'A', 'C'])
+    })
+    it('type mode orders by DI/DO/AI/PWM', () => {
+      expect(addrs('type')).toEqual(['B', 'C', 'A'])
+    })
+    it('is a pure view — does not mutate the stored pins', () => {
+      const before = device.pins.map(p => p.address)
+      sortPins(device, 'connector')
+      expect(device.pins.map(p => p.address)).toEqual(before)
+    })
+    it('keeps stored order for ties', () => {
+      const d = { pins: [
+        { id: 'a', address: 'A', connector: 'X1' },
+        { id: 'b', address: 'B', connector: 'X1' },
+      ] }
+      expect(sortPins(d, 'connector').map(p => p.address)).toEqual(['A', 'B'])
+    })
   })
 })

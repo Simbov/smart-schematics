@@ -1109,11 +1109,11 @@ export const ELECTRICAL_COMPONENTS = [
     defaultDesignatorPrefix: 'HA',
     defaultValue: '24V',
     width: 44,
-    height: 28,
+    height: 32,
     viewBox: '-22 -16 44 32',
     pins: [
-      { id: 'PWR', relX: -20, relY: 0, direction: 'W' },
-      { id: 'GND', relX: 20, relY: 0, direction: 'E' },
+      { id: 'PWR', relX: -20, relY: -10, direction: 'W' },
+      { id: 'GND', relX: -20, relY: 10, direction: 'W' },
     ],
     simParams: {
       voltage: { label: 'Rated Voltage (V)', type: 'number', default: 24 },

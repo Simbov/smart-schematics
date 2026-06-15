@@ -429,6 +429,7 @@ const useSchematicStore = create((set, get) => ({
         activeDrawingId: drawings[0]?.id || null,
         folders: data.folders,
         attachments: data.attachments,
+        plcDevices: data.plcDevices,   // carry the PLC registry through (was dropped → wiped on import)
         lastSaved: null,
       })
       set(state => ({
@@ -1454,6 +1455,7 @@ const useSchematicStore = create((set, get) => ({
         activeDrawingId: drawings[0]?.id || null,
         folders: data.folders,
         attachments: data.attachments,
+        plcDevices: data.plcDevices,   // carry the PLC registry through (was dropped → wiped on every reopen)
         filePath: path,   // bind this project to the file it was loaded from
         lastSaved: Date.now(),
       })

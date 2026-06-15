@@ -12,6 +12,28 @@ section with the version and date and starts a fresh Unreleased block.
 
 ## [Unreleased]
 
+### Fixed
+- **PLC devices no longer disappear.** Reopening a saved project (or importing one)
+  was silently wiping the PLC device registry — your devices, pins and wiring
+  notes are now kept through every open and import.
+
+### Added
+- **Read-only / Edit modes on the PLC Devices page.** The page now opens as a
+  clean, read-only connector/pin list; click **Edit** to add, change, reorder or
+  delete devices and pins, then **Done** to lock it back to a tidy view.
+- **Sort PLC pins** by whatever you're after — manual order, connector → pin,
+  channel, or type (DI/DO/AI/PWM) — from a sort selector at the top of the page.
+- **Current rating per pin.** Each PLC pin has a **Max A** field for its current
+  rating; it shows on the page, exports to CSV, and appears on placed PLC
+  inputs/outputs that are bound to that pin.
+- **Connector column** is now editable directly on the PLC Devices page, so
+  devices with several connectors are easy to lay out and read.
+
+### Changed
+- **Horn symbol** redrawn so both terminals enter from the same (left) side and
+  the trumpet faces right — matching how a horn is actually wired and where the
+  sound comes out.
+
 ## [0.7.0] - 2026-06-14
 
 ### Added

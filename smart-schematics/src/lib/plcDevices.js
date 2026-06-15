@@ -6,10 +6,12 @@
 // mode, device and location from the registry instead of retyping them.
 //
 //   Device: { id, name, location, images: DeviceImage[], pins: Pin[] }
-//   Pin:    { id, address, name, kind, capabilities, channel, connector, notes }
+//   Pin:    { id, address, name, kind, capabilities, channel, connector, maxCurrent, notes }
 //   kind ∈ 'DI' | 'DO' | 'AI' | 'PWM'  — what the pin is *configured* as.
 //   capabilities ⊆ PIN_KINDS — what the pin *can* do (e.g. PWM-capable but set DO).
 //   channel = logical channel name, e.g. "CH1" (free text).
+//   maxCurrent = the pin's current rating in amps, e.g. "0.5" (free text — what
+//   the pin is *capable* of driving/sinking).
 //   connector = which physical plug the pin sits on, e.g. "X1" (free text) —
 //   the device page reads like a connector/pin list.
 //   DeviceImage = { id, src, heading } — a photo of where the PLC physically sits.
@@ -43,7 +45,7 @@ export function createPlcPin(overrides = {}) {
     id: genPlcId('plcpin'),
     address: '', name: '', kind,
     capabilities: [kind],   // what the pin *can* do; defaults to its configured kind
-    channel: '', connector: '', notes: '',
+    channel: '', connector: '', maxCurrent: '', notes: '',
     ...overrides,
   }
 }
@@ -166,6 +168,7 @@ export function bindingParams(device, pin) {
     name: pin.name || '',
     channel: pin.channel || '',
     connector: pin.connector || '',
+    maxCurrent: pin.maxCurrent || '',
     notes: pin.notes || '',
     mode: modeForKind(pin.kind),
     pinId: pin.id,          // stable binding key — survives device rename / address edits
@@ -175,7 +178,7 @@ export function bindingParams(device, pin) {
 // The simParam keys that the registry owns once a component is bound to a pin.
 // The Properties panel renders these read-only for bound components and resolves
 // their live values from the registry via bindingParams (registry is master).
-export const REGISTRY_OWNED_KEYS = ['name', 'channel', 'connector', 'location', 'notes', 'mode']
+export const REGISTRY_OWNED_KEYS = ['name', 'channel', 'connector', 'maxCurrent', 'location', 'notes', 'mode']
 
 // Find a pin (and its owning device) anywhere in the registry by its stable id.
 export function findPinById(devices, pinId) {
@@ -238,17 +241,54 @@ const csvCell = v => {
 // Flatten the device registry into a CSV (one row per pin) — a portable
 // connector/pin list that opens in Excel or imports into PLC tooling.
 export function devicesToCsv(devices) {
-  const header = ['Device', 'Location', 'Connector', 'Address', 'Channel', 'Type', 'Capabilities', 'Signal name', 'Notes']
+  const header = ['Device', 'Location', 'Connector', 'Address', 'Channel', 'Type', 'Capabilities', 'Max current (A)', 'Signal name', 'Notes']
   const rows = [header]
   for (const d of devices || []) {
     for (const p of d.pins || []) {
       rows.push([
         d.name, d.location || '', p.connector || '', p.address || '', p.channel || '',
-        p.kind || '', (p.capabilities || [p.kind]).join('/'), p.name || '', p.notes || '',
+        p.kind || '', (p.capabilities || [p.kind]).join('/'), p.maxCurrent || '', p.name || '', p.notes || '',
       ])
     }
   }
   return rows.map(r => r.map(csvCell).join(',')).join('\n')
+}
+
+// ── Pin ordering ──────────────────────────────────────────────────────────
+// The page lets the user re-sort a device's pin list on the fly depending on
+// what they're looking for. Modes are pure views over the stored pins; only
+// 'manual' reflects the hand-ordered ▲/▼ sequence, so reorder controls show
+// only in that mode (the others derive order and would fight the buttons).
+export const PIN_SORT_MODES = [
+  { id: 'manual', label: 'Manual order' },
+  { id: 'connector', label: 'Connector → pin' },
+  { id: 'channel', label: 'Channel' },
+  { id: 'type', label: 'Type (DI/DO/AI/PWM)' },
+]
+
+// Natural compare so "CH2" < "CH10" and "X2" < "X10"; blanks sort last.
+function naturalCompare(a, b) {
+  const sa = String(a ?? ''), sb = String(b ?? '')
+  if (!sa && !sb) return 0
+  if (!sa) return 1
+  if (!sb) return -1
+  return sa.localeCompare(sb, undefined, { numeric: true, sensitivity: 'base' })
+}
+
+// Return a device's pins ordered by `mode`. Stable: ties keep the stored order.
+// 'manual' (and any unknown mode) returns the pins in their stored sequence.
+export function sortPins(device, mode = 'manual') {
+  const pins = device?.pins || []
+  if (mode === 'manual' || !mode) return [...pins]
+  const keyed = pins.map((pin, i) => ({ pin, i }))
+  const cmp = {
+    connector: (a, b) => naturalCompare(a.pin.connector, b.pin.connector),
+    channel: (a, b) => naturalCompare(a.pin.channel, b.pin.channel),
+    type: (a, b) => PIN_KINDS.indexOf(a.pin.kind) - PIN_KINDS.indexOf(b.pin.kind),
+  }[mode]
+  if (!cmp) return [...pins]
+  keyed.sort((a, b) => cmp(a, b) || a.i - b.i)
+  return keyed.map(k => k.pin)
 }
 
 // Group a device's pins by connector for the connector-organised page view.
@@ -280,6 +320,7 @@ export function migratePlcDevice(device) {
   for (const p of (device.pins || [])) {
     p.channel ??= ''
     p.connector ??= ''
+    p.maxCurrent ??= ''
     p.notes ??= ''
     if (!p.capabilities || !p.capabilities.length) p.capabilities = [p.kind || 'DI']
   }

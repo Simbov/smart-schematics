@@ -1535,6 +1535,7 @@ export default function PropertiesPanel() {
                         {valOf('location') && <Row label="Location">{valOf('location')}</Row>}
                         {valOf('connector') && <Row label="Connector">{valOf('connector')}</Row>}
                         {valOf('channel') && <Row label="Channel">{valOf('channel')}</Row>}
+                        {valOf('maxCurrent') && <Row label="Max current">{valOf('maxCurrent')} A</Row>}
                         <Row label="Mode">{plcMode}</Row>
                         {electrical.map(([key, p]) => (
                           <Row key={key} label={p.label}>{String(valOf(key))}</Row>
@@ -1619,6 +1620,7 @@ export default function PropertiesPanel() {
                             onBlur={() => commitSimParam('channel', localSim.channel ?? '')}
                             placeholder="e.g. CH1" />
                         )}
+                        {bound && valOf('maxCurrent') && <ROField label="Max current" value={`${valOf('maxCurrent')} A`} />}
                         {bound ? <ROField label="Mode" value={plcMode} /> : (
                           <SelectField label="Mode" value={plcMode} options={modeOptions}
                             onChange={v => commitSimParams({ mode: v })} />
