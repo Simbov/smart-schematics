@@ -87,7 +87,8 @@ describe('PLC device registry model', () => {
     expect(modeForKind('DO')).toBe('Digital')
     expect(modeForKind('AI')).toBe('Analogue')
     expect(modeForKind('PWM')).toBe('PWM')
-    expect(PIN_KINDS).toEqual(['DI', 'DO', 'AI', 'PWM'])
+    expect(modeForKind('FREQ')).toBe('Digital')
+    expect(PIN_KINDS).toEqual(['DI', 'DO', 'AI', 'PWM', 'FREQ', 'CANH', 'CANL', 'CANSH'])
   })
 
   it('bindingParams auto-populates device, location, address, name, channel, connector, notes, mode and pinId', () => {

@@ -43,6 +43,37 @@ export async function readTextFile(path) {
   return readTextFile(path)
 }
 
+// Read a text file, retrying on transient failures. OneDrive (and other cloud
+// sync clients with Files-On-Demand) often present a file as an unmaterialized
+// placeholder at app launch: the first read triggers hydration and can throw or
+// time out before the bytes are local. A few spaced retries let the download
+// settle so a saved project opens instead of failing every launch.
+// `read` is injectable for testing; defaults to the real Tauri reader.
+export async function readTextFileWithRetry(path, { tries = 4, delayMs = 400, read = readTextFile } = {}) {
+  let lastErr
+  for (let i = 0; i < tries; i++) {
+    try {
+      return await read(path)
+    } catch (e) {
+      lastErr = e
+      if (i < tries - 1) await new Promise(r => setTimeout(r, delayMs))
+    }
+  }
+  throw lastErr
+}
+
+// Whether a path exists on disk. Tauri-only; returns null in a plain browser so
+// callers can tell "unknown" apart from a definite true/false.
+export async function fileExists(path) {
+  if (!isRunningInTauri() || !path) return null
+  try {
+    const { exists } = await import('@tauri-apps/plugin-fs')
+    return await exists(path)
+  } catch {
+    return null
+  }
+}
+
 export async function writeTextFile(path, content) {
   if (!isRunningInTauri()) return
   const { writeTextFile } = await import('@tauri-apps/plugin-fs')

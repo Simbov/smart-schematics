@@ -192,6 +192,15 @@ function _runDCSimulation(components, wires, interactiveStates) {
         vsourceComps.push({ comp, posNet: pn('A'), negNet: pn('B'), V: comp.simParams?.voltage ?? parseValue(comp.value, 12) })
       } else if (comp.type === 'vcc_rail' && pn('PWR')) {
         vsourceComps.push({ comp, posNet: pn('PWR'), negNet: groundNet, V: comp.simParams?.voltage ?? parseValue(comp.value, 5) })
+      } else if (comp.type === 'plc_input' && pn('IN') && (comp.simParams?.mode ?? 'Digital') === 'Digital') {
+        // A digital input terminal asserts a field signal onto its IN pin: High
+        // drives the configured input voltage, Low ties IN to 0 V. Modelled as a
+        // voltage source to ground so anything wired to the input actually
+        // responds to the High/Low toggle (the analogue mode has no binary state
+        // and is left unstamped).
+        const high = interactiveStates[comp.id]?.state === 'closed'
+        const V = high ? (comp.simParams?.voltage ?? 24) : 0
+        vsourceComps.push({ comp, posNet: pn('IN'), negNet: groundNet, V })
       }
     }
     const M = N + vsourceComps.length

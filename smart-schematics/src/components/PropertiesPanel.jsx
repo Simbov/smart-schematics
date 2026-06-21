@@ -11,7 +11,7 @@ import { normalizeUrl } from '../lib/boxLinks'
 import { addRow, addCol, removeRow, removeCol, insertRow, insertCol, moveRow, moveCol, resizeRow, resizeCol } from '../lib/tableModel'
 import { copyTableToClipboard } from '../lib/tableClipboard'
 import { RESISTOR_STYLES } from '../lib/resistorStyle'
-import { findDeviceByName, pinsForIoType, bindingParams, resolveBinding } from '../lib/plcDevices'
+import { findDeviceByName, pinsForIoType, bindingParams, resolveBinding, pinPickerLabel, writeSignalToRegistry } from '../lib/plcDevices'
 import Lightbox from './Lightbox'
 import ImageCropper from './ImageCropper'
 import ColorField from './ColorField'
@@ -381,6 +381,8 @@ export default function PropertiesPanel() {
   const deleteIds = useSchematicStore(s => s.deleteIds)
   const setShowPlcDeviceManager = useSchematicStore(s => s.setShowPlcDeviceManager)
   const plcDevices = useSchematicStore(s => s.projects.find(p => p.id === s.activeProjectId)?.plcDevices) || []
+  const setPlcDevices = useSchematicStore(s => s.setPlcDevices)
+  const plcSignalMaster = useSchematicStore(s => s.projects.find(p => p.id === s.activeProjectId)?.plcSignalMaster) || 'registry'
 
   const isRunning = useSimulationStore(s => s.isRunning)
   const simCompState = useSimulationStore(s => s.componentStates[selectedIds[0]])
@@ -1474,12 +1476,24 @@ export default function PropertiesPanel() {
               const binding = resolveBinding(plcDevices, localSim)
               const bound = binding.bound
               const src = binding.params
+              // When the project's signal master is 'schematic', a bound symbol's
+              // signal name + I/O type are editable here and write back to the
+              // registry pin (which then re-syncs every other bound symbol).
+              const schematicMaster = plcSignalMaster === 'schematic'
+              const editableSignal = bound && schematicMaster
+              const boundPinId = binding.pin?.id || localSim.pinId
+              const writeBackName = (name) => setPlcDevices(writeSignalToRegistry(plcDevices, boundPinId, { name }))
+              const writeBackKind = (kind) => setPlcDevices(writeSignalToRegistry(plcDevices, boundPinId, { kind }))
+              // mode (Digital/Analogue/PWM) → registry kind (DI/AI/DO/PWM).
+              const kindForMode = (m) => selected.type === 'plc_input'
+                ? (m === 'Analogue' ? 'AI' : 'DI')
+                : (m === 'PWM' ? 'PWM' : 'DO')
               const plcMode = src.mode ?? simParamDefs.mode?.default ?? 'Digital'
               const modeOptions = simParamDefs.mode?.options ?? []
               // Identification keys + display toggles are laid out by hand; the
               // rest (electrical characteristics) render generically, by mode.
               const ID_KEYS = ['device', 'location', 'connector', 'channel', 'address', 'name', 'mode', 'notes']
-              const DISPLAY_KEYS = ['showName', 'showAddress', 'showDevice', 'showCurrent']
+              const DISPLAY_KEYS = ['showName', 'showAddress', 'showDevice', 'showConnector', 'showChannel', 'showCurrent']
               const electrical = Object.entries(simParamDefs)
                 .filter(([key]) => !ID_KEYS.includes(key) && !DISPLAY_KEYS.includes(key))
                 .filter(([, p]) => !p.modes || p.modes.includes(plcMode))
@@ -1572,7 +1586,7 @@ export default function PropertiesPanel() {
                             value={devicePins.some(p => p.address === src.address) ? src.address : ''}
                             emptyLabel={devicePins.length ? '— pick a pin —' : 'no matching pins on device'}
                             options={devicePins.map(p => p.address)}
-                            optionLabels={devicePins.map(p => p.name ? `${p.address} — ${p.name}` : p.address)}
+                            optionLabels={devicePins.map(p => pinPickerLabel(p))}
                             onChange={addr => {
                               const pin = devicePins.find(p => p.address === addr)
                               if (pin) commitSimParams(bindingParams(device, pin))
@@ -1597,12 +1611,20 @@ export default function PropertiesPanel() {
                       <Section title="Signal">
                         {bound && (
                           <div className="text-gray-400 mb-0.5" style={{ fontSize: 10, lineHeight: 1.3 }}>
-                            Linked to <b>{valOf('device')}</b> · {valOf('address') || 'pin'} — signal identity is owned by
-                            the registry. Edit it on the <button type="button" className="underline" style={{ color: '#2563eb' }}
-                              onClick={() => setShowPlcDeviceManager(true)}>PLC Devices</button> page.
+                            Linked to <b>{valOf('device')}</b> · {valOf('address') || 'pin'} — {schematicMaster
+                              ? <>signal name + I/O type are editable here and write back to the registry pin.</>
+                              : <>signal identity is owned by the registry. Edit it on the <button type="button" className="underline" style={{ color: '#2563eb' }}
+                                  onClick={() => setShowPlcDeviceManager(true)}>PLC Devices</button> page.</>}
                           </div>
                         )}
-                        {bound ? <ROField label="Name" value={valOf('name')} /> : (
+                        {bound ? (
+                          editableSignal ? (
+                            <Field label="Name" value={localSim.name ?? valOf('name')}
+                              onChange={v => setLocalSim(s => ({ ...s, name: v }))}
+                              onBlur={() => writeBackName(localSim.name ?? valOf('name'))}
+                              placeholder="e.g. Start button" />
+                          ) : <ROField label="Name" value={valOf('name')} />
+                        ) : (
                           <Field label="Name" value={localSim.name ?? ''}
                             onChange={v => setLocalSim(s => ({ ...s, name: v }))}
                             onBlur={() => commitSimParam('name', localSim.name ?? '')}
@@ -1621,7 +1643,12 @@ export default function PropertiesPanel() {
                             placeholder="e.g. CH1" />
                         )}
                         {bound && valOf('maxCurrent') && <ROField label="Max current" value={`${valOf('maxCurrent')} A`} />}
-                        {bound ? <ROField label="Mode" value={plcMode} /> : (
+                        {bound ? (
+                          editableSignal ? (
+                            <SelectField label="I/O type" value={plcMode} options={modeOptions}
+                              onChange={v => writeBackKind(kindForMode(v))} />
+                          ) : <ROField label="Mode" value={plcMode} />
+                        ) : (
                           <SelectField label="Mode" value={plcMode} options={modeOptions}
                             onChange={v => commitSimParams({ mode: v })} />
                         )}

@@ -8,6 +8,7 @@ import { isRunningInTauri, basename } from '../lib/tauriFs'
 import { checkForUpdates } from '../lib/updater'
 import { projectSize, formatBytes, isOverSizeLimit } from '../lib/projectFile'
 import { fitImageToArea, titleBlockLayout, pageLabel } from '../lib/pdfExport'
+import { inlineComputedColors, boundsFromDrawing } from '../lib/svgExport'
 
 function downloadBlob(blob, filename) {
   const a = document.createElement('a')
@@ -23,31 +24,8 @@ function getSVGElement() {
 
 // Tight content bounds (world coords) for any drawing — module-level so both the
 // active-drawing exports and the multi-page project PDF can reuse it.
-function boundsFromDrawing(drawing, pad = 30) {
-  if (!drawing) return null
-  const xs = [], ys = []
-  for (const c of (drawing.components || [])) {
-    xs.push(c.x - 40, c.x + 40)
-    ys.push(c.y - 40, c.y + 40)
-  }
-  for (const w of (drawing.wires || [])) {
-    for (const p of w.points) { xs.push(p.x); ys.push(p.y) }
-  }
-  for (const a of (drawing.annotations || [])) {
-    xs.push(a.x); ys.push(a.y)
-    if (a.type === 'callout') {
-      xs.push(a.x + (a.width || 120))
-      ys.push(a.y + (a.height || 60))
-    }
-  }
-  if (!xs.length) return null
-  return {
-    minX: Math.min(...xs) - pad,
-    minY: Math.min(...ys) - pad,
-    maxX: Math.max(...xs) + pad,
-    maxY: Math.max(...ys) + pad,
-  }
-}
+// `boundsFromDrawing` now lives in lib/svgExport.js (shared, unit-tested, and
+// aware of images/tables/junctions + real component footprints).
 
 // Rasterise the live schematic SVG to a PNG data URL at 3×, trimmed to `bounds`.
 // Returns { dataUrl, width, height } (world units) or null. Reused by PDF export.
@@ -56,6 +34,10 @@ function captureSvgPng(bounds) {
     const svgEl = getSVGElement()
     if (!svgEl) return resolve(null)
     const clone = svgEl.cloneNode(true)
+    // Resolve CSS-variable colours to concrete values before the clone leaves the
+    // document — otherwise wires/strokes lose their var(--…) colour when rendered
+    // as a standalone image.
+    inlineComputedColors(svgEl, clone)
     const gridG = Array.from(clone.children).find(el => el.tagName === 'g' && !el.hasAttribute('transform'))
     if (gridG) clone.removeChild(gridG)
     const contentG = clone.querySelector('g[transform]')
@@ -130,6 +112,7 @@ export default function FileMenu() {
   const addAttachment = useSchematicStore(s => s.addAttachment)
   const removeAttachment = useSchematicStore(s => s.removeAttachment)
   const exportAttachment = useSchematicStore(s => s.exportAttachment)
+  const setExportStatus = useSchematicStore(s => s.setExportStatus)
 
   const inTauri = isRunningInTauri()
 
@@ -172,6 +155,7 @@ export default function FileMenu() {
     // safety net for rasterizers that drop foreignObject; it ships in the clone
     // too. We deliberately do not strip either layer here.
     const clone = svgEl.cloneNode(true)
+    inlineComputedColors(svgEl, clone)
     const gridG = Array.from(clone.children).find(el => el.tagName === 'g' && !el.hasAttribute('transform'))
     if (gridG) clone.removeChild(gridG)
     const contentG = clone.querySelector('g[transform]')
@@ -193,12 +177,15 @@ export default function FileMenu() {
     const str = new XMLSerializer().serializeToString(clone)
     const blob = new Blob([str], { type: 'image/svg+xml' })
     downloadBlob(blob, `${drawing?.name || 'schematic'}.svg`)
-  }, [drawing, getContentBounds])
+    setExportStatus({ phase: 'done', label: 'SVG exported' })
+  }, [drawing, getContentBounds, setExportStatus])
 
   const exportPNG = useCallback(() => {
     const svgEl = getSVGElement()
     if (!svgEl) return
+    setExportStatus({ phase: 'rendering', label: 'Rendering PNG…' })
     const clone = svgEl.cloneNode(true)
+    inlineComputedColors(svgEl, clone)
     const gridG = Array.from(clone.children).find(el => el.tagName === 'g' && !el.hasAttribute('transform'))
     if (gridG) clone.removeChild(gridG)
     const contentG = clone.querySelector('g[transform]')
@@ -218,6 +205,8 @@ export default function FileMenu() {
       clone.setAttribute('height', vbHeight)
     }
     clone.removeAttribute('style')
+    // PNG always rasterises onto an opaque white background so a dark theme or
+    // transparent canvas never bleeds through as a grey/black export.
     const scale = 3
     const str = new XMLSerializer().serializeToString(clone)
     const blob = new Blob([str], { type: 'image/svg+xml' })
@@ -228,16 +217,19 @@ export default function FileMenu() {
       canvas.width = vbWidth * scale
       canvas.height = vbHeight * scale
       const ctx = canvas.getContext('2d')
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
       ctx.scale(scale, scale)
       ctx.drawImage(img, 0, 0)
       URL.revokeObjectURL(url)
       canvas.toBlob(pngBlob => {
         downloadBlob(pngBlob, `${drawing?.name || 'schematic'}.png`)
+        setExportStatus({ phase: 'done', label: 'PNG exported' })
       }, 'image/png')
     }
-    img.onerror = () => URL.revokeObjectURL(url)
+    img.onerror = () => { URL.revokeObjectURL(url); setExportStatus({ phase: 'error', label: 'PNG export failed' }) }
     img.src = url
-  }, [drawing, getContentBounds])
+  }, [drawing, getContentBounds, setExportStatus])
 
   // Draw one captured drawing onto a jsPDF page: artwork fit to the area, with a
   // clean PDF-native title block band along the footer.
@@ -273,29 +265,44 @@ export default function FileMenu() {
   }
 
   const exportPagePdf = useCallback(async () => {
-    const capture = await captureSvgPng(boundsFromDrawing(drawing, 30))
-    const pdf = await newPdf()
-    addPdfPage(pdf, capture, { drawingName: drawing?.name, projectName: project?.name, index: 0, total: 1 })
-    pdf.save(`${drawing?.name || 'schematic'}.pdf`)
-  }, [drawing, project, addPdfPage])
+    setExportStatus({ phase: 'rendering', label: 'Building PDF…' })
+    try {
+      const capture = await captureSvgPng(boundsFromDrawing(drawing, 30))
+      const pdf = await newPdf()
+      addPdfPage(pdf, capture, { drawingName: drawing?.name, projectName: project?.name, index: 0, total: 1 })
+      pdf.save(`${drawing?.name || 'schematic'}.pdf`)
+      setExportStatus({ phase: 'done', label: 'PDF exported' })
+    } catch (e) {
+      console.error('PDF export failed', e)
+      setExportStatus({ phase: 'error', label: 'PDF export failed' })
+    }
+  }, [drawing, project, addPdfPage, setExportStatus])
 
   const exportProjectPdf = useCallback(async () => {
     const ordered = (project?.drawingIds || []).map(id => drawings.find(d => d.id === id)).filter(Boolean)
     if (!ordered.length) return
     const restore = activeDrawingId
-    const pdf = await newPdf()
-    for (let i = 0; i < ordered.length; i++) {
-      const d = ordered[i]
-      // Render each drawing into the live canvas, then capture it.
-      setActiveDrawing(d.id)
-      await nextFrame()
-      const capture = await captureSvgPng(boundsFromDrawing(d, 30))
-      if (i > 0) pdf.addPage('a4', 'landscape')
-      addPdfPage(pdf, capture, { drawingName: d.name, projectName: project?.name, index: i, total: ordered.length })
+    try {
+      const pdf = await newPdf()
+      for (let i = 0; i < ordered.length; i++) {
+        const d = ordered[i]
+        setExportStatus({ phase: 'rendering', label: `Building PDF — page ${i + 1} of ${ordered.length}…` })
+        // Render each drawing into the live canvas, then capture it.
+        setActiveDrawing(d.id)
+        await nextFrame()
+        const capture = await captureSvgPng(boundsFromDrawing(d, 30))
+        if (i > 0) pdf.addPage('a4', 'landscape')
+        addPdfPage(pdf, capture, { drawingName: d.name, projectName: project?.name, index: i, total: ordered.length })
+      }
+      if (restore) { setActiveDrawing(restore); await nextFrame() }
+      pdf.save(`${project?.name || 'project'}.pdf`)
+      setExportStatus({ phase: 'done', label: `PDF exported — ${ordered.length} page${ordered.length > 1 ? 's' : ''}` })
+    } catch (e) {
+      console.error('Project PDF export failed', e)
+      if (restore) setActiveDrawing(restore)
+      setExportStatus({ phase: 'error', label: 'PDF export failed' })
     }
-    if (restore) { setActiveDrawing(restore); await nextFrame() }
-    pdf.save(`${project?.name || 'project'}.pdf`)
-  }, [project, drawings, activeDrawingId, setActiveDrawing, addPdfPage])
+  }, [project, drawings, activeDrawingId, setActiveDrawing, addPdfPage, setExportStatus])
 
   const handleImportDrawing = useCallback(e => {
     const file = e.target.files?.[0]

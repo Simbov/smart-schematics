@@ -12,6 +12,41 @@ section with the version and date and starts a fresh Unreleased block.
 
 ## [Unreleased]
 
+### Fixed
+- **Typing in the PLC connector / address / channel boxes works again.** They no
+  longer drop focus after a single character — you can type a whole value in one go.
+- **"Couldn't find my project" on every launch (OneDrive/Dropbox).** If your project
+  file is still syncing from the cloud when the app starts, it now retries, and if it
+  still can't be read it opens a blank project and shows a **Retry** banner instead of
+  failing — your file is no longer forgotten.
+- **Exports look right.** Missing wires, wrong/garbled colours, dropped images and odd
+  artifacts in PNG/SVG/PDF exports are fixed — colours are resolved properly, the
+  background is clean white, and pictures/tables/wide parts are no longer cropped out.
+- **Digital input simulation.** Toggling a PLC digital input High/Low now actually
+  drives its pin, so anything wired to it (a lamp, relay, etc.) responds in the
+  simulation.
+
+### Added
+- **Export progress feedback.** A small toast confirms an export is running and when it
+  finishes (including "page X of N" for multi-page project PDFs), so you know it worked.
+- **Import / export individual PLC devices.** Download any single device as a portable
+  **CSV** (pin list) or lossless **JSON** (keeps its photos and datasheets), and
+  **Import** a device into another project from the PLC Devices page — reuse your PLC
+  setups across projects.
+- **More on the schematic.** New show-on-schematic toggles for a PLC symbol's
+  **Connector** and **Channel**, alongside the existing signal name / address / device.
+- **Edit signal name + I/O type on the schematic.** A per-project **Signal master**
+  setting (PLC Manager or Schematic) lets you choose where a bound symbol's signal name
+  and I/O type are edited; in **Schematic** mode, editing them on the symbol updates the
+  PLC registry, so swapping pins is quick.
+- **Channel shown when picking a pin.** The pin picker now shows the connector and
+  channel alongside the address and signal name.
+- **More pin types** — **FREQ**, **CANH**, **CANL** and **CANSH** join DI/DO/AI/PWM,
+  with a clearer capability/type interface (the Type list only offers what a pin is
+  actually capable of).
+- **More device info.** PLC devices can now carry **notes** and attached **datasheets /
+  documents** in addition to location photos.
+
 ## [0.8.0] - 2026-06-15
 
 ### Fixed

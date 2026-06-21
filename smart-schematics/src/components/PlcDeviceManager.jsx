@@ -1,11 +1,13 @@
 import React, { useRef, useState } from 'react'
-import { Cpu, Plus, Trash2, ChevronUp, ChevronDown, Download, ImagePlus, Pencil, Check, ArrowUpDown } from 'lucide-react'
+import { Cpu, Plus, Trash2, ChevronUp, ChevronDown, Download, Upload, ImagePlus, Pencil, Check, ArrowUpDown, FileText } from 'lucide-react'
 import useSchematicStore from '../store/schematicStore'
 import {
   addDevice, updateDevice, removeDevice,
   addPin, updatePin, removePin, movePin,
   addDeviceImage, removeDeviceImage,
-  devicesToCsv, sortPins, pinIsCapable,
+  addDeviceDatasheet, removeDeviceDatasheet,
+  devicesToCsv, deviceToCsv, deviceToJson, deviceFromJson, csvToDevices, appendImportedDevices,
+  sortPins, pinIsCapable, kindOptionsForPin,
   PIN_KINDS, PIN_SORT_MODES,
 } from '../lib/plcDevices'
 import { isRunningInTauri, saveFileDialog, writeTextFile } from '../lib/tauriFs'
@@ -29,6 +31,20 @@ function readFileAsDataUrl(file) {
 // A muted em-dash placeholder for empty read-only cells.
 const Dash = () => <span style={{ color: 'var(--panel-border)' }}>—</span>
 
+// One pin cell: editable input while editing, plain text in read-only view.
+// Module-level (NOT defined inside PlcDevicePage's render) so its identity stays
+// stable across re-renders — otherwise React remounts the <input> on every
+// keystroke and focus is lost after one character.
+function PinField({ pin, devId, field, placeholder, editing, devices, commit }) {
+  if (!editing) {
+    return <div style={READ_STYLE}>{pin[field] ? pin[field] : <Dash />}</div>
+  }
+  return (
+    <input className={INPUT_CLASS} style={INPUT_STYLE} value={pin[field] ?? ''} placeholder={placeholder}
+      onChange={e => commit(updatePin(devices, devId, pin.id, { [field]: e.target.value }))} />
+  )
+}
+
 // Capability chips: DI/DO/AI/PWM toggles for what the pin *can* do, independent
 // of the single `kind` it's configured as. In read-only mode the enabled
 // capabilities render as static chips (no toggling).
@@ -36,7 +52,7 @@ function CapabilityChips({ pin, onToggle, readOnly }) {
   const kinds = readOnly ? PIN_KINDS.filter(k => pinIsCapable(pin, k)) : PIN_KINDS
   if (readOnly && kinds.length === 0) return <Dash />
   return (
-    <div className="flex gap-0.5">
+    <div className="flex flex-wrap gap-0.5" style={{ maxWidth: 150 }}>
       {kinds.map(k => {
         const on = pinIsCapable(pin, k)
         const style = {
@@ -66,16 +82,35 @@ export default function PlcDevicePage() {
   const projects = useSchematicStore(s => s.projects)
   const activeProjectId = useSchematicStore(s => s.activeProjectId)
   const setPlcDevices = useSchematicStore(s => s.setPlcDevices)
+  const setPlcSignalMaster = useSchematicStore(s => s.setPlcSignalMaster)
   const project = projects.find(p => p.id === activeProjectId)
   const devices = project?.plcDevices || []
+  const signalMaster = project?.plcSignalMaster || 'registry'
 
   const fileInputRef = useRef(null)
+  const datasheetInputRef = useRef(null)
+  const importInputRef = useRef(null)
   const pendingDeviceId = useRef(null)
   const [lightbox, setLightbox] = useState(null)
   const [editing, setEditing] = useState(false)
   const [sortMode, setSortMode] = useState('connector')
 
   const commit = next => setPlcDevices(next)
+
+  // Download a text payload, Tauri save dialog or browser blob.
+  const downloadText = async (text, filename, ext, mime = 'text/plain') => {
+    if (isRunningInTauri()) {
+      const path = await saveFileDialog(filename, [{ name: ext.toUpperCase(), extensions: [ext] }])
+      if (path) await writeTextFile(path, text)
+    } else {
+      const blob = new Blob([text], { type: mime })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = filename; a.click()
+      URL.revokeObjectURL(url)
+    }
+  }
+  const safeName = s => (s || 'plc-devices').replace(/[^\w.-]+/g, '_')
 
   const toggleCapability = (devId, pin, k) => {
     const caps = pinIsCapable(pin, k)
@@ -97,37 +132,53 @@ export default function PlcDevicePage() {
     commit(addDeviceImage(devices, devId, { src, heading: file.name }))
   }
 
-  const exportCsv = async () => {
-    const csv = devicesToCsv(devices)
-    const name = `${(project?.name || 'plc-devices').replace(/[^\w.-]+/g, '_')}-plc-devices.csv`
-    if (isRunningInTauri()) {
-      const path = await saveFileDialog(name, [{ name: 'CSV', extensions: ['csv'] }])
-      if (path) await writeTextFile(path, csv)
+  const exportCsv = () => downloadText(devicesToCsv(devices), `${safeName(project?.name)}-plc-devices.csv`, 'csv', 'text/csv')
+
+  // Per-device export — carry one PLC config into another project. CSV is the
+  // portable pin list; JSON is lossless (keeps the device's photos/datasheets).
+  const exportDeviceCsv = dev => downloadText(deviceToCsv(dev), `${safeName(dev.name)}.csv`, 'csv', 'text/csv')
+  const exportDeviceJson = dev => downloadText(deviceToJson(dev), `${safeName(dev.name)}.plcdev.json`, 'json', 'application/json')
+
+  // Datasheet / docs picker (per device).
+  const pickDatasheet = devId => { pendingDeviceId.current = devId; datasheetInputRef.current?.click() }
+  const onDatasheetPicked = async e => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    const devId = pendingDeviceId.current
+    if (!file || !devId) return
+    const data = await readFileAsDataUrl(file)
+    commit(addDeviceDatasheet(devices, devId, { name: file.name, mime: file.type, data }))
+  }
+  const downloadDatasheet = ds => downloadText(ds.data, ds.name, (ds.name.split('.').pop() || 'bin'), ds.mime || 'application/octet-stream')
+
+  // Import a device config (CSV pin list or lossless JSON) into THIS project.
+  const importDevices = () => importInputRef.current?.click()
+  const onImportPicked = async e => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    const text = await file.text()
+    let imported = []
+    if (/\.json$/i.test(file.name)) {
+      const d = deviceFromJson(text)
+      if (d) imported = [d]
     } else {
-      const blob = new Blob([csv], { type: 'text/csv' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url; a.download = name; a.click()
-      URL.revokeObjectURL(url)
+      imported = csvToDevices(text)
     }
+    if (!imported.length) { alert(`No PLC devices found in ${file.name}.`); return }
+    commit(appendImportedDevices(devices, imported))
+    if (!editing) setEditing(true)
   }
 
   // Reorder ▲/▼ only make sense against the stored order, so they appear only
   // when editing in 'manual' sort mode (any other sort derives the order).
   const showReorder = editing && sortMode === 'manual'
 
-  // One pin cell: editable input while editing, plain text in read-only view.
-  const PinField = ({ pin, devId, field, placeholder }) =>
-    editing ? (
-      <input className={INPUT_CLASS} style={INPUT_STYLE} value={pin[field] ?? ''} placeholder={placeholder}
-        onChange={e => commit(updatePin(devices, devId, pin.id, { [field]: e.target.value }))} />
-    ) : (
-      <div style={READ_STYLE}>{pin[field] ? pin[field] : <Dash />}</div>
-    )
-
   return (
     <div className="flex-1 overflow-auto" style={{ background: 'var(--canvas-bg)', color: 'var(--component-color)' }}>
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={onImagePicked} />
+      <input ref={datasheetInputRef} type="file" className="hidden" onChange={onDatasheetPicked} />
+      <input ref={importInputRef} type="file" accept=".csv,.json" className="hidden" onChange={onImportPicked} />
       {lightbox && <Lightbox src={lightbox} onClose={() => setLightbox(null)} />}
       <div className="mx-auto px-6 py-5" style={{ maxWidth: 980 }}>
         {/* Page header */}
@@ -152,12 +203,27 @@ export default function PlcDevicePage() {
                 {PIN_SORT_MODES.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
               </select>
             </label>
+            {/* Signal source of truth — who owns a bound symbol's name + I/O type */}
+            <label className="flex items-center gap-1 text-xs text-gray-400" title="Where a bound PLC symbol's signal name + I/O type are edited">
+              Signal master
+              <select className="rounded border bg-transparent outline-none"
+                style={{ ...INPUT_STYLE, width: 'auto', paddingRight: 4 }}
+                value={signalMaster} onChange={e => setPlcSignalMaster(e.target.value)}>
+                <option value="registry">PLC Manager</option>
+                <option value="schematic">Schematic</option>
+              </select>
+            </label>
             <button
               className="text-xs px-3 py-1.5 rounded border flex items-center gap-1.5 hover:bg-black/5 dark:hover:bg-white/5"
               style={{ borderColor: 'var(--panel-border)' }}
               disabled={devices.length === 0}
               onClick={exportCsv}
             ><Download size={12} /> Export CSV</button>
+            <button
+              className="text-xs px-3 py-1.5 rounded border flex items-center gap-1.5 hover:bg-black/5 dark:hover:bg-white/5"
+              style={{ borderColor: 'var(--panel-border)' }}
+              onClick={importDevices}
+            ><Upload size={12} /> Import</button>
             {editing && (
               <button
                 className="text-xs px-3 py-1.5 rounded border flex items-center gap-1.5 hover:bg-black/5 dark:hover:bg-white/5"
@@ -213,6 +279,17 @@ export default function PlcDevicePage() {
                     <span className="truncate" style={{ fontSize: 12 }}>{dev.location || <Dash />}</span>
                   )}
                 </label>
+                {/* Download this single device's config to reuse elsewhere */}
+                <button
+                  className="px-1.5 py-1 rounded text-gray-400 hover:bg-black/5 dark:hover:bg-white/5 flex-shrink-0"
+                  title="Download this device as CSV (portable pin list)"
+                  onClick={() => exportDeviceCsv(dev)}
+                ><Download size={14} /></button>
+                <button
+                  className="px-1.5 py-1 rounded text-gray-400 hover:bg-black/5 dark:hover:bg-white/5 flex-shrink-0"
+                  title="Download this device as JSON (lossless — keeps photos/datasheets)"
+                  onClick={() => exportDeviceJson(dev)}
+                ><FileText size={14} /></button>
                 {editing && (
                   <button
                     className="px-1.5 py-1 rounded text-red-400 hover:bg-red-500/10 flex-shrink-0"
@@ -251,6 +328,47 @@ export default function PlcDevicePage() {
                 </div>
               )}
 
+              {/* Datasheets / docs + notes */}
+              {(editing || (dev.datasheets || []).length > 0 || dev.notes) && (
+                <div className="px-4 pt-3 space-y-2">
+                  {(editing || (dev.datasheets || []).length > 0) && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-gray-400" style={{ fontSize: 10 }}>Datasheets / docs</span>
+                      {(dev.datasheets || []).map(ds => (
+                        <span key={ds.id} className="inline-flex items-center gap-1 rounded border px-1.5"
+                          style={{ borderColor: 'var(--panel-border)', fontSize: 11, height: 22 }}>
+                          <button className="inline-flex items-center gap-1 hover:text-blue-500" title={`Download ${ds.name}`}
+                            onClick={() => downloadDatasheet(ds)}><FileText size={11} />{ds.name}</button>
+                          {editing && (
+                            <button className="text-red-400 hover:text-red-500" title="Remove"
+                              onClick={() => commit(removeDeviceDatasheet(devices, dev.id, ds.id))}>×</button>
+                          )}
+                        </span>
+                      ))}
+                      {editing && (
+                        <button className="inline-flex items-center gap-1 rounded border border-dashed px-1.5 text-gray-400 hover:bg-black/5 dark:hover:bg-white/5"
+                          style={{ borderColor: 'var(--panel-border)', fontSize: 11, height: 22 }}
+                          title="Attach a datasheet or document"
+                          onClick={() => pickDatasheet(dev.id)}><Plus size={11} /> Add doc</button>
+                      )}
+                    </div>
+                  )}
+                  {(editing || dev.notes) && (
+                    <label className="flex items-start gap-1.5">
+                      <span className="text-gray-400 flex-shrink-0" style={{ fontSize: 10, paddingTop: 3 }}>Notes</span>
+                      {editing ? (
+                        <textarea className="rounded px-1.5 py-1 outline-none bg-transparent border w-full" rows={2}
+                          style={{ fontSize: 12, borderColor: 'var(--panel-border)', color: 'var(--component-color)' }}
+                          value={dev.notes || ''} placeholder="Wiring notes, part number, supplier…"
+                          onChange={e => commit(updateDevice(devices, dev.id, { notes: e.target.value }))} />
+                      ) : (
+                        <span style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{dev.notes}</span>
+                      )}
+                    </label>
+                  )}
+                </div>
+              )}
+
               {/* Connector / pin list */}
               <div className="px-4 py-3">
                 {orderedPins.length > 0 ? (
@@ -284,13 +402,13 @@ export default function PlcDevicePage() {
                                 </div>
                               </td>
                             )}
-                            <td style={TD_STYLE}><PinField pin={pin} devId={dev.id} field="connector" placeholder="X1" /></td>
-                            <td style={TD_STYLE}><PinField pin={pin} devId={dev.id} field="address" placeholder="I0.0" /></td>
+                            <td style={TD_STYLE}><PinField pin={pin} editing={editing} devices={devices} commit={commit} devId={dev.id} field="connector" placeholder="X1" /></td>
+                            <td style={TD_STYLE}><PinField pin={pin} editing={editing} devices={devices} commit={commit} devId={dev.id} field="address" placeholder="I0.0" /></td>
                             <td style={TD_STYLE}>
                               {editing ? (
                                 <select className={INPUT_CLASS} style={INPUT_STYLE} value={pin.kind}
                                   onChange={e => commit(updatePin(devices, dev.id, pin.id, { kind: e.target.value }))}>
-                                  {PIN_KINDS.map(k => <option key={k} value={k}>{k}</option>)}
+                                  {kindOptionsForPin(pin).map(k => <option key={k} value={k}>{k}</option>)}
                                 </select>
                               ) : (
                                 <div style={READ_STYLE}>{pin.kind || <Dash />}</div>
@@ -299,10 +417,10 @@ export default function PlcDevicePage() {
                             <td style={TD_STYLE}>
                               <CapabilityChips pin={pin} readOnly={!editing} onToggle={k => toggleCapability(dev.id, pin, k)} />
                             </td>
-                            <td style={TD_STYLE}><PinField pin={pin} devId={dev.id} field="channel" placeholder="CH1" /></td>
-                            <td style={TD_STYLE}><PinField pin={pin} devId={dev.id} field="maxCurrent" placeholder="0.5" /></td>
-                            <td style={TD_STYLE}><PinField pin={pin} devId={dev.id} field="name" placeholder="e.g. Start button" /></td>
-                            <td style={TD_STYLE}><PinField pin={pin} devId={dev.id} field="notes" placeholder="" /></td>
+                            <td style={TD_STYLE}><PinField pin={pin} editing={editing} devices={devices} commit={commit} devId={dev.id} field="channel" placeholder="CH1" /></td>
+                            <td style={TD_STYLE}><PinField pin={pin} editing={editing} devices={devices} commit={commit} devId={dev.id} field="maxCurrent" placeholder="0.5" /></td>
+                            <td style={TD_STYLE}><PinField pin={pin} editing={editing} devices={devices} commit={commit} devId={dev.id} field="name" placeholder="e.g. Start button" /></td>
+                            <td style={TD_STYLE}><PinField pin={pin} editing={editing} devices={devices} commit={commit} devId={dev.id} field="notes" placeholder="" /></td>
                             {editing && (
                               <td style={TD_STYLE}>
                                 <button className="px-1 py-0.5 rounded text-red-400 hover:bg-red-500/10" title="Remove pin"

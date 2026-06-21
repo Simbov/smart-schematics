@@ -11,7 +11,7 @@ import { migratePlcDevice, resyncPlcComponents } from '../lib/plcDevices'
 import {
   isRunningInTauri,
   openFileDialog, saveFileDialog,
-  readTextFile, writeTextFile, writeBinaryFile, base64ToBytes,
+  readTextFile, readTextFileWithRetry, fileExists, writeTextFile, writeBinaryFile, base64ToBytes,
   getRecentFiles, addRecentFile, removeRecentFile,
   basename, askConfirm, backupFile,
 } from '../lib/tauriFs'
@@ -117,6 +117,10 @@ function migrateProject(p) {
   // v0.7.0: backfill pin capabilities/channel/connector + device images, additive
   // so PLC pins set up in a prior release are never disturbed.
   p.plcDevices = p.plcDevices.map(migratePlcDevice)
+  // v0.9.0: which side owns a bound PLC symbol's signal name + I/O type.
+  // 'registry' = PLC Devices page is master (default, prior behaviour);
+  // 'schematic' = edit on the symbol, changes write back to the registry pin.
+  p.plcSignalMaster ??= 'registry'
   return p
 }
 
@@ -194,6 +198,8 @@ const useSchematicStore = create((set, get) => ({
   currentFilePath: null,       // path of the active project's file on disk
   recentFiles: [],             // recently opened file paths
   externalChangeDetected: false, // set true by file watcher when OneDrive syncs
+  loadFailedPath: null,        // path that failed to open at launch (e.g. unsynced OneDrive); drives a retry banner
+  exportStatus: null,          // { phase:'rendering'|'done'|'error', label } — drives the ExportToast feedback
 
   // Theme
   toggleTheme() {
@@ -430,6 +436,7 @@ const useSchematicStore = create((set, get) => ({
         folders: data.folders,
         attachments: data.attachments,
         plcDevices: data.plcDevices,   // carry the PLC registry through (was dropped → wiped on import)
+        plcSignalMaster: data.plcSignalMaster,   // carry the signal-master setting through
         lastSaved: null,
       })
       set(state => ({
@@ -1122,6 +1129,17 @@ const useSchematicStore = create((set, get) => ({
     })
   },
 
+  // Which side owns a bound PLC symbol's signal name + I/O type:
+  // 'registry' (PLC Devices page) or 'schematic' (the symbol's Properties).
+  setPlcSignalMaster(mode) {
+    const { activeProjectId } = get()
+    set(state => ({
+      projects: state.projects.map(p =>
+        p.id === activeProjectId ? { ...p, plcSignalMaster: mode } : p
+      ),
+    }))
+  },
+
   addFolder(name = 'New Folder', parentId = null) {
     const { activeProjectId } = get()
     const folder = { id: genId(), name, parentId }
@@ -1429,9 +1447,14 @@ const useSchematicStore = create((set, get) => ({
   },
 
   // Load project data from a file path
-  async _loadProjectFromPath(path) {
+  // Returns true on success, false on failure (so startup can fall back to a
+  // blank project rather than leaving the store empty). `opts.silent` suppresses
+  // the blocking alert — used at launch where a softer message is shown instead.
+  async _loadProjectFromPath(path, opts = {}) {
     try {
-      const raw = await readTextFile(path)
+      // Retry the read: an OneDrive/Dropbox placeholder may need a beat to
+      // hydrate before its bytes are local on the first launch read.
+      const raw = await readTextFileWithRetry(path)
       const parsed = JSON.parse(raw)
       // Drop malformed images/attachments before they reach the store so one
       // corrupt payload can't crash the open. Surface a non-fatal warning.
@@ -1456,6 +1479,7 @@ const useSchematicStore = create((set, get) => ({
         folders: data.folders,
         attachments: data.attachments,
         plcDevices: data.plcDevices,   // carry the PLC registry through (was dropped → wiped on every reopen)
+        plcSignalMaster: data.plcSignalMaster,   // carry the signal-master setting through
         filePath: path,   // bind this project to the file it was loaded from
         lastSaved: Date.now(),
       })
@@ -1475,9 +1499,29 @@ const useSchematicStore = create((set, get) => ({
       }))
       addRecentFile(path)
       set({ recentFiles: getRecentFiles() })
+      return true
     } catch (e) {
       console.error('Failed to open project file', e)
-      alert(`Could not open file: ${basename(path)}\n\n${e.message}`)
+      // Is the file genuinely gone, or just unreadable right now (still syncing)?
+      const present = await fileExists(path)   // true | false | null(unknown)
+      if (opts.silent) {
+        // Launch path — never block with a modal; App shows a soft banner/fallback.
+        return false
+      }
+      if (present === false) {
+        const drop = await askConfirm(
+          `${basename(path)} could not be found on disk.\n\nRemove it from Recent files?`,
+          'File not found',
+        )
+        if (drop) get().removeRecentFile(path)
+      } else {
+        alert(
+          `Couldn't open ${basename(path)} right now.\n\n` +
+          `If it lives in OneDrive/Dropbox it may still be syncing — wait a moment and ` +
+          `re-open it from File → Open Recent.\n\n${e.message}`,
+        )
+      }
+      return false
     }
   },
 
@@ -1493,6 +1537,34 @@ const useSchematicStore = create((set, get) => ({
     set({ externalChangeDetected: false })
   },
 
+  // Retry opening the file that failed at launch (e.g. an OneDrive placeholder
+  // that has since finished syncing). On success the blank fallback project is
+  // replaced by the real one and the banner clears.
+  async retryLoadFailed() {
+    const { loadFailedPath } = get()
+    if (!loadFailedPath) return false
+    const ok = await get()._loadProjectFromPath(loadFailedPath)
+    if (ok) set({ loadFailedPath: null })
+    return ok
+  },
+
+  dismissLoadFailed() {
+    set({ loadFailedPath: null })
+  },
+
+  // Export progress/result feedback (consumed by ExportToast). A 'done'/'error'
+  // status auto-dismisses itself; 'rendering' persists until the export resolves.
+  setExportStatus(status) {
+    set({ exportStatus: status })
+    if (status && (status.phase === 'done' || status.phase === 'error')) {
+      const stamp = status
+      setTimeout(() => {
+        // Only clear if no newer status replaced this one.
+        if (get().exportStatus === stamp) set({ exportStatus: null })
+      }, status.phase === 'error' ? 4000 : 1800)
+    }
+  },
+
   setExternalChangeDetected(v) {
     set({ externalChangeDetected: v })
   },
@@ -1506,13 +1578,28 @@ const useSchematicStore = create((set, get) => ({
     set({ recentFiles: getRecentFiles() })
   },
 
-  loadFromStorage() {
+  async loadFromStorage() {
     // In Tauri mode, try to re-open the last used file
     if (isRunningInTauri()) {
       set({ recentFiles: getRecentFiles() })
       const recent = getRecentFiles()
       if (recent.length > 0) {
-        get()._loadProjectFromPath(recent[0])
+        // Silent: a failed launch read must not pop a blocking modal. If it
+        // fails (e.g. OneDrive placeholder not yet hydrated) we fall through to a
+        // blank project but KEEP the recent entry so the user can retry via
+        // File → Open Recent once the file has synced.
+        const ok = await get()._loadProjectFromPath(recent[0], { silent: true })
+        if (ok) return
+        const { project, drawing } = createBlankProject('Default Project')
+        set({
+          projects: [project],
+          drawings: [drawing],
+          activeProjectId: project.id,
+          activeDrawingId: drawing.id,
+          // currentFilePath stays null so autosave can't clobber the real file
+          // while it's unreachable; recentFiles is preserved for the retry.
+          loadFailedPath: recent[0],
+        })
         return
       }
       // No recent files — start blank

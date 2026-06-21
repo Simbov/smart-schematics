@@ -1291,6 +1291,8 @@ export const ELECTRICAL_COMPONENTS = [
       showName: { label: 'Signal name', type: 'boolean', default: true },
       showAddress: { label: 'Pin address', type: 'boolean', default: true },
       showDevice: { label: 'Device name', type: 'boolean', default: false },
+      showConnector: { label: 'Connector', type: 'boolean', default: false },
+      showChannel: { label: 'Channel', type: 'boolean', default: false },
       voltage: { label: 'Input Voltage (V)', type: 'number', default: 24, modes: ['Digital'] },
       threshold: { label: 'Switching Threshold (V)', type: 'number', default: 11, modes: ['Digital'] },
       range: {
@@ -1330,6 +1332,8 @@ export const ELECTRICAL_COMPONENTS = [
       showName: { label: 'Signal name', type: 'boolean', default: true },
       showAddress: { label: 'Pin address', type: 'boolean', default: true },
       showDevice: { label: 'Device name', type: 'boolean', default: false },
+      showConnector: { label: 'Connector', type: 'boolean', default: false },
+      showChannel: { label: 'Channel', type: 'boolean', default: false },
       showCurrent: { label: 'Current rating', type: 'boolean', default: false },
       voltage: { label: 'Output Voltage (V)', type: 'number', default: 24 },
       maxCurrent: { label: 'Max Current (A)', type: 'number', default: 0.5 },

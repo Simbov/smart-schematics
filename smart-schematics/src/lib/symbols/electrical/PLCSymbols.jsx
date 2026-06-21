@@ -28,7 +28,22 @@ function IOFrame({ glyph, label, labelSize = 9, state, params = {}, flipH, flipV
   const showName = params.showName !== false && params.name
   const showAddress = params.showAddress !== false && params.address
   const showDevice = params.showDevice === true && params.device
+  const showConnector = params.showConnector === true && params.connector
+  const showChannel = params.showChannel === true && params.channel
   const showCurrent = params.showCurrent === true && params.maxCurrent != null && params.maxCurrent !== ''
+
+  // Labels stack outward from the box so any combination of enabled toggles lays
+  // out without overlapping. Above the box (going up): name, device, connector.
+  // Below (going down): address, channel, current.
+  const above = []
+  if (showName) above.push({ text: params.name, size: 7, weight: 'normal', opacity: 1 })
+  if (showDevice) above.push({ text: params.device, size: 6, weight: 'normal', opacity: 0.75 })
+  if (showConnector) above.push({ text: params.connector, size: 6, weight: 'normal', opacity: 0.85 })
+  const below = []
+  if (showAddress) below.push({ text: params.address, size: 7, weight: 'bold', opacity: 1 })
+  if (showChannel) below.push({ text: params.channel, size: 6, weight: 'normal', opacity: 0.85 })
+  if (showCurrent) below.push({ text: `${params.maxCurrent} A`, size: 6, weight: 'normal', opacity: 0.85 })
+
   return (
     <g style={energised ? { color: 'var(--sim-active-color, #f59e0b)' } : undefined}>
       <rect x="-18" y="-15" width="28" height="30" rx="2" stroke="currentColor" strokeWidth={SW} fill="none" />
@@ -41,18 +56,14 @@ function IOFrame({ glyph, label, labelSize = 9, state, params = {}, flipH, flipV
       {/* field-side lead */}
       <line x1="10" y1="0" x2="20" y2="0" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
       <CounterFlip flipH={flipH} flipV={flipV}>
-        {showDevice && (
-          <text x="-4" y="-29" fontSize={6} fill="currentColor" textAnchor="middle" opacity="0.75">{params.device}</text>
-        )}
-        {showName && (
-          <text x="-4" y="-20" fontSize={7} fill="currentColor" textAnchor="middle">{params.name}</text>
-        )}
-        {showAddress && (
-          <text x="-4" y="25" fontSize={7} fill="currentColor" textAnchor="middle" fontWeight="bold">{params.address}</text>
-        )}
-        {showCurrent && (
-          <text x="-4" y="33" fontSize={6} fill="currentColor" textAnchor="middle" opacity="0.85">{`${params.maxCurrent} A`}</text>
-        )}
+        {above.map((l, i) => (
+          <text key={`a${i}`} x="-4" y={-20 - i * 9} fontSize={l.size} fill="currentColor"
+            textAnchor="middle" opacity={l.opacity} fontWeight={l.weight}>{l.text}</text>
+        ))}
+        {below.map((l, i) => (
+          <text key={`b${i}`} x="-4" y={25 + i * 8} fontSize={l.size} fill="currentColor"
+            textAnchor="middle" opacity={l.opacity} fontWeight={l.weight}>{l.text}</text>
+        ))}
       </CounterFlip>
     </g>
   )

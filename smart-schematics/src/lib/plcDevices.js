@@ -20,23 +20,38 @@ let counter = 0
 const genPlcId = (prefix) =>
   `${prefix}_${Date.now().toString(36)}_${(counter++).toString(36)}_${Math.random().toString(36).slice(2, 6)}`
 
-export const PIN_KINDS = ['DI', 'DO', 'AI', 'PWM']
+// Pin kinds. DI/DO/AI/PWM are the classic I/O classes; FREQ is a frequency /
+// pulse-counting input; CANH/CANL/CANSH are CAN-bus pins (high, low, shield) so a
+// bus connector's pins can be documented in the registry/CSV too.
+export const PIN_KINDS = ['DI', 'DO', 'AI', 'PWM', 'FREQ', 'CANH', 'CANL', 'CANSH']
 
-// Which pin kinds a placed I/O component type can bind to.
+// Kinds that are CAN-bus pins rather than discrete/analogue I/O — used to keep
+// them out of the binding pickers (there is no CAN I/O component to bind them to)
+// while still letting them be listed and exported.
+export const CAN_KINDS = ['CANH', 'CANL', 'CANSH']
+
+// Which pin kinds a placed I/O component type can bind to. FREQ counts as an
+// input class (a frequency/pulse input); CAN pins are not bindable to the basic
+// I/O components.
 const KINDS_BY_IO_TYPE = {
-  plc_input: ['DI', 'AI'],
-  plc_digital_input: ['DI', 'AI'],
-  plc_analog_input: ['DI', 'AI'],
+  plc_input: ['DI', 'AI', 'FREQ'],
+  plc_digital_input: ['DI', 'AI', 'FREQ'],
+  plc_analog_input: ['DI', 'AI', 'FREQ'],
   plc_output: ['DO', 'PWM'],
   plc_digital_output: ['DO', 'PWM'],
   plc_pwm_output: ['DO', 'PWM'],
 }
 
-// The simParams.mode value a pin kind implies on the placed component.
-const MODE_BY_KIND = { DI: 'Digital', AI: 'Analogue', DO: 'Digital', PWM: 'PWM' }
+// The simParams.mode value a pin kind implies on the placed component. FREQ maps
+// to the input's Digital mode (it's a pulse-level signal); CAN kinds have no I/O
+// mode and default to Digital if ever asked.
+const MODE_BY_KIND = {
+  DI: 'Digital', AI: 'Analogue', DO: 'Digital', PWM: 'PWM', FREQ: 'Digital',
+  CANH: 'Digital', CANL: 'Digital', CANSH: 'Digital',
+}
 
 export function createPlcDevice(name = 'PLC 1') {
-  return { id: genPlcId('plcdev'), name, location: '', images: [], pins: [] }
+  return { id: genPlcId('plcdev'), name, location: '', notes: '', images: [], datasheets: [], pins: [] }
 }
 
 export function createPlcPin(overrides = {}) {
@@ -56,6 +71,26 @@ export function pinIsCapable(pin, k) {
   if (!pin) return false
   const caps = pin.capabilities && pin.capabilities.length ? pin.capabilities : [pin.kind]
   return caps.includes(k)
+}
+
+// The Type (`kind`) options a pin may be set to: only the kinds it's *capable* of.
+// Always includes the currently-configured kind (so a legacy/odd value stays
+// selectable) and falls back to every kind when a pin declares no capabilities.
+export function kindOptionsForPin(pin) {
+  if (!pin) return PIN_KINDS
+  const caps = pin.capabilities && pin.capabilities.length ? pin.capabilities : []
+  const opts = caps.length ? PIN_KINDS.filter(k => caps.includes(k)) : [...PIN_KINDS]
+  if (pin.kind && !opts.includes(pin.kind)) opts.unshift(pin.kind)
+  return opts
+}
+
+// A compact one-line label for a pin in the bound-component Pin picker. Surfaces
+// the channel + connector (the user asked to see the channel number when picking)
+// alongside the address and signal name, e.g. "X1 · I0.0 · CH3 — Start button".
+export function pinPickerLabel(pin) {
+  if (!pin) return ''
+  const head = [pin.connector, pin.address, pin.channel].filter(Boolean).join(' · ')
+  return pin.name ? `${head || pin.address || '—'} — ${pin.name}` : (head || pin.address || '—')
 }
 
 // ── Immutable device-list edits (mirror the boxBlocks helper style) ─────────
@@ -131,6 +166,24 @@ export function removeDeviceImage(devices, deviceId, imageId) {
   )
 }
 
+// ── Datasheets / docs ─────────────────────────────────────────────────────────
+// Embedded reference documents for a device (datasheet PDF, wiring notes photo,
+// etc.). Stored base64 like project attachments: { id, name, mime, data }.
+
+export function addDeviceDatasheet(devices, deviceId, { name, mime, data }) {
+  return (devices || []).map(d =>
+    d.id === deviceId
+      ? { ...d, datasheets: [...(d.datasheets || []), { id: genPlcId('plcds'), name: name || 'document', mime: mime || '', data }] }
+      : d
+  )
+}
+
+export function removeDeviceDatasheet(devices, deviceId, datasheetId) {
+  return (devices || []).map(d =>
+    d.id === deviceId ? { ...d, datasheets: (d.datasheets || []).filter(ds => ds.id !== datasheetId) } : d
+  )
+}
+
 // ── Lookups used by the Properties panel ────────────────────────────────────
 
 export function findDevice(devices, deviceId) {
@@ -179,6 +232,26 @@ export function bindingParams(device, pin) {
 // The Properties panel renders these read-only for bound components and resolves
 // their live values from the registry via bindingParams (registry is master).
 export const REGISTRY_OWNED_KEYS = ['name', 'channel', 'connector', 'maxCurrent', 'location', 'notes', 'mode']
+
+// Write signal-identity fields (name and/or kind) back onto a registry pin found
+// by its stable id. Used when the project's signal-master setting is 'schematic'
+// so editing a bound symbol's name/IO-type updates the registry (and thereby
+// every other symbol bound to the same pin). Pure — returns a new devices array.
+export function writeSignalToRegistry(devices, pinId, patch) {
+  if (!pinId) return devices
+  const { device } = findPinById(devices, pinId)
+  if (!device) return devices
+  const clean = {}
+  if (patch.name != null) clean.name = patch.name
+  if (patch.kind != null) {
+    clean.kind = patch.kind
+    // Keep the new kind in the pin's capability set so it stays selectable.
+    const { pin } = findPinById(devices, pinId)
+    const caps = (pin?.capabilities && pin.capabilities.length) ? pin.capabilities : (pin ? [pin.kind] : [])
+    clean.capabilities = caps.includes(patch.kind) ? caps : [...caps, patch.kind]
+  }
+  return updatePin(devices, device.id, pinId, clean)
+}
 
 // Find a pin (and its owning device) anywhere in the registry by its stable id.
 export function findPinById(devices, pinId) {
@@ -238,11 +311,12 @@ const csvCell = v => {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
 }
 
+const CSV_HEADER = ['Device', 'Location', 'Connector', 'Address', 'Channel', 'Type', 'Capabilities', 'Max current (A)', 'Signal name', 'Notes']
+
 // Flatten the device registry into a CSV (one row per pin) — a portable
 // connector/pin list that opens in Excel or imports into PLC tooling.
 export function devicesToCsv(devices) {
-  const header = ['Device', 'Location', 'Connector', 'Address', 'Channel', 'Type', 'Capabilities', 'Max current (A)', 'Signal name', 'Notes']
-  const rows = [header]
+  const rows = [CSV_HEADER]
   for (const d of devices || []) {
     for (const p of d.pins || []) {
       rows.push([
@@ -252,6 +326,124 @@ export function devicesToCsv(devices) {
     }
   }
   return rows.map(r => r.map(csvCell).join(',')).join('\n')
+}
+
+// Single-device CSV — used for "download this PLC config" so one device can be
+// carried into another project. Same shape as devicesToCsv, scoped to one device.
+export function deviceToCsv(device) {
+  return devicesToCsv(device ? [device] : [])
+}
+
+// Parse CSV text into rows of cells, honouring quoted fields (with ""-escaping)
+// and both \n and \r\n line endings. Tolerant: trailing blank lines are dropped.
+export function parseCsv(text) {
+  const rows = []
+  let row = [], cell = '', inQ = false
+  const s = String(text ?? '')
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]
+    if (inQ) {
+      if (ch === '"') {
+        if (s[i + 1] === '"') { cell += '"'; i++ } else inQ = false
+      } else cell += ch
+    } else if (ch === '"') {
+      inQ = true
+    } else if (ch === ',') {
+      row.push(cell); cell = ''
+    } else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && s[i + 1] === '\n') i++
+      row.push(cell); rows.push(row); row = []; cell = ''
+    } else cell += ch
+  }
+  if (cell !== '' || row.length) { row.push(cell); rows.push(row) }
+  return rows.filter(r => r.some(c => c !== ''))
+}
+
+// Build a fresh device registry array from CSV text (the inverse of
+// devicesToCsv). Columns are matched by header name, so column order doesn't
+// matter and extra columns are ignored. Rows are grouped into devices by the
+// Device column (first row of a device also supplies its Location). Capabilities
+// are split on / (falling back to the Type). Returns Device[].
+export function csvToDevices(text) {
+  const rows = parseCsv(text)
+  if (!rows.length) return []
+  const header = rows[0].map(h => h.trim().toLowerCase())
+  const col = name => header.indexOf(name.toLowerCase())
+  const ci = {
+    device: col('Device'), location: col('Location'), connector: col('Connector'),
+    address: col('Address'), channel: col('Channel'), kind: col('Type'),
+    caps: col('Capabilities'), maxCurrent: col('Max current (A)'),
+    name: col('Signal name'), notes: col('Notes'),
+  }
+  const at = (r, i) => (i >= 0 && i < r.length ? r[i].trim() : '')
+  const byName = new Map()
+  const order = []
+  for (const r of rows.slice(1)) {
+    const devName = at(r, ci.device) || 'PLC 1'
+    if (!byName.has(devName)) {
+      const dev = createPlcDevice(devName)
+      dev.location = at(r, ci.location)
+      byName.set(devName, dev)
+      order.push(dev)
+    }
+    const dev = byName.get(devName)
+    if (!dev.location && at(r, ci.location)) dev.location = at(r, ci.location)
+    const kind = at(r, ci.kind) || 'DI'
+    const capsRaw = at(r, ci.caps)
+    const capabilities = capsRaw
+      ? capsRaw.split(/[/|]/).map(c => c.trim().toUpperCase()).filter(c => PIN_KINDS.includes(c))
+      : [kind]
+    dev.pins.push(createPlcPin({
+      address: at(r, ci.address), channel: at(r, ci.channel), connector: at(r, ci.connector),
+      kind: PIN_KINDS.includes(kind.toUpperCase()) ? kind.toUpperCase() : 'DI',
+      capabilities: capabilities.length ? capabilities : [kind],
+      maxCurrent: at(r, ci.maxCurrent), name: at(r, ci.name), notes: at(r, ci.notes),
+    }))
+  }
+  return order
+}
+
+// Lossless single-device round-trip as JSON (keeps device images, which CSV
+// drops). Used for "download / upload individual PLC config".
+export function deviceToJson(device) {
+  return JSON.stringify({ schematicPlcDevice: 1, device }, null, 2)
+}
+
+// Parse a device JSON blob (from deviceToJson) back into a device with fresh ids
+// so importing into another project never collides with existing ids. Returns a
+// Device or null if the blob isn't a recognised single-device export.
+export function deviceFromJson(text) {
+  let parsed
+  try { parsed = JSON.parse(text) } catch { return null }
+  const d = parsed?.device || (parsed?.name ? parsed : null)
+  if (!d || !d.name) return null
+  const device = createPlcDevice(d.name)
+  device.location = d.location || ''
+  device.notes = d.notes || ''
+  device.images = (d.images || []).map(im => ({ id: genPlcId('plcimg'), src: im.src, heading: im.heading || '' }))
+  device.datasheets = (d.datasheets || []).map(ds => ({ id: genPlcId('plcds'), name: ds.name || 'document', mime: ds.mime || '', data: ds.data }))
+  device.pins = (d.pins || []).map(p => createPlcPin({
+    address: p.address || '', name: p.name || '', kind: p.kind || 'DI',
+    capabilities: (p.capabilities && p.capabilities.length) ? p.capabilities : [p.kind || 'DI'],
+    channel: p.channel || '', connector: p.connector || '', maxCurrent: p.maxCurrent || '', notes: p.notes || '',
+  }))
+  return migratePlcDevice(device)
+}
+
+// Append imported devices to an existing registry, giving each a unique name
+// (suffix " (2)", " (3)", …) so importing the same config twice doesn't shadow
+// the original. Pure — returns a new array.
+export function appendImportedDevices(devices, imported) {
+  const out = [...(devices || [])]
+  const taken = new Set(out.map(d => d.name))
+  for (const dev of imported || []) {
+    let name = dev.name
+    let n = 2
+    while (taken.has(name)) name = `${dev.name} (${n++})`
+    taken.add(name)
+    out.push(name === dev.name ? dev : { ...dev, name })
+  }
+  return out
 }
 
 // ── Pin ordering ──────────────────────────────────────────────────────────
@@ -317,6 +509,8 @@ export function groupPinsByConnector(device) {
 export function migratePlcDevice(device) {
   if (!device) return device
   device.images ??= []
+  device.notes ??= ''
+  device.datasheets ??= []
   for (const p of (device.pins || [])) {
     p.channel ??= ''
     p.connector ??= ''

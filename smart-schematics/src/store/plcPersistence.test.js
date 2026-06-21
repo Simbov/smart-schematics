@@ -51,6 +51,28 @@ describe('PLC registry persistence', () => {
     expect(b.capabilities).toEqual(['DO', 'PWM'])
   })
 
+  it('carries the plcSignalMaster setting through a round-trip', () => {
+    store().setPlcSignalMaster('schematic')
+    const p = roundTrip()
+    expect(p.plcSignalMaster).toBe('schematic')
+  })
+
+  it('defaults plcSignalMaster to "registry" on a project that predates the setting', () => {
+    const legacy = JSON.stringify({
+      version: 4,
+      id: 'p_nomaster', name: 'NoMaster', drawingIds: ['d_nm'], activeDrawingId: 'd_nm',
+      folders: [], attachments: [], plcDevices: [],
+      drawings: [{
+        id: 'd_nm', name: 'D', type: 'electrical',
+        components: [], wires: [], junctions: [], annotations: [],
+        titleBlock: { visible: false }, viewState: { panX: 0, panY: 0, zoom: 1 },
+        isDirty: false, lastSaved: null,
+      }],
+    })
+    store().importProjectJSON(legacy)
+    expect(activeProject().plcSignalMaster).toBe('registry')
+  })
+
   it('backfills plcDevices: [] on a project that predates the registry', () => {
     // A v4 project JSON with NO plcDevices key at all (old file).
     const legacy = JSON.stringify({

@@ -13,6 +13,7 @@ import StatusBar from './StatusBar'
 import ProjectBrowser from './ProjectBrowser'
 import PlcDevicePage from './PlcDeviceManager'
 import ExternalChangeBanner from './ExternalChangeBanner'
+import ExportToast from './ExportToast'
 import ErrorBoundary from './ErrorBoundary'
 import { setWindowTitle, basename } from '../lib/tauriFs'
 import { checkForUpdates } from '../lib/updater'
@@ -206,6 +207,9 @@ export default function App() {
 
       {/* External file change banner (OneDrive sync) */}
       <ExternalChangeBanner />
+
+      {/* Export progress / success feedback */}
+      <ExportToast />
     </div>
   )
 }
