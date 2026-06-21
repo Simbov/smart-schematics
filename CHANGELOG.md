@@ -12,6 +12,8 @@ section with the version and date and starts a fresh Unreleased block.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-21
+
 ### Fixed
 - **Typing in the PLC connector / address / channel boxes works again.** They no
   longer drop focus after a single character — you can type a whole value in one go.
