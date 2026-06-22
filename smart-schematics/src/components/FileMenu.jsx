@@ -4,7 +4,7 @@ import {
   FolderOpen, Save, SaveAll, Clock, X, RefreshCw, Paperclip, Trash2, Cpu,
 } from 'lucide-react'
 import useSchematicStore from '../store/schematicStore'
-import { isRunningInTauri, basename } from '../lib/tauriFs'
+import { isRunningInTauri, basename, saveFileDialog, writeBinaryFile } from '../lib/tauriFs'
 import { checkForUpdates } from '../lib/updater'
 import { projectSize, formatBytes, isOverSizeLimit } from '../lib/projectFile'
 import { fitImageToArea, titleBlockLayout, pageLabel } from '../lib/pdfExport'
@@ -16,6 +16,33 @@ function downloadBlob(blob, filename) {
   a.download = filename
   a.click()
   URL.revokeObjectURL(a.href)
+}
+
+const blobToBytes = blob =>
+  blob.arrayBuffer().then(buf => new Uint8Array(buf))
+
+// Save exported bytes to disk. In Tauri the browser <a download> mechanism does
+// NOT write a file (WebView2 has no download manager), so on desktop we must use
+// the native save dialog + writeBinaryFile. In a plain browser we fall back to a
+// Blob download. Returns true if a file was written, false if cancelled.
+// `ext` is the extension (no dot); `mime` is used for the browser Blob.
+async function saveExportBytes(bytes, defaultName, ext, mime) {
+  if (isRunningInTauri()) {
+    const path = await saveFileDialog(defaultName, [{ name: ext.toUpperCase(), extensions: [ext] }])
+    if (!path) return false
+    await writeBinaryFile(path, bytes)
+    return true
+  }
+  downloadBlob(new Blob([bytes], { type: mime }), defaultName)
+  return true
+}
+
+// Build an SVG data URL. Data URLs render far more reliably than blob: URLs in
+// WebView2 (Windows Tauri), where an <img> pointed at an SVG blob — especially
+// one containing <foreignObject> — can fail to fire load *or* error, hanging any
+// awaiting export forever.
+function svgDataUrl(str) {
+  return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(str)
 }
 
 function getSVGElement() {
@@ -56,9 +83,17 @@ function captureSvgPng(bounds) {
     clone.removeAttribute('style')
     const scale = 3
     const str = new XMLSerializer().serializeToString(clone)
-    const url = URL.createObjectURL(new Blob([str], { type: 'image/svg+xml' }))
+    const url = svgDataUrl(str)
     const img = new Image()
+    let settled = false
+    // Safety net: if the image neither loads nor errors (a real WebView2 failure
+    // mode for SVG with foreignObject), resolve null after 20s so the PDF/PNG
+    // export reports a clean failure instead of spinning "Building PDF…" forever.
+    const timer = setTimeout(() => { if (!settled) { settled = true; resolve(null) } }, 20000)
     img.onload = () => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
       const canvas = document.createElement('canvas')
       canvas.width = vbWidth * scale
       canvas.height = vbHeight * scale
@@ -67,10 +102,9 @@ function captureSvgPng(bounds) {
       ctx.fillRect(0, 0, canvas.width, canvas.height)
       ctx.scale(scale, scale)
       ctx.drawImage(img, 0, 0)
-      URL.revokeObjectURL(url)
       resolve({ dataUrl: canvas.toDataURL('image/png'), width: vbWidth, height: vbHeight })
     }
-    img.onerror = () => { URL.revokeObjectURL(url); resolve(null) }
+    img.onerror = () => { if (settled) return; settled = true; clearTimeout(timer); resolve(null) }
     img.src = url
   })
 }
@@ -145,7 +179,7 @@ export default function FileMenu() {
   // Compute tight content bounds for the active drawing (world coords)
   const getContentBounds = useCallback((pad = 30) => boundsFromDrawing(drawing, pad), [drawing])
 
-  const exportSVG = useCallback(() => {
+  const exportSVG = useCallback(async () => {
     const svgEl = getSVGElement()
     if (!svgEl) return
     // Rich-text annotations render via <foreignObject> + XHTML <div>. We clone
@@ -175,9 +209,9 @@ export default function FileMenu() {
     }
     clone.removeAttribute('style')
     const str = new XMLSerializer().serializeToString(clone)
-    const blob = new Blob([str], { type: 'image/svg+xml' })
-    downloadBlob(blob, `${drawing?.name || 'schematic'}.svg`)
-    setExportStatus({ phase: 'done', label: 'SVG exported' })
+    const bytes = new TextEncoder().encode(str)
+    const saved = await saveExportBytes(bytes, `${drawing?.name || 'schematic'}.svg`, 'svg', 'image/svg+xml')
+    setExportStatus(saved ? { phase: 'done', label: 'SVG exported' } : null)
   }, [drawing, getContentBounds, setExportStatus])
 
   const exportPNG = useCallback(() => {
@@ -209,10 +243,18 @@ export default function FileMenu() {
     // transparent canvas never bleeds through as a grey/black export.
     const scale = 3
     const str = new XMLSerializer().serializeToString(clone)
-    const blob = new Blob([str], { type: 'image/svg+xml' })
-    const url = URL.createObjectURL(blob)
+    const url = svgDataUrl(str)
     const img = new Image()
+    let settled = false
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      setExportStatus({ phase: 'error', label: 'PNG export failed' })
+    }, 20000)
     img.onload = () => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
       const canvas = document.createElement('canvas')
       canvas.width = vbWidth * scale
       canvas.height = vbHeight * scale
@@ -221,13 +263,18 @@ export default function FileMenu() {
       ctx.fillRect(0, 0, canvas.width, canvas.height)
       ctx.scale(scale, scale)
       ctx.drawImage(img, 0, 0)
-      URL.revokeObjectURL(url)
-      canvas.toBlob(pngBlob => {
-        downloadBlob(pngBlob, `${drawing?.name || 'schematic'}.png`)
-        setExportStatus({ phase: 'done', label: 'PNG exported' })
+      canvas.toBlob(async pngBlob => {
+        const bytes = await blobToBytes(pngBlob)
+        const saved = await saveExportBytes(bytes, `${drawing?.name || 'schematic'}.png`, 'png', 'image/png')
+        setExportStatus(saved ? { phase: 'done', label: 'PNG exported' } : null)
       }, 'image/png')
     }
-    img.onerror = () => { URL.revokeObjectURL(url); setExportStatus({ phase: 'error', label: 'PNG export failed' }) }
+    img.onerror = () => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      setExportStatus({ phase: 'error', label: 'PNG export failed' })
+    }
     img.src = url
   }, [drawing, getContentBounds, setExportStatus])
 
@@ -264,14 +311,20 @@ export default function FileMenu() {
     return new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
   }
 
+  // Save a finished jsPDF document. jsPDF's own pdf.save() relies on an <a download>
+  // click, which silently does nothing in Tauri/WebView2 — so on desktop we route
+  // the bytes through the native save dialog instead. Returns true if written.
+  const savePdf = async (pdf, defaultName) =>
+    saveExportBytes(new Uint8Array(pdf.output('arraybuffer')), defaultName, 'pdf', 'application/pdf')
+
   const exportPagePdf = useCallback(async () => {
     setExportStatus({ phase: 'rendering', label: 'Building PDF…' })
     try {
       const capture = await captureSvgPng(boundsFromDrawing(drawing, 30))
       const pdf = await newPdf()
       addPdfPage(pdf, capture, { drawingName: drawing?.name, projectName: project?.name, index: 0, total: 1 })
-      pdf.save(`${drawing?.name || 'schematic'}.pdf`)
-      setExportStatus({ phase: 'done', label: 'PDF exported' })
+      const saved = await savePdf(pdf, `${drawing?.name || 'schematic'}.pdf`)
+      setExportStatus(saved ? { phase: 'done', label: 'PDF exported' } : null)
     } catch (e) {
       console.error('PDF export failed', e)
       setExportStatus({ phase: 'error', label: 'PDF export failed' })
@@ -295,8 +348,8 @@ export default function FileMenu() {
         addPdfPage(pdf, capture, { drawingName: d.name, projectName: project?.name, index: i, total: ordered.length })
       }
       if (restore) { setActiveDrawing(restore); await nextFrame() }
-      pdf.save(`${project?.name || 'project'}.pdf`)
-      setExportStatus({ phase: 'done', label: `PDF exported — ${ordered.length} page${ordered.length > 1 ? 's' : ''}` })
+      const saved = await savePdf(pdf, `${project?.name || 'project'}.pdf`)
+      setExportStatus(saved ? { phase: 'done', label: `PDF exported — ${ordered.length} page${ordered.length > 1 ? 's' : ''}` } : null)
     } catch (e) {
       console.error('Project PDF export failed', e)
       if (restore) setActiveDrawing(restore)

@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { runDCSimulation } from '../lib/simulation/dcSolver'
 import { TOGGLE_TYPES, MOMENTARY_TYPES } from '../lib/simulation/electricalSim'
 import { runHydraulicSimulation, defaultDCVPosition, MANUAL_DCV_TYPES } from '../lib/simulation/hydraulicSim'
+import { valveDefaultPosition } from '../lib/valveBuilder'
 
 const useSimulationStore = create((set, get) => ({
   isRunning: false,
@@ -131,8 +132,16 @@ const useSimulationStore = create((set, get) => ({
 
   // Shift a DCV to the next position (cycle: b → a → center → b for 4/3, b → a for 4/2).
   // Called from Canvas when the user clicks a DCV during simulation.
-  shiftDCV(compId, compType) {
+  shiftDCV(compId, compType, positionKeys = null) {
     set(state => {
+      // Parametric valve builder (or any caller supplying explicit keys): cycle
+      // through the provided position keys in order.
+      if (positionKeys && positionKeys.length) {
+        const cur = state.dcvPositions[compId] ?? positionKeys[positionKeys.length - 1]
+        const idx = positionKeys.indexOf(cur)
+        const next = positionKeys[(idx + 1) % positionKeys.length]
+        return { dcvPositions: { ...state.dcvPositions, [compId]: next } }
+      }
       const cur = state.dcvPositions[compId] ?? defaultDCVPosition(compType)
       let next
       if (compType === 'hyd_dcv_4_3_open' || compType === 'hyd_dcv_4_3_closed') {
@@ -154,9 +163,12 @@ const useSimulationStore = create((set, get) => ({
     const { dcvPositions, relayEnergized, cylinderPositions, componentStates } = get()
     // Initialise DCV positions for any new DCVs not yet tracked
     const resolvedDCVPositions = { ...dcvPositions }
+    const restPosition = c => c.type === 'hyd_dcv_custom'
+      ? valveDefaultPosition(c.simParams || {})
+      : defaultDCVPosition(c.type)
     components.forEach(c => {
       if (MANUAL_DCV_TYPES.has(c.type) && !(c.id in resolvedDCVPositions)) {
-        resolvedDCVPositions[c.id] = defaultDCVPosition(c.type)
+        resolvedDCVPositions[c.id] = restPosition(c)
       }
     })
 
@@ -174,7 +186,7 @@ const useSimulationStore = create((set, get) => ({
       if (c.simParams?.actuation === 'solenoid' && linked) {
         resolvedDCVPositions[c.id] = solenoidEnergized[linked]
           ? 'a'
-          : defaultDCVPosition(c.type)
+          : restPosition(c)
       }
     })
     // cylinderPositions is mutated in place by the engine across ticks

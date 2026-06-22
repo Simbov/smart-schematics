@@ -21,33 +21,54 @@ const genPlcId = (prefix) =>
   `${prefix}_${Date.now().toString(36)}_${(counter++).toString(36)}_${Math.random().toString(36).slice(2, 6)}`
 
 // Pin kinds. DI/DO/AI/PWM are the classic I/O classes; FREQ is a frequency /
-// pulse-counting input; CANH/CANL/CANSH are CAN-bus pins (high, low, shield) so a
-// bus connector's pins can be documented in the registry/CSV too.
-export const PIN_KINDS = ['DI', 'DO', 'AI', 'PWM', 'FREQ', 'CANH', 'CANL', 'CANSH']
+// pulse-counting input; TEMP is a temperature input (thermocouple/RTD); RHEO is a
+// rheostat / resistive (potentiometer) input; PWR+/PWR- are the pin's supply
+// rails; CANH/CANL/CANSH are CAN-bus pins (high, low, shield) so a bus
+// connector's pins can be documented in the registry/CSV too.
+export const PIN_KINDS = ['DI', 'DO', 'AI', 'PWM', 'FREQ', 'TEMP', 'RHEO', 'PWR+', 'PWR-', 'CANH', 'CANL', 'CANSH']
+
+// Pin kinds grouped into categories — drives the compact, grouped capability /
+// type pickers so the (now 12) kinds aren't one flat cluttered row (issue #14).
+export const PIN_KIND_GROUPS = [
+  { label: 'Digital', kinds: ['DI', 'DO'] },
+  { label: 'Analogue', kinds: ['AI', 'TEMP', 'RHEO'] },
+  { label: 'Pulse', kinds: ['PWM', 'FREQ'] },
+  { label: 'Power', kinds: ['PWR+', 'PWR-'] },
+  { label: 'CAN bus', kinds: ['CANH', 'CANL', 'CANSH'] },
+]
 
 // Kinds that are CAN-bus pins rather than discrete/analogue I/O — used to keep
 // them out of the binding pickers (there is no CAN I/O component to bind them to)
 // while still letting them be listed and exported.
 export const CAN_KINDS = ['CANH', 'CANL', 'CANSH']
 
-// Which pin kinds a placed I/O component type can bind to. FREQ counts as an
-// input class (a frequency/pulse input); CAN pins are not bindable to the basic
-// I/O components.
+// Power-rail kinds — documentation/wiring only, not bindable to an I/O component.
+export const POWER_KINDS = ['PWR+', 'PWR-']
+
+// Which pin kinds a placed I/O component type can bind to. FREQ/TEMP/RHEO count as
+// input classes; CAN and power pins are not bindable to the basic I/O components.
 const KINDS_BY_IO_TYPE = {
-  plc_input: ['DI', 'AI', 'FREQ'],
-  plc_digital_input: ['DI', 'AI', 'FREQ'],
-  plc_analog_input: ['DI', 'AI', 'FREQ'],
+  plc_input: ['DI', 'AI', 'FREQ', 'TEMP', 'RHEO'],
+  plc_digital_input: ['DI', 'AI', 'FREQ', 'TEMP', 'RHEO'],
+  plc_analog_input: ['DI', 'AI', 'FREQ', 'TEMP', 'RHEO'],
   plc_output: ['DO', 'PWM'],
   plc_digital_output: ['DO', 'PWM'],
   plc_pwm_output: ['DO', 'PWM'],
 }
 
 // The simParams.mode value a pin kind implies on the placed component. FREQ maps
-// to the input's Digital mode (it's a pulse-level signal); CAN kinds have no I/O
-// mode and default to Digital if ever asked.
+// to the input's Digital mode (it's a pulse-level signal); TEMP/RHEO are analogue
+// inputs; CAN/power kinds have no I/O mode and default to Digital if ever asked.
 const MODE_BY_KIND = {
   DI: 'Digital', AI: 'Analogue', DO: 'Digital', PWM: 'PWM', FREQ: 'Digital',
+  TEMP: 'Analogue', RHEO: 'Analogue',
+  'PWR+': 'Digital', 'PWR-': 'Digital',
   CANH: 'Digital', CANL: 'Digital', CANSH: 'Digital',
+}
+
+// The kinds a placed I/O component type can bind to (exported for the matching UI).
+export function kindsForIoType(ioType) {
+  return KINDS_BY_IO_TYPE[ioType] || []
 }
 
 export function createPlcDevice(name = 'PLC 1') {
@@ -197,11 +218,24 @@ export function findDeviceByName(devices, name) {
   return (devices || []).find(d => d.name === name) || null
 }
 
-// Pins on `device` that a component of `ioType` can bind to.
+// Pins on `device` that a component of `ioType` can bind to. Matches on the pin's
+// *capabilities*, not just its currently-configured kind — so an input+output
+// capable pin set to DO still appears for a PLC Input block (issue #15). Falls
+// back to the configured kind for legacy pins with no capability set.
 export function pinsForIoType(device, ioType) {
   const kinds = KINDS_BY_IO_TYPE[ioType]
   if (!device || !kinds) return []
-  return (device.pins || []).filter(p => kinds.includes(p.kind))
+  return (device.pins || []).filter(p => kinds.some(k => pinIsCapable(p, k)))
+}
+
+// The kind a pin should report when bound to a component of `ioType`: prefer the
+// pin's configured kind if it suits the io type, else the first capable kind that
+// does. Lets a DO-configured but DI-capable pin bind to an input block as DI.
+export function kindForBinding(pin, ioType) {
+  const kinds = KINDS_BY_IO_TYPE[ioType]
+  if (!pin || !kinds) return pin?.kind || 'DI'
+  if (kinds.includes(pin.kind)) return pin.kind
+  return kinds.find(k => pinIsCapable(pin, k)) || pin.kind || kinds[0]
 }
 
 // simParams.mode implied by a pin kind ('DI' → 'Digital', 'AI' → 'Analogue', …).
@@ -212,8 +246,12 @@ export function modeForKind(kind) {
 // The simParams patch a component should adopt when bound to a device pin —
 // the auto-populate at the heart of "define the device once, every DI/DO
 // fills itself in".
-export function bindingParams(device, pin) {
+export function bindingParams(device, pin, ioType = null) {
   if (!device || !pin) return {}
+  // When the component's io type is known, derive the mode from the kind the pin
+  // will act as for that block (so a DO-set, DI-capable pin bound to an input
+  // block reports Digital input rather than the output mode).
+  const kind = ioType ? kindForBinding(pin, ioType) : pin.kind
   return {
     device: device.name,
     location: device.location || '',
@@ -223,7 +261,7 @@ export function bindingParams(device, pin) {
     connector: pin.connector || '',
     maxCurrent: pin.maxCurrent || '',
     notes: pin.notes || '',
-    mode: modeForKind(pin.kind),
+    mode: modeForKind(kind),
     pinId: pin.id,          // stable binding key — survives device rename / address edits
   }
 }
@@ -269,7 +307,7 @@ export function findPinById(devices, pinId) {
 // the registry (registry is master); an unbound/manual one is returned as-is.
 // Matching prefers the stable `pinId` so a device rename or address edit doesn't
 // silently break the binding. Returns `{ params, device, pin, bound }`.
-export function resolveBinding(devices, simParams = {}) {
+export function resolveBinding(devices, simParams = {}, ioType = null) {
   let { device, pin } = findPinById(devices, simParams.pinId)
   if (!pin) {
     // Legacy / pre-pinId binding: fall back to device name + pin address.
@@ -277,7 +315,7 @@ export function resolveBinding(devices, simParams = {}) {
     pin = device ? (device.pins || []).find(p => p.address === simParams.address) : null
   }
   if (!device || !pin) return { params: simParams, device: null, pin: null, bound: false }
-  return { params: { ...simParams, ...bindingParams(device, pin) }, device, pin, bound: true }
+  return { params: { ...simParams, ...bindingParams(device, pin, ioType) }, device, pin, bound: true }
 }
 
 const PLC_IO_TYPES = new Set(['plc_input', 'plc_output'])
@@ -295,7 +333,7 @@ export function resyncPlcComponents(components, devices) {
     if (!sp.pinId && !sp.device) return c          // never bound
     const { device, pin } = findPinById(devices, sp.pinId)
     if (!device || !pin) return c                  // pin gone → keep last-synced values (manual)
-    const patch = bindingParams(device, pin)
+    const patch = bindingParams(device, pin, c.type)
     // Skip if nothing actually changed.
     if (REGISTRY_OWNED_KEYS.concat('address', 'device', 'pinId').every(k => sp[k] === patch[k])) return c
     changed = true
@@ -367,13 +405,29 @@ export function parseCsv(text) {
 export function csvToDevices(text) {
   const rows = parseCsv(text)
   if (!rows.length) return []
-  const header = rows[0].map(h => h.trim().toLowerCase())
-  const col = name => header.indexOf(name.toLowerCase())
+  // Strip a UTF-8 BOM off the first header cell (Excel exports one), lower-case
+  // and trim every header so matching is forgiving.
+  const header = rows[0].map((h, i) => (i === 0 ? h.replace(/^﻿/, '') : h).trim().toLowerCase())
+  // Match a column by any of several accepted header aliases so a hand-made CSV
+  // (or one from PLC tooling) "just works" without exact-name headers (issue #11).
+  const col = (...names) => {
+    for (const n of names) {
+      const i = header.indexOf(n.toLowerCase())
+      if (i >= 0) return i
+    }
+    return -1
+  }
   const ci = {
-    device: col('Device'), location: col('Location'), connector: col('Connector'),
-    address: col('Address'), channel: col('Channel'), kind: col('Type'),
-    caps: col('Capabilities'), maxCurrent: col('Max current (A)'),
-    name: col('Signal name'), notes: col('Notes'),
+    device: col('Device', 'PLC', 'Controller', 'Module', 'Device name'),
+    location: col('Location', 'Cabinet', 'Panel'),
+    connector: col('Connector', 'Plug', 'Terminal', 'Port'),
+    address: col('Address', 'Pin', 'Pin address', 'Tag'),
+    channel: col('Channel', 'CH', 'Chan'),
+    kind: col('Type', 'Kind', 'I/O', 'IO', 'Function'),
+    caps: col('Capabilities', 'Capable', 'Caps'),
+    maxCurrent: col('Max current (A)', 'Max current', 'Max A', 'Current', 'Current (A)'),
+    name: col('Signal name', 'Signal', 'Name', 'Description', 'Label'),
+    notes: col('Notes', 'Comment', 'Comments', 'Remark'),
   }
   const at = (r, i) => (i >= 0 && i < r.length ? r[i].trim() : '')
   const byName = new Map()
@@ -517,6 +571,9 @@ export function migratePlcDevice(device) {
     p.maxCurrent ??= ''
     p.notes ??= ''
     if (!p.capabilities || !p.capabilities.length) p.capabilities = [p.kind || 'DI']
+    // The configured Type must be one of the pin's capabilities; if it isn't set
+    // (or no longer capable), default to the first capable kind (issue #14).
+    if (!p.kind || !p.capabilities.includes(p.kind)) p.kind = p.capabilities[0]
   }
   return device
 }

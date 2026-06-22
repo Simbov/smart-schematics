@@ -659,6 +659,38 @@ const useSchematicStore = create((set, get) => ({
     }))
   },
 
+  // Rebuild a component's pin set from a fresh list of {id, relX, relY,
+  // direction, label} specs — used by parametric components (manifold, the valve
+  // builder) when a port-count / layout param changes. Recomputes absolute pin
+  // positions from the component transform and re-attaches bound wires by pin id
+  // so existing connections follow (and wires to removed pins are left in place,
+  // simply unbound). Optionally merges a simParams patch in the same update.
+  setComponentPins(drawingId, componentId, pinSpecs, simParamsPatch = null) {
+    set(state => ({
+      drawings: state.drawings.map(d => {
+        if (d.id !== drawingId) return d
+        let updated = null
+        const components = d.components.map(c => {
+          if (c.id !== componentId) return c
+          const pins = computePinAbsPositions(
+            pinSpecs.map(p => ({ ...p })), c.x, c.y, c.rotation || 0, c.flipH, c.flipV
+          )
+          updated = {
+            ...c, pins,
+            ...(simParamsPatch ? { simParams: { ...c.simParams, ...simParamsPatch } } : {}),
+          }
+          return updated
+        })
+        return {
+          ...d,
+          isDirty: true,
+          components,
+          wires: updated ? get()._reattachWires(d.wires, updated) : d.wires,
+        }
+      }),
+    }))
+  },
+
   updateComponentSimParam(drawingId, componentId, key, value) {
     set(state => ({
       drawings: state.drawings.map(d => {

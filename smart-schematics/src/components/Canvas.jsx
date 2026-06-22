@@ -3,6 +3,7 @@ import useSchematicStore from '../store/schematicStore'
 import useSimulationStore from '../store/simulationStore'
 import { TOGGLE_TYPES } from '../lib/simulation/electricalSim'
 import { MANUAL_DCV_TYPES, defaultDCVPosition } from '../lib/simulation/hydraulicSim'
+import { valvePositionKeys } from '../lib/valveBuilder'
 import { genId } from '../store/schematicStore'
 import GridOverlay from './GridOverlay'
 import PlacedComponent, { getDisplayValue } from './PlacedComponent'
@@ -1167,7 +1168,10 @@ export default function Canvas({ onCursorMove }) {
       // solenoid controls it instead).
       const isSolenoidLinked = isRunning && comp.simParams?.actuation === 'solenoid'
         && comp.simParams?.linkedDesignator
-      if (!isSolenoidLinked) shiftDCV(id, comp.type)
+      if (!isSolenoidLinked) {
+        const keys = comp.type === 'hyd_dcv_custom' ? valvePositionKeys(comp.simParams || {}) : null
+        shiftDCV(id, comp.type, keys)
+      }
     }
   }, [isRunning, toggleSwitch, shiftDCV])
 

@@ -1000,6 +1000,7 @@ export const ELECTRICAL_COMPONENTS = [
       { id: 'B', relX: 20, relY: 0, direction: 'E' },
     ],
     simParams: {
+      style: { label: 'Symbol Style', type: 'select', options: ['Box', 'Coil', 'Proportional'], default: 'Box' },
       coilVoltage: { label: 'Coil Voltage (V)', type: 'number', default: 24 },
       coilResistance: { label: 'Coil Resistance (Ω)', type: 'number', default: 20 },
     },
@@ -1290,7 +1291,7 @@ export const ELECTRICAL_COMPONENTS = [
       // Display toggles — what the symbol draws on the schematic.
       showName: { label: 'Signal name', type: 'boolean', default: true },
       showAddress: { label: 'Pin address', type: 'boolean', default: true },
-      showDevice: { label: 'Device name', type: 'boolean', default: false },
+      showDevice: { label: 'Device name', type: 'boolean', default: true },
       showConnector: { label: 'Connector', type: 'boolean', default: false },
       showChannel: { label: 'Channel', type: 'boolean', default: false },
       voltage: { label: 'Input Voltage (V)', type: 'number', default: 24, modes: ['Digital'] },
@@ -1331,7 +1332,7 @@ export const ELECTRICAL_COMPONENTS = [
       // Display toggles — what the symbol draws on the schematic.
       showName: { label: 'Signal name', type: 'boolean', default: true },
       showAddress: { label: 'Pin address', type: 'boolean', default: true },
-      showDevice: { label: 'Device name', type: 'boolean', default: false },
+      showDevice: { label: 'Device name', type: 'boolean', default: true },
       showConnector: { label: 'Connector', type: 'boolean', default: false },
       showChannel: { label: 'Channel', type: 'boolean', default: false },
       showCurrent: { label: 'Current rating', type: 'boolean', default: false },

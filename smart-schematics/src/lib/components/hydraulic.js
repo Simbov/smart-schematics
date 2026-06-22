@@ -1,6 +1,29 @@
 // ISO 1219 hydraulic component definitions
+import { manifoldPins, manifoldGeom } from '../manifold'
+import { valvePins } from '../valveBuilder'
+
+const MANIFOLD_DEFAULT_PORTS = 4
+const _mGeom = manifoldGeom(MANIFOLD_DEFAULT_PORTS)
 
 export const HYDRAULIC_COMPONENTS = [
+  {
+    type: 'hyd_manifold',
+    label: 'Manifold',
+    tags: ['manifold', 'block', 'distribution', 'gallery', 'ports', 'rail'],
+    category: 'Valves – Flow',
+    schematicType: 'hydraulic',
+    defaultDesignatorPrefix: 'MAN',
+    defaultValue: '',
+    // Footprint grows with the port count at runtime; default sizing fits 4 ports
+    // plus the P stub (left) and the work-port stubs (bottom).
+    width: _mGeom.width + 24,
+    height: _mGeom.height + 24,
+    viewBox: `${-_mGeom.width / 2 - 14} ${-_mGeom.height / 2 - 12} ${_mGeom.width + 28} ${_mGeom.height + 24}`,
+    pins: manifoldPins(MANIFOLD_DEFAULT_PORTS),
+    simParams: {
+      ports: { label: 'Ports', type: 'number', default: MANIFOLD_DEFAULT_PORTS, min: 2, max: 16 },
+    },
+  },
   // ── Power & Sources ─────────────────────────────────────────────────────────
   {
     type: 'hyd_pump_fixed',
@@ -303,6 +326,27 @@ export const HYDRAULIC_COMPONENTS = [
     ],
     simParams: {
       normalPosition: { label: 'Normal Position', type: 'select', options: ['PT', 'PA'], default: 'PT' },
+    },
+  },
+  {
+    // Parametric directional valve — the "valve builder" (issue #20). One symbol
+    // configurable to 2/3 positions × 2/3/4 ports with a selectable centre.
+    type: 'hyd_dcv_custom',
+    label: 'Valve Builder',
+    tags: ['valve', 'directional', 'builder', 'custom', 'DCV', 'configurable', 'parametric'],
+    category: 'Valves – Directional',
+    schematicType: 'hydraulic',
+    defaultDesignatorPrefix: 'DCV',
+    defaultValue: '',
+    width: 160,
+    height: 40,
+    viewBox: '-80 -24 160 48',
+    pins: valvePins(4),
+    simParams: {
+      positions: { label: 'Positions', type: 'select', options: ['2', '3'], default: '3' },
+      ports: { label: 'Ports', type: 'select', options: ['2', '3', '4'], default: '4' },
+      centerPosition: { label: 'Centre (3-pos)', type: 'select', options: ['closed', 'open', 'tandem', 'float'], default: 'closed' },
+      actuation: { label: 'Actuation', type: 'select', options: ['solenoid', 'manual', 'pilot'], default: 'solenoid' },
     },
   },
 

@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react'
-import { Cpu, Plus, Trash2, ChevronUp, ChevronDown, Download, Upload, ImagePlus, Pencil, Check, ArrowUpDown, FileText } from 'lucide-react'
+import { Cpu, Plus, Trash2, ChevronUp, ChevronDown, ChevronRight, Download, Upload, ImagePlus, Pencil, Check, ArrowUpDown, FileText } from 'lucide-react'
 import useSchematicStore from '../store/schematicStore'
 import {
   addDevice, updateDevice, removeDevice,
@@ -7,8 +7,8 @@ import {
   addDeviceImage, removeDeviceImage,
   addDeviceDatasheet, removeDeviceDatasheet,
   devicesToCsv, deviceToCsv, deviceToJson, deviceFromJson, csvToDevices, appendImportedDevices,
-  sortPins, pinIsCapable, kindOptionsForPin,
-  PIN_KINDS, PIN_SORT_MODES,
+  sortPins, pinIsCapable, kindOptionsForPin, groupPinsByConnector,
+  PIN_KINDS, PIN_KIND_GROUPS, PIN_SORT_MODES,
 } from '../lib/plcDevices'
 import { isRunningInTauri, saveFileDialog, writeTextFile } from '../lib/tauriFs'
 import Lightbox from './Lightbox'
@@ -45,29 +45,55 @@ function PinField({ pin, devId, field, placeholder, editing, devices, commit }) 
   )
 }
 
-// Capability chips: DI/DO/AI/PWM toggles for what the pin *can* do, independent
-// of the single `kind` it's configured as. In read-only mode the enabled
-// capabilities render as static chips (no toggling).
+const chipStyle = on => ({
+  fontSize: 9, height: 18, lineHeight: '16px',
+  border: '1px solid var(--panel-border)',
+  background: on ? 'rgba(37,99,235,0.15)' : 'transparent',
+  color: on ? '#2563eb' : 'var(--component-color)',
+  fontWeight: on ? 700 : 400, opacity: on ? 1 : 0.55,
+})
+
+// Capability chips: what the pin *can* do, independent of the single `kind` it's
+// configured as. Read-only mode shows only the enabled chips as a compact line.
+// Edit mode groups the (now 12) kinds by category — opened on demand via a small
+// "Edit" affordance — so the table isn't one cluttered 12-chip row (issue #14).
 function CapabilityChips({ pin, onToggle, readOnly }) {
-  const kinds = readOnly ? PIN_KINDS.filter(k => pinIsCapable(pin, k)) : PIN_KINDS
-  if (readOnly && kinds.length === 0) return <Dash />
+  const [open, setOpen] = useState(false)
+  const enabled = PIN_KINDS.filter(k => pinIsCapable(pin, k))
+  if (readOnly) {
+    if (enabled.length === 0) return <Dash />
+    return (
+      <div className="flex flex-wrap gap-0.5" style={{ maxWidth: 150 }}>
+        {enabled.map(k => <span key={k} className="rounded px-1" style={chipStyle(true)}>{k}</span>)}
+      </div>
+    )
+  }
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} title="Edit capabilities"
+        className="flex flex-wrap gap-0.5 items-center rounded px-1 hover:bg-black/5 dark:hover:bg-white/5"
+        style={{ maxWidth: 150, minHeight: 18, border: '1px dashed var(--panel-border)' }}>
+        {enabled.length
+          ? enabled.map(k => <span key={k} className="rounded px-1" style={chipStyle(true)}>{k}</span>)
+          : <span style={{ fontSize: 9, opacity: 0.6 }}>set…</span>}
+      </button>
+    )
+  }
   return (
-    <div className="flex flex-wrap gap-0.5" style={{ maxWidth: 150 }}>
-      {kinds.map(k => {
-        const on = pinIsCapable(pin, k)
-        const style = {
-          fontSize: 9, height: 18, lineHeight: '16px',
-          border: '1px solid var(--panel-border)',
-          background: on ? 'rgba(37,99,235,0.15)' : 'transparent',
-          color: on ? '#2563eb' : 'var(--component-color)',
-          fontWeight: on ? 700 : 400, opacity: on ? 1 : 0.55,
-        }
-        if (readOnly) return <span key={k} className="rounded px-1" style={style}>{k}</span>
-        return (
-          <button key={k} type="button" title={`Capable of ${k}`} onClick={() => onToggle(k)}
-            className="rounded px-1" style={{ ...style, cursor: 'pointer' }}>{k}</button>
-        )
-      })}
+    <div className="rounded p-1" style={{ maxWidth: 170, border: '1px solid var(--panel-border)', background: 'var(--canvas-bg)' }}>
+      {PIN_KIND_GROUPS.map(g => (
+        <div key={g.label} className="flex items-center gap-1 mb-0.5">
+          <span className="text-gray-400 flex-shrink-0" style={{ fontSize: 8, width: 44, textAlign: 'right' }}>{g.label}</span>
+          <div className="flex flex-wrap gap-0.5">
+            {g.kinds.map(k => (
+              <button key={k} type="button" title={`Capable of ${k}`} onClick={() => onToggle(k)}
+                className="rounded px-1" style={{ ...chipStyle(pinIsCapable(pin, k)), cursor: 'pointer' }}>{k}</button>
+            ))}
+          </div>
+        </div>
+      ))}
+      <button type="button" onClick={() => setOpen(false)}
+        className="text-blue-500" style={{ fontSize: 9 }}>Done</button>
     </div>
   )
 }
@@ -94,6 +120,14 @@ export default function PlcDevicePage() {
   const [lightbox, setLightbox] = useState(null)
   const [editing, setEditing] = useState(false)
   const [sortMode, setSortMode] = useState('connector')
+  // Device cards the user has minimised (so they don't scroll past 50 pins). Works
+  // in both view and edit mode (issue #12).
+  const [collapsed, setCollapsed] = useState(() => new Set())
+  const toggleCollapsed = id => setCollapsed(prev => {
+    const next = new Set(prev)
+    next.has(id) ? next.delete(id) : next.add(id)
+    return next
+  })
 
   const commit = next => setPlcDevices(next)
 
@@ -116,7 +150,11 @@ export default function PlcDevicePage() {
     const caps = pinIsCapable(pin, k)
       ? (pin.capabilities || [pin.kind]).filter(c => c !== k)
       : [...new Set([...(pin.capabilities || [pin.kind]), k])]
-    commit(updatePin(devices, devId, pin.id, { capabilities: caps }))
+    // The configured Type must stay one of the capabilities (issue #14): if the
+    // removed cap was the current kind, fall back to the first remaining one.
+    const patch = { capabilities: caps }
+    if (caps.length && !caps.includes(pin.kind)) patch.kind = caps[0]
+    commit(updatePin(devices, devId, pin.id, patch))
   }
 
   const pickImage = devId => {
@@ -254,10 +292,28 @@ export default function PlcDevicePage() {
           {devices.map(dev => {
             const orderedPins = sortPins(dev, sortMode)
             const allPins = dev.pins || []
+            const isCollapsed = collapsed.has(dev.id)
+            const byConnector = sortMode === 'connector'
+            // Build a flat list of render rows: connector sub-headings interleaved
+            // with their pins when grouping, otherwise just the sorted pins.
+            const pinRows = []
+            if (byConnector) {
+              for (const g of groupPinsByConnector(dev)) {
+                pinRows.push({ group: g.connector || 'Unassigned' })
+                for (const pin of g.pins) pinRows.push({ pin })
+              }
+            } else {
+              for (const pin of orderedPins) pinRows.push({ pin })
+            }
+            const colSpan = 8 + (showReorder ? 1 : 0) + (editing ? 1 : 0)
             return (
             <div key={dev.id} className="rounded-lg border" style={{ borderColor: 'var(--panel-border)', background: 'var(--panel-bg)' }}>
               {/* Device header */}
-              <div className="flex items-center gap-3 px-4 py-3 border-b" style={{ borderColor: 'var(--panel-border)' }}>
+              <div className="flex items-center gap-3 px-4 py-3" style={isCollapsed ? undefined : { borderBottom: '1px solid var(--panel-border)' }}>
+                <button className="px-0.5 rounded text-gray-400 hover:text-blue-500 flex-shrink-0"
+                  title={isCollapsed ? 'Expand' : 'Minimise'} onClick={() => toggleCollapsed(dev.id)}>
+                  {isCollapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+                </button>
                 <Cpu size={15} className="text-blue-500 flex-shrink-0" />
                 <label className="flex items-center gap-1.5 min-w-0" style={{ flex: '1.2 1 0' }}>
                   <span className="text-gray-400 flex-shrink-0" style={{ fontSize: 10 }}>Device</span>
@@ -279,6 +335,11 @@ export default function PlcDevicePage() {
                     <span className="truncate" style={{ fontSize: 12 }}>{dev.location || <Dash />}</span>
                   )}
                 </label>
+                {isCollapsed && (
+                  <span className="text-gray-400 flex-shrink-0" style={{ fontSize: 11 }}>
+                    {allPins.length} pin{allPins.length === 1 ? '' : 's'}
+                  </span>
+                )}
                 {/* Download this single device's config to reuse elsewhere */}
                 <button
                   className="px-1.5 py-1 rounded text-gray-400 hover:bg-black/5 dark:hover:bg-white/5 flex-shrink-0"
@@ -299,6 +360,7 @@ export default function PlcDevicePage() {
                 )}
               </div>
 
+              {!isCollapsed && (<>
               {/* Location photos */}
               {(editing || (dev.images || []).length > 0) && (
                 <div className="px-4 pt-3 flex items-center gap-2 flex-wrap">
@@ -388,7 +450,18 @@ export default function PlcDevicePage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {orderedPins.map(pin => {
+                      {pinRows.map((item, ri) => {
+                        if (item.group !== undefined) {
+                          // Connector sub-heading (hierarchy when sorting by connector, issue #12).
+                          return (
+                            <tr key={`g${ri}`}>
+                              <td colSpan={colSpan} style={{ padding: '8px 6px 2px', fontSize: 10, fontWeight: 700, letterSpacing: '0.05em', color: '#2563eb', textTransform: 'uppercase' }}>
+                                {item.group}
+                              </td>
+                            </tr>
+                          )
+                        }
+                        const pin = item.pin
                         const idx = allPins.indexOf(pin)
                         return (
                           <tr key={pin.id}>
@@ -408,7 +481,19 @@ export default function PlcDevicePage() {
                               {editing ? (
                                 <select className={INPUT_CLASS} style={INPUT_STYLE} value={pin.kind}
                                   onChange={e => commit(updatePin(devices, dev.id, pin.id, { kind: e.target.value }))}>
-                                  {kindOptionsForPin(pin).map(k => <option key={k} value={k}>{k}</option>)}
+                                  {(() => {
+                                    // Only the kinds this pin is capable of, grouped by
+                                    // category so the list isn't a flat 12-item clutter.
+                                    const allowed = new Set(kindOptionsForPin(pin))
+                                    return PIN_KIND_GROUPS
+                                      .map(g => ({ label: g.label, kinds: g.kinds.filter(k => allowed.has(k)) }))
+                                      .filter(g => g.kinds.length)
+                                      .map(g => (
+                                        <optgroup key={g.label} label={g.label}>
+                                          {g.kinds.map(k => <option key={k} value={k}>{k}</option>)}
+                                        </optgroup>
+                                      ))
+                                  })()}
                                 </select>
                               ) : (
                                 <div style={READ_STYLE}>{pin.kind || <Dash />}</div>
@@ -443,6 +528,7 @@ export default function PlcDevicePage() {
                   ><Plus size={11} /> Add pin</button>
                 )}
               </div>
+              </>)}
             </div>
             )
           })}

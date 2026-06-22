@@ -8,8 +8,55 @@ import {
   pinIsCapable, resolveBinding, devicesToCsv, groupPinsByConnector, migratePlcDevice,
   sortPins,
   resyncPlcComponents,
+  csvToDevices, kindForBinding,
   PIN_KINDS,
 } from './plcDevices'
+
+describe('PLC capability-based matching & CSV import (issues #14/#15/#11)', () => {
+  it('pinsForIoType matches on capabilities, not just configured kind', () => {
+    // A pin configured as DO but also DI-capable should be offered to an input block.
+    const dev = { ...createPlcDevice('PLC'), pins: [
+      createPlcPin({ address: 'Q0.0', kind: 'DO', capabilities: ['DO', 'DI'] }),
+      createPlcPin({ address: 'I0.0', kind: 'DI', capabilities: ['DI'] }),
+      createPlcPin({ address: 'P0', kind: 'PWR+', capabilities: ['PWR+'] }),
+    ] }
+    expect(pinsForIoType(dev, 'plc_input').map(p => p.address)).toEqual(['Q0.0', 'I0.0'])
+    expect(pinsForIoType(dev, 'plc_output').map(p => p.address)).toEqual(['Q0.0'])
+  })
+
+  it('kindForBinding picks a kind suiting the io type', () => {
+    const pin = createPlcPin({ kind: 'DO', capabilities: ['DO', 'DI'] })
+    expect(kindForBinding(pin, 'plc_input')).toBe('DI')
+    expect(kindForBinding(pin, 'plc_output')).toBe('DO')
+  })
+
+  it('bindingParams derives input mode for a cross-capable pin bound to an input', () => {
+    const dev = { ...createPlcDevice('PLC'), location: 'A' }
+    const pin = createPlcPin({ address: 'Q0.0', kind: 'DO', capabilities: ['DO', 'AI'] })
+    expect(bindingParams(dev, pin, 'plc_input').mode).toBe('Analogue')
+    expect(bindingParams(dev, pin, 'plc_output').mode).toBe('Digital')
+  })
+
+  it('migratePlcDevice defaults an out-of-capability kind to the first capable one', () => {
+    const dev = migratePlcDevice({ ...createPlcDevice('PLC'), pins: [
+      { id: 'p1', kind: 'PWM', capabilities: ['DI', 'AI'], address: '', name: '' },
+    ] })
+    expect(dev.pins[0].kind).toBe('DI')
+  })
+
+  it('csvToDevices splits multiple devices, tolerates a BOM and header aliases', () => {
+    const csv = '﻿PLC,Cabinet,Pin,I/O,Signal\n'
+      + 'PLC A,Cab 1,I0.0,DI,Start\n'
+      + 'PLC A,Cab 1,Q0.0,DO,Lamp\n'
+      + 'PLC B,Cab 2,I0.0,AI,Level\n'
+    const devs = csvToDevices(csv)
+    expect(devs.map(d => d.name)).toEqual(['PLC A', 'PLC B'])
+    expect(devs[0].location).toBe('Cab 1')
+    expect(devs[0].pins.map(p => p.address)).toEqual(['I0.0', 'Q0.0'])
+    expect(devs[0].pins[0].name).toBe('Start')
+    expect(devs[1].pins[0].kind).toBe('AI')
+  })
+})
 
 describe('PLC device registry model', () => {
   it('creates a device with empty location and pin table', () => {
@@ -88,7 +135,9 @@ describe('PLC device registry model', () => {
     expect(modeForKind('AI')).toBe('Analogue')
     expect(modeForKind('PWM')).toBe('PWM')
     expect(modeForKind('FREQ')).toBe('Digital')
-    expect(PIN_KINDS).toEqual(['DI', 'DO', 'AI', 'PWM', 'FREQ', 'CANH', 'CANL', 'CANSH'])
+    expect(modeForKind('TEMP')).toBe('Analogue')
+    expect(modeForKind('RHEO')).toBe('Analogue')
+    expect(PIN_KINDS).toEqual(['DI', 'DO', 'AI', 'PWM', 'FREQ', 'TEMP', 'RHEO', 'PWR+', 'PWR-', 'CANH', 'CANL', 'CANSH'])
   })
 
   it('bindingParams auto-populates device, location, address, name, channel, connector, notes, mode and pinId', () => {

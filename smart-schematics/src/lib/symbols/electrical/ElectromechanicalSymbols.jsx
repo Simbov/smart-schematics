@@ -103,16 +103,44 @@ export function ContactorNCSymbol({ state = {} }) {
   )
 }
 
-export function SolenoidSymbol() {
+// Solenoid actuator with selectable style (issue #20):
+//   • 'Box'          — IEC rectangle with a single diagonal (the standard valve
+//                      actuator glyph) — clean and the default for new placements.
+//   • 'Coil'         — inductor-coil depiction with an armature/core bar.
+//   • 'Proportional' — IEC box with a diagonal crossed by an arrow (variable /
+//                      proportional solenoid).
+// Energised (state.on, from the dcSolver coil current) turns the symbol amber.
+export function SolenoidSymbol({ params = {}, state = {} }) {
+  const style = params.style || 'Box'
+  const col = state.on ? 'var(--sim-active-color, #f59e0b)' : 'currentColor'
+  if (style === 'Coil') {
+    return (
+      <g style={{ color: col }}>
+        <line x1="-20" y1="0" x2="-15" y2="0" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
+        <path d="M -15,0 A 4,4 0 0 1 -7,0" stroke="currentColor" strokeWidth={SW} fill="none" />
+        <path d="M -7,0 A 4,4 0 0 1 1,0" stroke="currentColor" strokeWidth={SW} fill="none" />
+        <path d="M 1,0 A 4,4 0 0 1 9,0" stroke="currentColor" strokeWidth={SW} fill="none" />
+        <line x1="9" y1="0" x2="15" y2="0" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
+        <line x1="-15" y1="7" x2="15" y2="7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <line x1="15" y1="0" x2="20" y2="0" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
+      </g>
+    )
+  }
+  // Box / Proportional — a rectangle with a diagonal, leads each side.
   return (
-    <g>
-      <line x1="-20" y1="0" x2="-15" y2="0" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
-      <path d="M -15,0 A 4,4 0 0 1 -7,0" stroke="currentColor" strokeWidth={SW} fill="none" />
-      <path d="M -7,0 A 4,4 0 0 1 1,0" stroke="currentColor" strokeWidth={SW} fill="none" />
-      <path d="M 1,0 A 4,4 0 0 1 9,0" stroke="currentColor" strokeWidth={SW} fill="none" />
-      <line x1="9" y1="0" x2="15" y2="0" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
-      <line x1="-15" y1="7" x2="15" y2="7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-      <line x1="15" y1="0" x2="20" y2="0" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" />
+    <g style={{ color: col }} fill="none" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" strokeLinejoin="round">
+      <line x1="-20" y1="0" x2="-12" y2="0" />
+      <rect x="-12" y="-8" width="24" height="16" />
+      {/* Diagonal — the electromagnetic-actuator stroke */}
+      <line x1="-12" y1="8" x2="12" y2="-8" />
+      {style === 'Proportional' && (
+        <>
+          {/* Arrow across the diagonal denotes a proportional/variable solenoid */}
+          <line x1="-13" y1="9" x2="13" y2="-9" />
+          <polygon points="13,-9 7,-9 11,-4" fill="currentColor" stroke="none" />
+        </>
+      )}
+      <line x1="12" y1="0" x2="20" y2="0" />
     </g>
   )
 }

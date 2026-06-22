@@ -1,5 +1,7 @@
 // ISO 1219 hydraulic symbols — all use stroke="currentColor", origin at (0,0)
 import React from 'react'
+import { manifoldDrawing } from '../manifold'
+import { valveConfig, valveRouting, valvePins, valvePositionKeys, valveDefaultPosition } from '../valveBuilder'
 
 const SW = 1.5
 
@@ -431,6 +433,73 @@ export function HydDCV32Symbol({ params = {}, state = {} }) {
   )
 }
 
+// Parametric DCV "valve builder" (issue #20) — one configurable directional
+// valve covering 2/3 positions × 2/3/4 ports with a selectable centre condition,
+// replacing the need for a separate symbol per combination. Each position is an
+// envelope; the spool slides so the active envelope lines up with the fixed
+// ports. Flow paths + blocked ports are derived from valveRouting().
+function valveCellPorts(ports, cx) {
+  const top = -AY, bot = AY
+  if (ports === 2) return { P: { x: cx, y: bot, top: false }, A: { x: cx, y: top, top: true } }
+  if (ports === 3) return {
+    P: { x: cx - PCOL, y: bot, top: false }, T: { x: cx + PCOL, y: bot, top: false },
+    A: { x: cx, y: top, top: true },
+  }
+  return {
+    P: { x: cx - PCOL, y: bot, top: false }, T: { x: cx + PCOL, y: bot, top: false },
+    A: { x: cx - PCOL, y: top, top: true }, B: { x: cx + PCOL, y: top, top: true },
+  }
+}
+
+export function HydDCVCustomSymbol({ params = {}, state = {} }) {
+  const act = params.actuation || 'solenoid'
+  const cfg = valveConfig(params)
+  const routes = valveRouting(cfg)
+  const keys = valvePositionKeys(cfg)
+  const centres = keys.length === 3 ? [-30, 0, 30] : [-30, 0]
+  const activeIdx = Math.max(0, keys.indexOf(state.position ?? valveDefaultPosition(cfg)))
+  const cx = centres[activeIdx] ?? 0
+
+  const renderCell = (key, centre) => {
+    const pos = valveCellPorts(cfg.ports, centre)
+    const pairs = routes[key] || []
+    const used = new Set()
+    const arrows = pairs.map(([a, b], i) => {
+      used.add(a); used.add(b)
+      return <FlowArrow key={`a${i}`} x1={pos[a].x} y1={pos[a].y} x2={pos[b].x} y2={pos[b].y} />
+    })
+    const blocked = Object.entries(pos)
+      .filter(([id]) => !used.has(id))
+      .map(([id, p]) => <BlockedT key={`x${id}`} x={p.x} top={p.top} />)
+    return (
+      <g key={key}>
+        <rect x={centre - ENV} y={-ENV} width={30} height={30} />
+        {arrows}{blocked}
+      </g>
+    )
+  }
+
+  return (
+    <g fill="none" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" strokeLinejoin="round">
+      <g style={spoolStyle(cx)}>
+        {keys.map((k, i) => renderCell(k, centres[i]))}
+        {/* Actuator(s) + centring/return spring ride with the spool */}
+        <Actuator x={centres[0] - ENV} dir={-1} variant={act} />
+        {keys.length === 3
+          ? <><ReturnSpring x={centres[0] - ENV} dir={-1} />
+              <Actuator x={centres[centres.length - 1] + ENV} dir={1} variant={act} />
+              <ReturnSpring x={centres[centres.length - 1] + ENV} dir={1} /></>
+          : <ReturnSpring x={centres[centres.length - 1] + ENV} dir={1} />}
+      </g>
+      {/* Fixed port stubs on the housing (default cell, centred at 0) */}
+      {valvePins(cfg.ports).map(pin => {
+        const top = pin.relY < 0
+        return <line key={pin.id} x1={pin.relX} y1={top ? -ENV : ENV} x2={pin.relX} y2={top ? -PINY : PINY} />
+      })}
+    </g>
+  )
+}
+
 // ── Valves – Pressure ─────────────────────────────────────────────────────────
 
 // Normally-closed pressure-relief valve drawn as a ball poppet seated on a
@@ -525,19 +594,20 @@ export function HydCounterbalanceSymbol() {
 // seat — when the sim has forward flow (`state.flowing`) the ball lifts clear.
 export function HydCheckValveSymbol({ state = {} }) {
   const flowing = !!state.flowing
-  const ballX = flowing ? 6 : 3            // unseats downstream when flowing forward
+  const ballCx = flowing ? 5 : 2.5         // ball lifts toward the outlet under forward flow
   return (
     <g fill="none" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" strokeLinejoin="round">
-      {/* Inlet A */}
-      <line x1={-14} y1={0} x2={-8} y2={0} />
-      {/* Conical seat (triangle), mouth open toward A, throat at x=-1 */}
-      <path d="M-8,-7 L-1,0 L-8,7" />
-      {/* Ball poppet (lifts downstream when flowing) */}
-      <circle cx={ballX} cy={0} r={4.2} fill={flowing ? 'currentColor' : 'none'} fillOpacity={flowing ? 0.18 : 0} />
+      {/* Inlet A (free-flow side) */}
+      <line x1={-14} y1={0} x2={-6} y2={0} />
+      {/* Conical seat — throat (x=1) faces the inlet; the ball seals it from the
+          outlet side, so forward flow A→B pushes the ball clear. */}
+      <path d="M-6,-7 L1,0 L-6,7" />
+      {/* Ball poppet */}
+      <circle cx={ballCx} cy={0} r={4.5} fill={flowing ? 'currentColor' : 'none'} fillOpacity={flowing ? 0.18 : 0} />
       {/* Outlet B */}
-      <line x1={ballX + 4} y1={0} x2={14} y2={0} style={ROD_MOVE} />
-      {/* Allowed-direction arrow */}
-      <polygon points="-13,0 -9,-3 -9,3" fill="currentColor" stroke="none" />
+      <line x1={ballCx + 4.5} y1={0} x2={14} y2={0} style={ROD_MOVE} />
+      {/* Allowed-flow direction arrowhead on the inlet line (points A → B) */}
+      <polygon points="-7,0 -11,-3 -11,3" fill="currentColor" stroke="none" />
     </g>
   )
 }
@@ -589,18 +659,24 @@ export function HydFlowDividerSymbol() {
   )
 }
 
-export function HydShuttleValveSymbol() {
+export function HydShuttleValveSymbol({ state = {} }) {
+  // OR (shuttle) valve — a ball in a chamber with two inlets (A, B) and a common
+  // outlet (Y). The ball seats against whichever inlet has the lower pressure, so
+  // the higher-pressure inlet connects to the outlet. When the sim knows which
+  // side is selected, the ball sits against the opposite seat; otherwise centred.
+  const sel = state.select   // 'A' | 'B' | undefined
+  const ballCx = sel === 'A' ? 4.5 : sel === 'B' ? -4.5 : 0
   return (
     <g fill="none" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" strokeLinejoin="round">
-      {/* Diamond-ish body */}
-      <line x1={-18} y1={0} x2={-6} y2={0} />
-      <line x1={6} y1={0} x2={18} y2={0} />
-      {/* Shuttle body */}
-      <ellipse cx={0} cy={0} rx={8} ry={6} />
+      {/* Inlet ports */}
+      <line x1={-18} y1={0} x2={-9} y2={0} />
+      <line x1={9} y1={0} x2={18} y2={0} />
+      {/* Chamber — a clean capsule whose rounded ends are the two seats */}
+      <rect x={-9} y={-7} width={18} height={14} rx={7} ry={7} />
       {/* Shuttle ball */}
-      <circle cx={-2} cy={0} r={3} fill="currentColor" />
-      {/* Y port */}
-      <line x1={0} y1={-6} x2={0} y2={-14} />
+      <circle cx={ballCx} cy={0} r={4.5} fill="currentColor" fillOpacity={0.18} />
+      {/* Common outlet (Y, top) */}
+      <line x1={0} y1={-7} x2={0} y2={-15} />
     </g>
   )
 }
@@ -704,7 +780,33 @@ export function HydPortSymbol() {
   )
 }
 
+// Manifold — distribution block with a pressure supply (P) and N work ports
+// tapped off a common gallery. Port count comes from simParams.ports and the
+// block grows to fit (issue #22).
+export function HydManifoldSymbol({ params = {} }) {
+  const m = manifoldDrawing(params.ports ?? 4)
+  return (
+    <g fill="none" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" strokeLinejoin="round">
+      {/* Block body */}
+      <rect x={m.rect.x} y={m.rect.y} width={m.rect.width} height={m.rect.height} rx={2} />
+      {/* Internal common gallery */}
+      <line x1={m.gallery.x1} y1={m.gallery.y} x2={m.gallery.x2} y2={m.gallery.y} strokeWidth={SW * 1.5} />
+      {/* Pressure supply stub + label */}
+      <line x1={m.supply.x1} y1={m.supply.y} x2={m.supply.x2} y2={m.supply.y} />
+      <text x={m.rect.x + 4} y={-m.rect.height / 2 - 2} fontSize={7} fill="currentColor" stroke="none">P</text>
+      {/* Work-port stubs (gallery → port) + numbers */}
+      {m.stubs.map((s, i) => (
+        <g key={i}>
+          <line x1={s.x} y1={m.gallery.y} x2={s.x} y2={s.y2} />
+          <text x={s.x} y={s.y1 - 3} fontSize={6} fill="currentColor" stroke="none" textAnchor="middle">{s.label}</text>
+        </g>
+      ))}
+    </g>
+  )
+}
+
 export const HYDRAULIC_SYMBOL_MAP = {
+  hyd_manifold:         HydManifoldSymbol,
   hyd_pump_fixed:       HydPumpFixedSymbol,
   hyd_pump_variable:    HydPumpVariableSymbol,
   hyd_motor_fixed:      HydMotorFixedSymbol,
@@ -720,6 +822,7 @@ export const HYDRAULIC_SYMBOL_MAP = {
   hyd_dcv_4_3_closed:   HydDCV43ClosedSymbol,
   hyd_dcv_2_2:          HydDCV22Symbol,
   hyd_dcv_3_2:          HydDCV32Symbol,
+  hyd_dcv_custom:       HydDCVCustomSymbol,
   hyd_relief_valve:     HydReliefValveSymbol,
   hyd_sequence_valve:   HydSequenceValveSymbol,
   hyd_pressure_reducing: HydPressureReducingSymbol,

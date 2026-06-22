@@ -192,15 +192,19 @@ function _runDCSimulation(components, wires, interactiveStates) {
         vsourceComps.push({ comp, posNet: pn('A'), negNet: pn('B'), V: comp.simParams?.voltage ?? parseValue(comp.value, 12) })
       } else if (comp.type === 'vcc_rail' && pn('PWR')) {
         vsourceComps.push({ comp, posNet: pn('PWR'), negNet: groundNet, V: comp.simParams?.voltage ?? parseValue(comp.value, 5) })
-      } else if (comp.type === 'plc_input' && pn('IN') && (comp.simParams?.mode ?? 'Digital') === 'Digital') {
-        // A digital input terminal asserts a field signal onto its IN pin: High
-        // drives the configured input voltage, Low ties IN to 0 V. Modelled as a
-        // voltage source to ground so anything wired to the input actually
-        // responds to the High/Low toggle (the analogue mode has no binary state
-        // and is left unstamped).
-        const high = interactiveStates[comp.id]?.state === 'closed'
-        const V = high ? (comp.simParams?.voltage ?? 24) : 0
-        vsourceComps.push({ comp, posNet: pn('IN'), negNet: groundNet, V })
+      } else if (comp.type === 'plc_input' && pn('IN') && (comp.simParams?.mode ?? 'Digital') === 'Digital'
+                 && interactiveStates[comp.id]?.state === 'closed') {
+        // A digital input toggled High simulates a field device asserting the
+        // configured voltage onto its IN pin (a voltage source to ground). When
+        // NOT toggled it is left UNSTAMPED — a high-impedance sensor — so it can
+        // instead be *driven* by an output wired to it (issue #16). Analogue mode
+        // has no binary state and is also left unstamped.
+        vsourceComps.push({ comp, posNet: pn('IN'), negNet: groundNet, V: comp.simParams?.voltage ?? 24 })
+      } else if (comp.type === 'plc_output' && pn('OUT') && (comp.simParams?.mode ?? 'Digital') !== 'Analogue'
+                 && interactiveStates[comp.id]?.state === 'closed') {
+        // An output turned On drives its field pin so a load — or another
+        // controller's input — wired to it is actually powered (issue #16).
+        vsourceComps.push({ comp, posNet: pn('OUT'), negNet: groundNet, V: comp.simParams?.voltage ?? 24 })
       }
     }
     const M = N + vsourceComps.length
@@ -656,11 +660,17 @@ function _runDCSimulation(components, wires, interactiveStates) {
         compI = Math.abs(compV) / 0.001; compP = compI * compI * 0.001; break
       case 'plc_input': case 'plc_digital_input': case 'plc_analog_input':
       case 'plc_output': case 'plc_digital_output': case 'plc_pwm_output': {
-        // Interface terminals — no stamp, so no current. Report the field-pin
-        // voltage and the user-toggled state (output On / digital input High).
+        // Interface terminals — no current draw. Report the field-pin voltage and
+        // an energised state that reflects EITHER the user toggle OR a signal
+        // arriving on the pin — so an input wired to a driven output reads powered
+        // (issue #16). Digital uses the configured switching threshold; analogue
+        // counts any non-trivial signal.
         const pin = pn('IN') ? 'IN' : pn('OUT') ? 'OUT' : null
         compV = pin ? V(pin) : 0
-        on = interactiveStates[comp.id]?.state === 'closed'
+        const toggled = interactiveStates[comp.id]?.state === 'closed'
+        const mode = comp.simParams?.mode ?? 'Digital'
+        const thr = mode === 'Analogue' ? 0.1 : (comp.simParams?.threshold ?? 11)
+        on = toggled || compV >= thr
         break
       }
       default:

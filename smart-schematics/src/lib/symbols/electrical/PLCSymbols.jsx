@@ -27,19 +27,21 @@ function IOFrame({ glyph, label, labelSize = 9, state, params = {}, flipH, flipV
   // current default OFF (older saved components have no flags → sensible default).
   const showName = params.showName !== false && params.name
   const showAddress = params.showAddress !== false && params.address
-  const showDevice = params.showDevice === true && params.device
+  // Device name shows by default now (issue #19) — undefined/true both draw it.
+  const showDevice = params.showDevice !== false && params.device
   const showConnector = params.showConnector === true && params.connector
   const showChannel = params.showChannel === true && params.channel
   const showCurrent = params.showCurrent === true && params.maxCurrent != null && params.maxCurrent !== ''
 
   // Labels stack outward from the box so any combination of enabled toggles lays
-  // out without overlapping. Above the box (going up): name, device, connector.
-  // Below (going down): address, channel, current.
+  // out without overlapping. Above the box (going up): name, device.
+  // Below the box, next to the field-side pin (going down): connector, address,
+  // channel, current — so it reads connector → pin (issue #13).
   const above = []
   if (showName) above.push({ text: params.name, size: 7, weight: 'normal', opacity: 1 })
   if (showDevice) above.push({ text: params.device, size: 6, weight: 'normal', opacity: 0.75 })
-  if (showConnector) above.push({ text: params.connector, size: 6, weight: 'normal', opacity: 0.85 })
   const below = []
+  if (showConnector) below.push({ text: params.connector, size: 6, weight: 'normal', opacity: 0.85 })
   if (showAddress) below.push({ text: params.address, size: 7, weight: 'bold', opacity: 1 })
   if (showChannel) below.push({ text: params.channel, size: 6, weight: 'normal', opacity: 0.85 })
   if (showCurrent) below.push({ text: `${params.maxCurrent} A`, size: 6, weight: 'normal', opacity: 0.85 })

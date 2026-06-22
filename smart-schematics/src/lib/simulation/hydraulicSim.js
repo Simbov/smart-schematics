@@ -10,6 +10,8 @@
 //
 // Called every simulation tick by simulationStore.runHydTick().
 
+import { valveConductingPairs, valveDefaultPosition } from '../valveBuilder'
+
 // ── Component type sets ────────────────────────────────────────────────────────
 
 // DCVs that can be manually shifted by clicking during simulation
@@ -19,6 +21,7 @@ export const MANUAL_DCV_TYPES = new Set([
   'hyd_dcv_4_3_closed',
   'hyd_dcv_2_2',
   'hyd_dcv_3_2',
+  'hyd_dcv_custom',
 ])
 
 export const HYD_SOURCE_TYPES = new Set([
@@ -41,6 +44,7 @@ export const HYD_VALVE_TYPES = new Set([
   'hyd_dcv_4_3_closed',
   'hyd_dcv_2_2',
   'hyd_dcv_3_2',
+  'hyd_dcv_custom',
   'hyd_relief_valve',
   'hyd_sequence_valve',
   'hyd_pressure_reducing',
@@ -132,6 +136,11 @@ const ptKey = (x, y) => `${Math.round(x)},${Math.round(y)}`
 
 function getConductingPairs(comp, dcvPositions) {
   const { type } = comp
+
+  // Parametric valve builder — routing comes from its simParams config.
+  if (type === 'hyd_dcv_custom') {
+    return valveConductingPairs(comp.simParams || {}, dcvPositions[comp.id])
+  }
 
   if (DCV_ROUTING[type]) {
     const pos = dcvPositions[comp.id] ?? defaultDCVPosition(type)

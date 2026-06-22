@@ -11,7 +11,9 @@ import { normalizeUrl } from '../lib/boxLinks'
 import { addRow, addCol, removeRow, removeCol, insertRow, insertCol, moveRow, moveCol, resizeRow, resizeCol } from '../lib/tableModel'
 import { copyTableToClipboard } from '../lib/tableClipboard'
 import { RESISTOR_STYLES } from '../lib/resistorStyle'
-import { findDeviceByName, pinsForIoType, bindingParams, resolveBinding, pinPickerLabel, writeSignalToRegistry } from '../lib/plcDevices'
+import { findDevice, findDeviceByName, pinsForIoType, bindingParams, resolveBinding, pinPickerLabel, writeSignalToRegistry } from '../lib/plcDevices'
+import { manifoldPins, clampPorts } from '../lib/manifold'
+import { valvePins as valveBuilderPins } from '../lib/valveBuilder'
 import Lightbox from './Lightbox'
 import ImageCropper from './ImageCropper'
 import ColorField from './ColorField'
@@ -370,6 +372,7 @@ export default function PropertiesPanel() {
   const pushUndo = useSchematicStore(s => s.pushUndo)
   const updateComponent = useSchematicStore(s => s.updateComponent)
   const updateComponentSimParam = useSchematicStore(s => s.updateComponentSimParam)
+  const setComponentPins = useSchematicStore(s => s.setComponentPins)
   const updateAnnotation = useSchematicStore(s => s.updateAnnotation)
   const updateImage = useSchematicStore(s => s.updateImage)
   const removeImage = useSchematicStore(s => s.removeImage)
@@ -1328,6 +1331,50 @@ export default function PropertiesPanel() {
                     : <div className="mt-1 text-gray-400" style={{ fontSize: 11 }}>No description</div>
                 )}
 
+                {/* PLC device link (issue #18) — tie a box to a registry device so
+                    high-level diagrams show which controller each box represents. */}
+                {(() => {
+                  const linkedDev = findDevice(plcDevices, localBox.plcDeviceId)
+                  if (!boxEdit) {
+                    if (!linkedDev) return null
+                    return (
+                      <div className="mt-1.5 inline-flex items-center gap-1 rounded px-1.5 py-0.5"
+                        style={{ fontSize: 11, background: 'rgba(37,99,235,0.12)', color: '#2563eb' }}>
+                        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.04em' }}>PLC</span>
+                        <span className="font-semibold">{linkedDev.name}</span>
+                        {linkedDev.location && <span style={{ opacity: 0.8 }}>· {linkedDev.location}</span>}
+                        <span style={{ opacity: 0.7 }}>· {(linkedDev.pins || []).length} pins</span>
+                      </div>
+                    )
+                  }
+                  return (
+                    <Section title="PLC device" action={
+                      <MiniButton title="Define this project's PLC devices"
+                        onClick={() => setShowPlcDeviceManager(true)}>Manage…</MiniButton>
+                    }>
+                      <SelectFieldWithEmpty
+                        label="Link"
+                        value={linkedDev ? linkedDev.id : ''}
+                        emptyLabel={plcDevices.length ? '— none —' : 'no devices defined'}
+                        options={plcDevices.map(d => d.id)}
+                        optionLabels={plcDevices.map(d => d.name)}
+                        onChange={id => commitBox({ plcDeviceId: id || undefined })}
+                      />
+                      {linkedDev && (
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-gray-400" style={{ fontSize: 10 }}>
+                            {linkedDev.location || 'no location'} · {(linkedDev.pins || []).length} pins
+                          </span>
+                          <MiniButton title="Use the device name as this box's title"
+                            onClick={() => { setLocalBox(b => ({ ...b, title: linkedDev.name })); commitBox({ title: linkedDev.name }) }}>
+                            Use name as title
+                          </MiniButton>
+                        </div>
+                      )}
+                    </Section>
+                  )
+                })()}
+
                 {/* Documentation blocks — anything else, below the description. */}
                 <div className="mt-2">
                   <ContentBlocks blocks={localBlocks} editing={boxEdit} commit={commitBlocks}
@@ -1473,7 +1520,7 @@ export default function PropertiesPanel() {
               // its identity fields come live from the registry and are read-only
               // here (edit them on the PLC Devices page). `src` prefers the
               // registry values so the panel never shows a stale signal name.
-              const binding = resolveBinding(plcDevices, localSim)
+              const binding = resolveBinding(plcDevices, localSim, selected.type)
               const bound = binding.bound
               const src = binding.params
               // When the project's signal master is 'schematic', a bound symbol's
@@ -1583,13 +1630,17 @@ export default function PropertiesPanel() {
                         {device ? (
                           <SelectFieldWithEmpty
                             label="Pin"
-                            value={devicePins.some(p => p.address === src.address) ? src.address : ''}
+                            /* Key the picker by the pin's stable id, never its address —
+                               two pins can share an address across connectors (c1 p19 vs
+                               c2 p19), so address-based matching selected the wrong pin
+                               (issue #12). */
+                            value={devicePins.some(p => p.id === boundPinId) ? boundPinId : ''}
                             emptyLabel={devicePins.length ? '— pick a pin —' : 'no matching pins on device'}
-                            options={devicePins.map(p => p.address)}
+                            options={devicePins.map(p => p.id)}
                             optionLabels={devicePins.map(p => pinPickerLabel(p))}
-                            onChange={addr => {
-                              const pin = devicePins.find(p => p.address === addr)
-                              if (pin) commitSimParams(bindingParams(device, pin))
+                            onChange={pid => {
+                              const pin = devicePins.find(p => p.id === pid)
+                              if (pin) commitSimParams(bindingParams(device, pin, selected.type))
                             }}
                           />
                         ) : (
@@ -1722,6 +1773,41 @@ export default function PropertiesPanel() {
                 }}
               >
                 {Object.entries(simParamDefs).map(([key, paramDef]) => {
+                  // Manifold port count drives the pin set: rebuild pins (and keep
+                  // bound wires attached) whenever it changes (issue #22).
+                  if (selected.type === 'hyd_manifold' && key === 'ports') {
+                    return (
+                      <Field
+                        key={key}
+                        label={paramDef.label}
+                        type="number"
+                        value={localSim[key] ?? paramDef.default}
+                        onChange={v => setLocalSim(s => ({ ...s, [key]: v }))}
+                        onBlur={() => {
+                          const n = clampPorts(localSim[key] ?? paramDef.default)
+                          setLocalSim(s => ({ ...s, [key]: n }))
+                          pushUndo(activeDrawingId)
+                          setComponentPins(activeDrawingId, localOwnerId, manifoldPins(n), { ports: n })
+                        }}
+                      />
+                    )
+                  }
+                  // Valve-builder port count drives the pin set (issue #20).
+                  if (selected.type === 'hyd_dcv_custom' && key === 'ports') {
+                    return (
+                      <SelectField
+                        key={key}
+                        label={paramDef.label}
+                        value={localSim[key] ?? paramDef.default}
+                        options={paramDef.options}
+                        onChange={v => {
+                          setLocalSim(s => ({ ...s, [key]: v }))
+                          pushUndo(activeDrawingId)
+                          setComponentPins(activeDrawingId, localOwnerId, valveBuilderPins(Number(v)), { ports: v })
+                        }}
+                      />
+                    )
+                  }
                   if (paramDef.type === 'select') {
                     return (
                       <SelectField

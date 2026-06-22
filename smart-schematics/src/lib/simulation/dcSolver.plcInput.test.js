@@ -51,3 +51,39 @@ describe('dcSolver — PLC digital input drives its pin', () => {
     expect(res.componentStates[la.id].I).toBeCloseTo(0, 4)
   })
 })
+
+// Issue #16: an output turned On drives its OUT pin, and an input wired to that
+// output reads powered even though the input itself is not toggled.
+describe('dcSolver — PLC output drives a wired input', () => {
+  function plcOutput(outXY, { id = 'po1', designator = 'DO1', voltage = 24 } = {}) {
+    return {
+      id, type: 'plc_output', designator, value: '',
+      simParams: { mode: 'Digital', voltage },
+      pins: [{ id: 'OUT', absX: outXY[0], absY: outXY[1] }],
+    }
+  }
+  function plcInputSensor(inXY, { id = 'pi2', designator = 'DI2', threshold = 11 } = {}) {
+    return {
+      id, type: 'plc_input', designator, value: '',
+      simParams: { mode: 'Digital', threshold },
+      pins: [{ id: 'IN', absX: inXY[0], absY: inXY[1] }],
+    }
+  }
+
+  it('output On powers an input wired to it; output Off leaves it unpowered', () => {
+    const po = plcOutput([100, 0])
+    const pi = plcInputSensor([200, 0])
+    // The output's drive is referenced to the system common, as in a real
+    // schematic — an (unconnected) ground gives that 0 V reference net.
+    const gnd = ground([100, 80])
+    const wires = [wire([100, 0], [200, 0])]  // OUT -> IN
+    const onRes = runDCSimulation([po, pi, gnd], wires, { po1: { state: 'closed' } })
+    expect(onRes.componentStates[po.id].on).toBe(true)
+    expect(onRes.componentStates[pi.id].on).toBe(true)        // input sensed the drive
+    expect(onRes.componentStates[pi.id].V).toBeGreaterThan(20)
+
+    const offRes = runDCSimulation([po, pi, gnd], wires, { po1: { state: 'open' } })
+    expect(offRes.componentStates[po.id].on).toBe(false)
+    expect(offRes.componentStates[pi.id].on).toBe(false)      // not driven, not toggled
+  })
+})

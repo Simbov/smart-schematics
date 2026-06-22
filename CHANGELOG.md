@@ -12,6 +12,47 @@ section with the version and date and starts a fresh Unreleased block.
 
 ## [Unreleased]
 
+### Added
+- **Valve builder.** A single configurable directional valve replaces the fixed
+  list of DCV types: choose **2 or 3 positions**, **2/3/4 ports**, and the
+  **centre condition** (closed / open / tandem / float). It draws itself, wires
+  into the simulation, and works with solenoid linking just like the fixed valves.
+- **Manifold component.** A distribution block with a configurable number of work
+  ports (2–16) that grows to fit — tap a common pressure gallery to as many ports
+  as you need.
+- **Solenoid symbol options.** Pick the solenoid style — **Box** (standard IEC
+  actuator, now the default), **Coil**, or **Proportional** — and the symbol is
+  cleaner across the board.
+- **Link a Component Box to a PLC device.** Tie a box to a device from the PLC
+  registry for high-level controller diagrams; the box shows the device name,
+  location, and pin count, with a one-click "use device name as title".
+- **More PLC pin types.** Added **TEMP**, **RHEO**, **PWR+** and **PWR-** so the
+  registry, CSV, and bindings cover temperature, rheostat, and power-rail pins.
+
+### Fixed
+- **Exporting works on Windows.** PDF export no longer hangs on "Building PDF…"
+  forever — it now renders reliably and lets you choose where to save the file.
+  PNG and SVG exports also save through the native Save dialog on the desktop app.
+- **PLC pin picking selects the right pin.** Picking a pin for a bound symbol no
+  longer grabs the wrong one when two pins share an address across connectors
+  (e.g. C1 P19 vs C2 P19) — pins are matched by identity.
+- **PLC output → input in simulation.** Turning on an output now powers an input
+  that's wired to it, so chained controllers respond in the simulation.
+- **CSV device import just works.** Importing a CSV with several devices splits
+  them out correctly, tolerating spreadsheet byte-order marks and a range of
+  column-header names.
+- **Cleaner check & shuttle valve symbols**, with the check-valve flow arrow
+  pointing the correct way.
+
+### Changed
+- **PLC device name shows on the schematic by default**, and a pin's **connector**
+  now sits under the symbol next to the pin so it reads connector → pin.
+- **Bind any capable pin.** A pin set to one type (e.g. an output) can be assigned
+  to a block it's *capable* of (e.g. an input) and switched in the schematic; the
+  Type list defaults to a capable value and is grouped to be less cluttered.
+- **PLC Devices page: minimise device cards** (so you don't scroll past 50 pins)
+  and, when sorting by connector, pins are grouped under connector headings.
+
 ## [0.9.0] - 2026-06-21
 
 ### Fixed
