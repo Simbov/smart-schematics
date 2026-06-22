@@ -12,6 +12,8 @@ section with the version and date and starts a fresh Unreleased block.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-06-22
+
 ### Added
 - **Valve builder.** A single configurable directional valve replaces the fixed
   list of DCV types: choose **2 or 3 positions**, **2/3/4 ports**, and the
