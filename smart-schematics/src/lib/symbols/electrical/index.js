@@ -87,6 +87,7 @@ export {
 export {
   PLCInputSymbol,
   PLCOutputSymbol,
+  PLCCanSymbol,
   PLCDigitalOutputSymbol,
   PLCPWMOutputSymbol,
   PLCDigitalInputSymbol,
@@ -192,6 +193,7 @@ import {
 import {
   PLCInputSymbol,
   PLCOutputSymbol,
+  PLCCanSymbol,
   PLCDigitalOutputSymbol,
   PLCPWMOutputSymbol,
   PLCDigitalInputSymbol,
@@ -276,6 +278,7 @@ export const ELECTRICAL_SYMBOL_MAP = {
   wattmeter: WattmeterSymbol,
   plc_input: PLCInputSymbol,
   plc_output: PLCOutputSymbol,
+  plc_can: PLCCanSymbol,
   // Legacy types — still mapped so an un-migrated file renders before migration.
   plc_digital_output: PLCDigitalOutputSymbol,
   plc_pwm_output: PLCPWMOutputSymbol,

@@ -11,7 +11,7 @@ import { normalizeUrl } from '../lib/boxLinks'
 import { addRow, addCol, removeRow, removeCol, insertRow, insertCol, moveRow, moveCol, resizeRow, resizeCol } from '../lib/tableModel'
 import { copyTableToClipboard } from '../lib/tableClipboard'
 import { RESISTOR_STYLES } from '../lib/resistorStyle'
-import { findDevice, findDeviceByName, pinsForIoType, bindingParams, resolveBinding, pinPickerLabel, writeSignalToRegistry } from '../lib/plcDevices'
+import { findDevice, findDeviceByName, pinsForIoType, bindingParams, resolveBinding, pinPickerLabel, writeSignalToRegistry, deviceConfigOnSchematic } from '../lib/plcDevices'
 import { manifoldPins, clampPorts } from '../lib/manifold'
 import { valvePins as valveBuilderPins } from '../lib/valveBuilder'
 import Lightbox from './Lightbox'
@@ -450,7 +450,7 @@ export default function PropertiesPanel() {
   const isComponent = selected && selected !== 'multi' && !isJunction && !isAnnotation && !isImage && !isTable && selected.designator !== undefined
   const isBox = isComponent && selected.type === 'box'
   // Consolidated PLC I/O gets its own clean document-style section (PLC release).
-  const isPlc = isComponent && (selected.type === 'plc_input' || selected.type === 'plc_output')
+  const isPlc = isComponent && (selected.type === 'plc_input' || selected.type === 'plc_output' || selected.type === 'plc_can')
   const isWire = selected && selected !== 'multi' && !isJunction && !isComponent && !isAnnotation && !isImage && !isTable && Array.isArray(selected.points)
 
   // Sync local state when selection changes
@@ -499,6 +499,9 @@ export default function PropertiesPanel() {
         fill: b.fill ?? '#f1f5f9',
         stroke: b.stroke ?? '#334155',
         title: b.title ?? '',
+        // Carry the PLC device link through so the dropdown + badge reflect the
+        // saved link instead of always reading as unlinked (issue #25).
+        plcDeviceId: b.plcDeviceId,
         ...counts,
       })
       setLocalBlocks(migrateBlocks(b))
@@ -1523,18 +1526,22 @@ export default function PropertiesPanel() {
               const binding = resolveBinding(plcDevices, localSim, selected.type)
               const bound = binding.bound
               const src = binding.params
-              // When the project's signal master is 'schematic', a bound symbol's
-              // signal name + I/O type are editable here and write back to the
-              // registry pin (which then re-syncs every other bound symbol).
-              const schematicMaster = plcSignalMaster === 'schematic'
+              // Whether this bound symbol's signal name + I/O type are editable
+              // here (and write back to the registry pin) is decided per device
+              // (issue #30): the device's own setting wins, falling back to the
+              // project-level signal master when set to 'inherit'.
+              const schematicMaster = deviceConfigOnSchematic(binding.device, plcSignalMaster)
               const editableSignal = bound && schematicMaster
               const boundPinId = binding.pin?.id || localSim.pinId
               const writeBackName = (name) => setPlcDevices(writeSignalToRegistry(plcDevices, boundPinId, { name }))
               const writeBackKind = (kind) => setPlcDevices(writeSignalToRegistry(plcDevices, boundPinId, { kind }))
               // mode (Digital/Analogue/PWM) → registry kind (DI/AI/DO/PWM).
-              const kindForMode = (m) => selected.type === 'plc_input'
-                ? (m === 'Analogue' ? 'AI' : 'DI')
-                : (m === 'PWM' ? 'PWM' : 'DO')
+              const isCan = selected.type === 'plc_can'
+              const kindForMode = (m) => isCan
+                ? (m === 'CAN Low' ? 'CANL' : 'CANH')
+                : selected.type === 'plc_input'
+                  ? (m === 'Analogue' ? 'AI' : 'DI')
+                  : (m === 'PWM' ? 'PWM' : 'DO')
               const plcMode = src.mode ?? simParamDefs.mode?.default ?? 'Digital'
               const modeOptions = simParamDefs.mode?.options ?? []
               // Identification keys + display toggles are laid out by hand; the
@@ -1552,7 +1559,10 @@ export default function PropertiesPanel() {
               const device = findDeviceByName(plcDevices, src.device)
               const devicePins = pinsForIoType(device, selected.type)
               const isInput = selected.type === 'plc_input'
-              const modeBadge = plcMode === 'Analogue' ? 'AI' : plcMode === 'PWM' ? 'PWM' : (isInput ? 'DI' : 'DO')
+              const modeBadge = isCan
+                ? (plcMode === 'CAN Low' ? 'CANL' : 'CANH')
+                : plcMode === 'Analogue' ? 'AI' : plcMode === 'PWM' ? 'PWM' : (isInput ? 'DI' : 'DO')
+              const plcKindLabel = isCan ? 'CAN' : (isInput ? 'Input' : 'Output')
 
               // Read-only display row (used for registry-owned fields when bound).
               const ROField = ({ label, value }) => (
@@ -1576,7 +1586,7 @@ export default function PropertiesPanel() {
                   <div className="flex items-center justify-between">
                     <span className="rounded px-1.5 py-0.5 font-bold"
                       style={{ fontSize: 10, background: 'rgba(37,99,235,0.12)', color: '#2563eb', letterSpacing: '0.04em' }}>
-                      PLC {isInput ? 'Input' : 'Output'} · {modeBadge}
+                      PLC {plcKindLabel} · {modeBadge}
                     </span>
                     <MiniButton title={boxEdit ? 'Finish editing' : 'Edit these properties'}
                       onClick={() => setBoxEdit(e => !e)}>{boxEdit ? 'Done' : 'Edit'}</MiniButton>

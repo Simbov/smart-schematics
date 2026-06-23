@@ -1343,6 +1343,43 @@ export const ELECTRICAL_COMPONENTS = [
       notes: { label: 'Notes', type: 'textarea', default: '' },
     },
   },
+  {
+    type: 'plc_can',
+    label: 'PLC CAN',
+    tags: ['PLC', 'CAN', 'CANH', 'CANL', 'can high', 'can low', 'bus', 'canbus', 'network'],
+    category: 'PLC I/O',
+    schematicType: 'electrical',
+    defaultDesignatorPrefix: 'CAN',
+    defaultValue: '',
+    width: 44,
+    height: 36,
+    viewBox: '-22 -18 44 36',
+    pins: [
+      { id: 'CAN', relX: 20, relY: 0, direction: 'E' },
+    ],
+    simParams: {
+      device: { label: 'Device', type: 'text', default: '' },
+      location: { label: 'Location', type: 'text', default: '' },
+      connector: { label: 'Connector', type: 'text', default: '' },
+      channel: { label: 'Channel', type: 'text', default: '' },
+      address: { label: 'Pin Address', type: 'text', default: 'CAN1' },
+      name: { label: 'Signal Name', type: 'text', default: '' },
+      // The CAN line this terminal taps — High or Low (issue #31).
+      mode: { label: 'Line', type: 'select', options: ['CAN High', 'CAN Low'], default: 'CAN High' },
+      showName: { label: 'Signal name', type: 'boolean', default: true },
+      showAddress: { label: 'Pin address', type: 'boolean', default: true },
+      showDevice: { label: 'Device name', type: 'boolean', default: true },
+      showConnector: { label: 'Connector', type: 'boolean', default: false },
+      showChannel: { label: 'Channel', type: 'boolean', default: false },
+      bitrate: {
+        label: 'Bit Rate',
+        type: 'select',
+        options: ['125 kbit/s', '250 kbit/s', '500 kbit/s', '1 Mbit/s'],
+        default: '250 kbit/s',
+      },
+      notes: { label: 'Notes', type: 'textarea', default: '' },
+    },
+  },
 
   // ── Connectors ──────────────────────────────────────────────────────────────
   // Interface/terminal symbols: housing outline + numbered cavities + on-line

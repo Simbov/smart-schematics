@@ -54,6 +54,7 @@ const KINDS_BY_IO_TYPE = {
   plc_output: ['DO', 'PWM'],
   plc_digital_output: ['DO', 'PWM'],
   plc_pwm_output: ['DO', 'PWM'],
+  plc_can: ['CANH', 'CANL', 'CANSH'],
 }
 
 // The simParams.mode value a pin kind implies on the placed component. FREQ maps
@@ -63,7 +64,8 @@ const MODE_BY_KIND = {
   DI: 'Digital', AI: 'Analogue', DO: 'Digital', PWM: 'PWM', FREQ: 'Digital',
   TEMP: 'Analogue', RHEO: 'Analogue',
   'PWR+': 'Digital', 'PWR-': 'Digital',
-  CANH: 'Digital', CANL: 'Digital', CANSH: 'Digital',
+  // CAN pins bind to the plc_can block, whose mode is the bus line (issue #31).
+  CANH: 'CAN High', CANL: 'CAN Low', CANSH: 'CAN High',
 }
 
 // The kinds a placed I/O component type can bind to (exported for the matching UI).
@@ -72,7 +74,7 @@ export function kindsForIoType(ioType) {
 }
 
 export function createPlcDevice(name = 'PLC 1') {
-  return { id: genPlcId('plcdev'), name, location: '', notes: '', images: [], datasheets: [], pins: [] }
+  return { id: genPlcId('plcdev'), name, location: '', notes: '', images: [], datasheets: [], pins: [], signalMaster: 'inherit' }
 }
 
 export function createPlcPin(overrides = {}) {
@@ -318,7 +320,7 @@ export function resolveBinding(devices, simParams = {}, ioType = null) {
   return { params: { ...simParams, ...bindingParams(device, pin, ioType) }, device, pin, bound: true }
 }
 
-const PLC_IO_TYPES = new Set(['plc_input', 'plc_output'])
+const PLC_IO_TYPES = new Set(['plc_input', 'plc_output', 'plc_can'])
 
 // Write-through re-sync: rewrite the registry-owned simParams of every bound PLC
 // component so a registry edit (rename, address/channel/notes/location change)
@@ -560,11 +562,22 @@ export function groupPinsByConnector(device) {
 
 // Backfill new fields on a device loaded from an older file — additive, zero
 // data loss, so PLC pins set up in a prior release are never disturbed.
+// Per-device config lock (issue #30): whether a bound symbol's signal name + I/O
+// type can be edited on the schematic, or only on the PLC Devices page. 'inherit'
+// falls back to the project-level plcSignalMaster; 'schematic'/'registry' override
+// it for this device alone.
+export function deviceConfigOnSchematic(device, projectDefault = 'registry') {
+  const m = device?.signalMaster
+  const eff = (!m || m === 'inherit') ? projectDefault : m
+  return eff === 'schematic'
+}
+
 export function migratePlcDevice(device) {
   if (!device) return device
   device.images ??= []
   device.notes ??= ''
   device.datasheets ??= []
+  device.signalMaster ??= 'inherit'
   for (const p of (device.pins || [])) {
     p.channel ??= ''
     p.connector ??= ''

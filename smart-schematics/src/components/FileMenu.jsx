@@ -54,8 +54,17 @@ function getSVGElement() {
 // `boundsFromDrawing` now lives in lib/svgExport.js (shared, unit-tested, and
 // aware of images/tables/junctions + real component footprints).
 
-// Rasterise the live schematic SVG to a PNG data URL at 3×, trimmed to `bounds`.
-// Returns { dataUrl, width, height } (world units) or null. Reused by PDF export.
+// Pick a raster scale so the exported bitmap has enough pixels to look crisp on
+// a printed A4 page (~300 DPI) regardless of how small the drawing is in world
+// units. A fixed 3× pixelated small drawings when blown up to page size (issue
+// #26); this targets ~3200 px on the long edge, clamped to a sane range.
+function rasterScale(vbWidth, vbHeight) {
+  const longEdge = Math.max(vbWidth || 1, vbHeight || 1)
+  return Math.min(12, Math.max(3, Math.ceil(3200 / longEdge)))
+}
+
+// Rasterise the live schematic SVG to a high-resolution PNG data URL, trimmed to
+// `bounds`. Returns { dataUrl, width, height } (world units) or null. Reused by PDF export.
 function captureSvgPng(bounds) {
   return new Promise(resolve => {
     const svgEl = getSVGElement()
@@ -81,7 +90,7 @@ function captureSvgPng(bounds) {
     clone.setAttribute('width', vbWidth)
     clone.setAttribute('height', vbHeight)
     clone.removeAttribute('style')
-    const scale = 3
+    const scale = rasterScale(vbWidth, vbHeight)
     const str = new XMLSerializer().serializeToString(clone)
     const url = svgDataUrl(str)
     const img = new Image()
@@ -241,7 +250,7 @@ export default function FileMenu() {
     clone.removeAttribute('style')
     // PNG always rasterises onto an opaque white background so a dark theme or
     // transparent canvas never bleeds through as a grey/black export.
-    const scale = 3
+    const scale = rasterScale(vbWidth, vbHeight)
     const str = new XMLSerializer().serializeToString(clone)
     const url = svgDataUrl(str)
     const img = new Image()
@@ -280,12 +289,17 @@ export default function FileMenu() {
 
   // Draw one captured drawing onto a jsPDF page: artwork fit to the area, with a
   // clean PDF-native title block band along the footer.
-  const addPdfPage = useCallback((pdf, capture, { drawingName, projectName, index, total }) => {
+  const addPdfPage = useCallback((pdf, capture, { drawingName, projectName, index, total, titleBlock }) => {
     if (capture) {
       const rect = fitImageToArea(capture.width, capture.height)
       pdf.addImage(capture.dataUrl, 'PNG', rect.x, rect.y, rect.w, rect.h)
     }
+    // The drawing's own title block is excluded from the captured artwork bounds,
+    // so it never appears in the raster — this PDF-native band is the single title
+    // block, populated from the drawing's title-block fields when set so it matches
+    // what the user entered rather than a generic duplicate (issue #26).
     const tb = titleBlockLayout()
+    const tbData = titleBlock || {}
     pdf.setDrawColor(120); pdf.setLineWidth(0.3)
     pdf.rect(tb.x, tb.y, tb.w, tb.h)
     pdf.line(tb.cells[1].x, tb.y, tb.cells[1].x, tb.y + tb.h)
@@ -296,12 +310,16 @@ export default function FileMenu() {
       pdf.setFontSize(big ? 12 : 9); pdf.setTextColor(20)
       pdf.text(String(value || '—'), cell.x + 2, tb.y + 12, { maxWidth: cell.w - 4 })
     }
-    label(tb.cells[0], 'DRAWING', drawingName, true)
+    label(tb.cells[0], 'DRAWING', tbData.title || drawingName, true)
     label(tb.cells[1], 'PROJECT', projectName)
+    // Drawing number + author/company as secondary lines under PROJECT when set.
+    const sub = [tbData.drawingNumber && `No. ${tbData.drawingNumber}`, tbData.author || tbData.company]
+      .filter(Boolean).join('   ')
+    if (sub) { pdf.setFontSize(7); pdf.setTextColor(90); pdf.text(sub, tb.cells[1].x + 2, tb.y + 18, { maxWidth: tb.cells[1].w - 4 }) }
     pdf.setFontSize(6); pdf.setTextColor(130)
-    pdf.text('DATE', tb.cells[2].x + 2, tb.y + 4)
+    pdf.text(`DATE · REV ${tbData.revision || 'A'}`, tb.cells[2].x + 2, tb.y + 4)
     pdf.setFontSize(8); pdf.setTextColor(20)
-    pdf.text(new Date().toLocaleDateString(), tb.cells[2].x + 2, tb.y + 10)
+    pdf.text(String(tbData.date || new Date().toLocaleDateString()), tb.cells[2].x + 2, tb.y + 10)
     pdf.text(pageLabel(index, total), tb.cells[2].x + 2, tb.y + 17)
   }, [])
 
@@ -322,7 +340,7 @@ export default function FileMenu() {
     try {
       const capture = await captureSvgPng(boundsFromDrawing(drawing, 30))
       const pdf = await newPdf()
-      addPdfPage(pdf, capture, { drawingName: drawing?.name, projectName: project?.name, index: 0, total: 1 })
+      addPdfPage(pdf, capture, { drawingName: drawing?.name, projectName: project?.name, index: 0, total: 1, titleBlock: drawing?.titleBlock })
       const saved = await savePdf(pdf, `${drawing?.name || 'schematic'}.pdf`)
       setExportStatus(saved ? { phase: 'done', label: 'PDF exported' } : null)
     } catch (e) {
@@ -345,7 +363,7 @@ export default function FileMenu() {
         await nextFrame()
         const capture = await captureSvgPng(boundsFromDrawing(d, 30))
         if (i > 0) pdf.addPage('a4', 'landscape')
-        addPdfPage(pdf, capture, { drawingName: d.name, projectName: project?.name, index: i, total: ordered.length })
+        addPdfPage(pdf, capture, { drawingName: d.name, projectName: project?.name, index: i, total: ordered.length, titleBlock: d.titleBlock })
       }
       if (restore) { setActiveDrawing(restore); await nextFrame() }
       const saved = await savePdf(pdf, `${project?.name || 'project'}.pdf`)

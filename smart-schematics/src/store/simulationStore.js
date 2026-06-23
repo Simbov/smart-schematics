@@ -32,7 +32,21 @@ const useSimulationStore = create((set, get) => ({
   hydWireNetStates: {},
 
   play() { set({ isRunning: true }) },
-  pause() { set({ isRunning: false }) },
+  // Stopping the sim depowers the circuit: solenoids drop out and spring-return
+  // valves snap back to their home position (issue #24). Physical cylinder
+  // positions and the user's switch settings are preserved so resuming continues
+  // from where it left off rather than from a cold start.
+  pause() {
+    set({
+      isRunning: false,
+      componentStates: {},
+      wireStates: {},
+      relayEnergized: {},
+      dcvPositions: {},
+      hydComponentStates: {},
+      hydWireNetStates: {},
+    })
+  },
 
   reset() {
     set({

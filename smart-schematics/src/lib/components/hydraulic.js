@@ -347,6 +347,7 @@ export const HYDRAULIC_COMPONENTS = [
       ports: { label: 'Ports', type: 'select', options: ['2', '3', '4'], default: '4' },
       centerPosition: { label: 'Centre (3-pos)', type: 'select', options: ['closed', 'open', 'tandem', 'float'], default: 'closed' },
       actuation: { label: 'Actuation', type: 'select', options: ['solenoid', 'manual', 'pilot'], default: 'solenoid' },
+      springReturn: { label: 'Spring return', type: 'boolean', default: true },
     },
   },
 

@@ -135,7 +135,7 @@ const CYLINDER_SIM_TYPES = new Set([
 // PLC I/O draws its own signal name (above) + pin address (below) inside the
 // symbol; the generic designator/value labels are suppressed so nothing collides.
 const PLC_IO_TYPES = new Set([
-  'plc_input', 'plc_output',
+  'plc_input', 'plc_output', 'plc_can',
   'plc_digital_input', 'plc_analog_input', 'plc_digital_output', 'plc_pwm_output',
 ])
 

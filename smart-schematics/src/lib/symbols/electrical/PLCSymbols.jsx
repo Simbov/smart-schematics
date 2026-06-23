@@ -41,8 +41,17 @@ function IOFrame({ glyph, label, labelSize = 9, state, params = {}, flipH, flipV
   if (showName) above.push({ text: params.name, size: 7, weight: 'normal', opacity: 1 })
   if (showDevice) above.push({ text: params.device, size: 6, weight: 'normal', opacity: 0.75 })
   const below = []
-  if (showConnector) below.push({ text: params.connector, size: 6, weight: 'normal', opacity: 0.85 })
-  if (showAddress) below.push({ text: params.address, size: 7, weight: 'bold', opacity: 1 })
+  // Connector reads INLINE with the pin address on a single line — "X1 I0.0"
+  // (connector normal, address bold) so it scans as connector → pin (issue #23).
+  if (showConnector && showAddress) {
+    below.push({ parts: [
+      { text: `${params.connector} `, size: 7, weight: 'normal', opacity: 0.85 },
+      { text: params.address, size: 7, weight: 'bold', opacity: 1 },
+    ] })
+  } else {
+    if (showConnector) below.push({ text: params.connector, size: 6, weight: 'normal', opacity: 0.85 })
+    if (showAddress) below.push({ text: params.address, size: 7, weight: 'bold', opacity: 1 })
+  }
   if (showChannel) below.push({ text: params.channel, size: 6, weight: 'normal', opacity: 0.85 })
   if (showCurrent) below.push({ text: `${params.maxCurrent} A`, size: 6, weight: 'normal', opacity: 0.85 })
 
@@ -62,7 +71,13 @@ function IOFrame({ glyph, label, labelSize = 9, state, params = {}, flipH, flipV
           <text key={`a${i}`} x="-4" y={-20 - i * 9} fontSize={l.size} fill="currentColor"
             textAnchor="middle" opacity={l.opacity} fontWeight={l.weight}>{l.text}</text>
         ))}
-        {below.map((l, i) => (
+        {below.map((l, i) => l.parts ? (
+          <text key={`b${i}`} x="-4" y={25 + i * 8} textAnchor="middle">
+            {l.parts.map((p, j) => (
+              <tspan key={j} fontSize={p.size} fill="currentColor" opacity={p.opacity} fontWeight={p.weight}>{p.text}</tspan>
+            ))}
+          </text>
+        ) : (
           <text key={`b${i}`} x="-4" y={25 + i * 8} fontSize={l.size} fill="currentColor"
             textAnchor="middle" opacity={l.opacity} fontWeight={l.weight}>{l.text}</text>
         ))}
@@ -131,6 +146,32 @@ export function PLCOutputSymbol({ state, params = {}, flipH, flipV }) {
       glyph={pwm ? PWMGlyph : SquareWaveGlyph}
       label={pwm ? 'PWM' : 'DO'}
       labelSize={pwm ? 7 : 9}
+      state={state}
+      params={params}
+      flipH={flipH}
+      flipV={flipV}
+    />
+  )
+}
+
+// Differential pair — CAN bus (two twisted lines).
+const CanGlyph = (
+  <g stroke="currentColor" strokeWidth={SW} fill="none" strokeLinecap="round">
+    <path d="M -13 -10 L -3 -10 L 1 -6 L 5 -6" />
+    <path d="M -13 -6 L -3 -6 L 1 -10 L 5 -10" />
+  </g>
+)
+
+// CAN bus interface block — one field-side pin whose line is selectable between
+// CAN High and CAN Low (issue #31). Reuses the IOFrame so it shares the PLC
+// device/connector/address labelling.
+export function PLCCanSymbol({ state, params = {}, flipH, flipV }) {
+  const low = params.mode === 'CAN Low'
+  return (
+    <IOFrame
+      glyph={CanGlyph}
+      label={low ? 'CANL' : 'CANH'}
+      labelSize={7}
       state={state}
       params={params}
       flipH={flipH}

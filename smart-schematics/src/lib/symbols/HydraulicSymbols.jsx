@@ -464,9 +464,17 @@ export function HydDCVCustomSymbol({ params = {}, state = {} }) {
     const pos = valveCellPorts(cfg.ports, centre)
     const pairs = routes[key] || []
     const used = new Set()
+    // When two flow paths cross within a cell, pull their endpoints a touch toward
+    // the cell centre so the crossing reads as a clean, even X instead of two
+    // arrowheads jammed into the corners (issue #28).
+    const crossed = pairs.length > 1
+    const inset = (p) => crossed
+      ? { x: p.x + (centre - p.x) * 0.14, y: p.y + (0 - p.y) * 0.14 }
+      : p
     const arrows = pairs.map(([a, b], i) => {
       used.add(a); used.add(b)
-      return <FlowArrow key={`a${i}`} x1={pos[a].x} y1={pos[a].y} x2={pos[b].x} y2={pos[b].y} />
+      const s = inset(pos[a]), e = inset(pos[b])
+      return <FlowArrow key={`a${i}`} x1={s.x} y1={s.y} x2={e.x} y2={e.y} />
     })
     const blocked = Object.entries(pos)
       .filter(([id]) => !used.has(id))
@@ -483,13 +491,14 @@ export function HydDCVCustomSymbol({ params = {}, state = {} }) {
     <g fill="none" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" strokeLinejoin="round">
       <g style={spoolStyle(cx)}>
         {keys.map((k, i) => renderCell(k, centres[i]))}
-        {/* Actuator(s) + centring/return spring ride with the spool */}
+        {/* Actuator(s) + centring/return spring ride with the spool. Springs are
+            drawn only when the valve is spring-returned/centred (issue #28). */}
         <Actuator x={centres[0] - ENV} dir={-1} variant={act} />
         {keys.length === 3
-          ? <><ReturnSpring x={centres[0] - ENV} dir={-1} />
+          ? <>{cfg.springReturn && <ReturnSpring x={centres[0] - ENV} dir={-1} />}
               <Actuator x={centres[centres.length - 1] + ENV} dir={1} variant={act} />
-              <ReturnSpring x={centres[centres.length - 1] + ENV} dir={1} /></>
-          : <ReturnSpring x={centres[centres.length - 1] + ENV} dir={1} />}
+              {cfg.springReturn && <ReturnSpring x={centres[centres.length - 1] + ENV} dir={1} />}</>
+          : (cfg.springReturn && <ReturnSpring x={centres[centres.length - 1] + ENV} dir={1} />)}
       </g>
       {/* Fixed port stubs on the housing (default cell, centred at 0) */}
       {valvePins(cfg.ports).map(pin => {
@@ -665,16 +674,22 @@ export function HydShuttleValveSymbol({ state = {} }) {
   // the higher-pressure inlet connects to the outlet. When the sim knows which
   // side is selected, the ball sits against the opposite seat; otherwise centred.
   const sel = state.select   // 'A' | 'B' | undefined
-  const ballCx = sel === 'A' ? 4.5 : sel === 'B' ? -4.5 : 0
+  // The higher-pressure inlet drives the ball onto the OPPOSITE seat, sealing the
+  // lower inlet and connecting itself to the common outlet.
+  const ballCx = sel === 'A' ? 3.2 : sel === 'B' ? -3.2 : 0
   return (
     <g fill="none" stroke="currentColor" strokeWidth={SW} strokeLinecap="round" strokeLinejoin="round">
-      {/* Inlet ports */}
+      {/* Inlet ports A (left) and B (right) */}
       <line x1={-18} y1={0} x2={-9} y2={0} />
       <line x1={9} y1={0} x2={18} y2={0} />
-      {/* Chamber — a clean capsule whose rounded ends are the two seats */}
-      <rect x={-9} y={-7} width={18} height={14} rx={7} ry={7} />
-      {/* Shuttle ball */}
-      <circle cx={ballCx} cy={0} r={4.5} fill="currentColor" fillOpacity={0.18} />
+      {/* Two conical seats drawn as sideways V's facing the ball (ISO standard) */}
+      <path d="M-9,-7 L-2,0 L-9,7" />
+      <path d="M9,-7 L2,0 L9,7" />
+      {/* Chamber roof + floor closing the two seats into a body */}
+      <line x1={-9} y1={-7} x2={9} y2={-7} />
+      <line x1={-9} y1={7} x2={9} y2={7} />
+      {/* Shuttle ball seated between the two V's */}
+      <circle cx={ballCx} cy={0} r={3.4} fill="currentColor" fillOpacity={0.2} />
       {/* Common outlet (Y, top) */}
       <line x1={0} y1={-7} x2={0} y2={-15} />
     </g>

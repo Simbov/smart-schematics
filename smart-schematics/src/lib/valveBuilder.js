@@ -31,6 +31,9 @@ export function valveConfig(simParams = {}) {
     ports: clampPorts(simParams.ports ?? 4),
     positions: clampPositions(simParams.positions ?? 3),
     centerPosition: VALVE_CENTRES.includes(simParams.centerPosition) ? simParams.centerPosition : 'closed',
+    // Whether the valve is spring-returned/centred (springs drawn) or detented
+    // (held in position). Default true — most directional valves are sprung.
+    springReturn: simParams.springReturn !== false,
   }
 }
 

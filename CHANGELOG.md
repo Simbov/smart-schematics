@@ -12,6 +12,41 @@ section with the version and date and starts a fresh Unreleased block.
 
 ## [Unreleased]
 
+### Added
+- **PLC CAN block.** A new PLC component for CAN-bus connections, switchable
+  between **CAN High** and **CAN Low**, with a selectable bit rate. It binds to a
+  device's CAN pins just like the input/output blocks. The **PLC I/O** section of
+  the component library now sits **above** Logic.
+- **Per-device schematic lock.** Each PLC device can now choose, on its own,
+  whether its signals are **editable on the schematic** or **locked to the PLC
+  Devices page** — set it per device, or leave it on the project default. When a
+  device is schematic-editable you can re-assign pins on the symbol and the signal
+  name follows the pin.
+- **Spring-return option in the Valve Builder**, so you can draw detented valves
+  (no return springs) as well as spring-centred ones.
+- **View datasheets without downloading.** PLC device datasheets and docs now open
+  in an in-app viewer (PDFs and images); a separate button still downloads them.
+
+### Fixed
+- **Datasheet downloads are no longer corrupt.** Downloading a datasheet from a PLC
+  device now writes the real file instead of a broken one.
+- **Linking a Component Box to a PLC device now sticks.** Picking a device from the
+  box's dropdown actually links it and shows the device badge.
+- **Stopping the simulation depowers the circuit.** Solenoids drop out and
+  spring-return valves snap back to their home position when you stop the sim
+  (cylinder positions and switch settings are kept so resuming continues cleanly).
+- **Sharper PDF & PNG exports.** Exports now render at a higher resolution so small
+  drawings are no longer pixelated when scaled to the page.
+
+### Changed
+- **One clean PDF title block.** The PDF title block now fills in from the drawing's
+  own title-block fields (title, number, revision, author, date) instead of
+  duplicating a generic one.
+- **Connector reads inline with the pin address** on the PLC symbol — "X1 I0.0" on
+  one line — so it scans as connector → pin.
+- **Cleaner shuttle valve symbol** drawn as the standard two seats with a ball, and
+  tidier crossed-flow arrows in the Valve Builder.
+
 ## [0.10.0] - 2026-06-22
 
 ### Added

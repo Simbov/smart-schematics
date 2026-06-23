@@ -11,6 +11,13 @@ import CustomComponentModal from './CustomComponentModal'
 
 const SYMBOL_MAP_COMBINED = { ...ELECTRICAL_SYMBOL_MAP, ...HYDRAULIC_SYMBOL_MAP }
 
+// Deliberate ordering of the electrical library sections. PLC I/O is promoted
+// above Logic (issue #31); any category not listed keeps its natural order after.
+const ELECTRICAL_CATEGORY_ORDER = [
+  'Power & Sources', 'Passive', 'Switches', 'Semiconductors', 'Electromechanical',
+  'Outputs', 'PLC I/O', 'Logic', 'Connectors',
+]
+
 function ComponentCard({ def, onPlace }) {
   const SymbolComponent = SYMBOL_MAP_COMBINED[def.type]
 
@@ -113,7 +120,12 @@ export default function ComponentLibrary() {
       if (!map.has(cat)) map.set(cat, [])
       map.get(cat).push(def)
     })
-    return map
+    // Present categories in a deliberate order — PLC I/O sits above Logic (issue
+    // #31). Unlisted categories keep their natural (insertion) order at the end.
+    const ordered = new Map()
+    ELECTRICAL_CATEGORY_ORDER.forEach(cat => { if (map.has(cat)) ordered.set(cat, map.get(cat)) })
+    map.forEach((defs, cat) => { if (!ordered.has(cat)) ordered.set(cat, defs) })
+    return ordered
   }, [electricalFiltered])
 
   const hydraulicFiltered = useMemo(() => {

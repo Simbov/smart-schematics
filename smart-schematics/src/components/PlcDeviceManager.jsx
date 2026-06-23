@@ -10,8 +10,35 @@ import {
   sortPins, pinIsCapable, kindOptionsForPin, groupPinsByConnector,
   PIN_KINDS, PIN_KIND_GROUPS, PIN_SORT_MODES,
 } from '../lib/plcDevices'
-import { isRunningInTauri, saveFileDialog, writeTextFile } from '../lib/tauriFs'
+import { isRunningInTauri, saveFileDialog, writeTextFile, writeBinaryFile, base64ToBytes } from '../lib/tauriFs'
 import Lightbox from './Lightbox'
+
+// A base64 data URL ("data:<mime>;base64,<payload>") split into its raw base64
+// payload, so binary docs (PDFs, etc.) can be decoded to bytes for a real file.
+function dataUrlToBytes(dataUrl) {
+  const comma = String(dataUrl || '').indexOf(',')
+  const b64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl
+  return base64ToBytes(b64)
+}
+
+// Modal that previews a device document inline — PDFs in an iframe, images in an
+// <img> — so datasheets can be read without downloading (issue #27).
+function DocViewer({ doc, onClose }) {
+  const isImage = (doc.mime || '').startsWith('image/') || /\.(png|jpe?g|gif|webp|svg)$/i.test(doc.name || '')
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col" style={{ background: 'rgba(0,0,0,0.8)' }} onClick={onClose}>
+      <div className="flex items-center justify-between px-4 py-2 text-white" style={{ fontSize: 13 }} onClick={e => e.stopPropagation()}>
+        <span className="truncate">{doc.name}</span>
+        <button className="ml-3 rounded px-2 py-0.5" style={{ background: 'rgba(255,255,255,0.15)' }} onClick={onClose}>Close</button>
+      </div>
+      <div className="flex-1 m-2 mt-0 bg-white rounded overflow-hidden" onClick={e => e.stopPropagation()}>
+        {isImage
+          ? <img src={doc.data} alt={doc.name} className="w-full h-full" style={{ objectFit: 'contain' }} />
+          : <iframe src={doc.data} title={doc.name} className="w-full h-full" style={{ border: 'none' }} />}
+      </div>
+    </div>
+  )
+}
 
 const INPUT_CLASS = 'rounded px-1.5 outline-none bg-transparent border w-full'
 const INPUT_STYLE = { fontSize: 12, height: 24, borderColor: 'var(--panel-border)', color: 'var(--component-color)' }
@@ -118,6 +145,7 @@ export default function PlcDevicePage() {
   const importInputRef = useRef(null)
   const pendingDeviceId = useRef(null)
   const [lightbox, setLightbox] = useState(null)
+  const [docView, setDocView] = useState(null)   // datasheet being previewed inline (issue #27)
   const [editing, setEditing] = useState(false)
   const [sortMode, setSortMode] = useState('connector')
   // Device cards the user has minimised (so they don't scroll past 50 pins). Works
@@ -187,7 +215,19 @@ export default function PlcDevicePage() {
     const data = await readFileAsDataUrl(file)
     commit(addDeviceDatasheet(devices, devId, { name: file.name, mime: file.type, data }))
   }
-  const downloadDatasheet = ds => downloadText(ds.data, ds.name, (ds.name.split('.').pop() || 'bin'), ds.mime || 'application/octet-stream')
+  // Datasheets are binary (the stored `data` is a base64 data URL). Writing the
+  // URL string out as text produced a corrupt file (issue #27); decode to bytes
+  // (Tauri) or hand the browser the data URL directly so it saves real content.
+  const downloadDatasheet = async ds => {
+    const ext = (ds.name.split('.').pop() || 'bin')
+    if (isRunningInTauri()) {
+      const path = await saveFileDialog(ds.name, [{ name: ext.toUpperCase(), extensions: [ext] }])
+      if (path) await writeBinaryFile(path, dataUrlToBytes(ds.data))
+    } else {
+      const a = document.createElement('a')
+      a.href = ds.data; a.download = ds.name; a.click()
+    }
+  }
 
   // Import a device config (CSV pin list or lossless JSON) into THIS project.
   const importDevices = () => importInputRef.current?.click()
@@ -218,6 +258,7 @@ export default function PlcDevicePage() {
       <input ref={datasheetInputRef} type="file" className="hidden" onChange={onDatasheetPicked} />
       <input ref={importInputRef} type="file" accept=".csv,.json" className="hidden" onChange={onImportPicked} />
       {lightbox && <Lightbox src={lightbox} onClose={() => setLightbox(null)} />}
+      {docView && <DocViewer doc={docView} onClose={() => setDocView(null)} />}
       <div className="mx-auto px-6 py-5" style={{ maxWidth: 980 }}>
         {/* Page header */}
         <div className="flex items-center justify-between pb-3 mb-4 border-b" style={{ borderColor: 'var(--panel-border)' }}>
@@ -335,6 +376,24 @@ export default function PlcDevicePage() {
                     <span className="truncate" style={{ fontSize: 12 }}>{dev.location || <Dash />}</span>
                   )}
                 </label>
+                {/* Per-device config lock (issue #30): where this device's bound
+                    symbols can have their signal name + I/O type edited. */}
+                {editing ? (
+                  <label className="flex items-center gap-1.5 flex-shrink-0" title="Where this device's signals can be edited">
+                    <span className="text-gray-400" style={{ fontSize: 10 }}>Config</span>
+                    <select className={INPUT_CLASS} style={{ ...INPUT_STYLE, width: 'auto' }}
+                      value={dev.signalMaster || 'inherit'}
+                      onChange={e => commit(updateDevice(devices, dev.id, { signalMaster: e.target.value }))}>
+                      <option value="inherit">Project default</option>
+                      <option value="schematic">Editable on schematic</option>
+                      <option value="registry">Locked to this page</option>
+                    </select>
+                  </label>
+                ) : (dev.signalMaster && dev.signalMaster !== 'inherit') && (
+                  <span className="flex-shrink-0 rounded px-1.5 py-0.5" style={{ fontSize: 10, background: 'rgba(37,99,235,0.1)', color: '#2563eb' }}>
+                    {dev.signalMaster === 'schematic' ? 'Schematic-editable' : 'Locked here'}
+                  </span>
+                )}
                 {isCollapsed && (
                   <span className="text-gray-400 flex-shrink-0" style={{ fontSize: 11 }}>
                     {allPins.length} pin{allPins.length === 1 ? '' : 's'}
@@ -399,8 +458,10 @@ export default function PlcDevicePage() {
                       {(dev.datasheets || []).map(ds => (
                         <span key={ds.id} className="inline-flex items-center gap-1 rounded border px-1.5"
                           style={{ borderColor: 'var(--panel-border)', fontSize: 11, height: 22 }}>
-                          <button className="inline-flex items-center gap-1 hover:text-blue-500" title={`Download ${ds.name}`}
-                            onClick={() => downloadDatasheet(ds)}><FileText size={11} />{ds.name}</button>
+                          <button className="inline-flex items-center gap-1 hover:text-blue-500" title={`View ${ds.name}`}
+                            onClick={() => setDocView(ds)}><FileText size={11} />{ds.name}</button>
+                          <button className="text-gray-400 hover:text-blue-500" title={`Download ${ds.name}`}
+                            onClick={() => downloadDatasheet(ds)}><Download size={11} /></button>
                           {editing && (
                             <button className="text-red-400 hover:text-red-500" title="Remove"
                               onClick={() => commit(removeDeviceDatasheet(devices, dev.id, ds.id))}>×</button>
