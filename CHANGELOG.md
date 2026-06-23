@@ -12,6 +12,8 @@ section with the version and date and starts a fresh Unreleased block.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-06-23
+
 ### Added
 - **PLC CAN block.** A new PLC component for CAN-bus connections, switchable
   between **CAN High** and **CAN Low**, with a selectable bit rate. It binds to a
