@@ -12,6 +12,8 @@ section with the version and date and starts a fresh Unreleased block.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-08-04
+
 ### Added
 - **Industrial Control section in the component library** — six new panel and
   machine-wiring symbols, each one configurable rather than fixed:
