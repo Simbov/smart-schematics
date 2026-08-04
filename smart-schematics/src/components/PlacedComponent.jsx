@@ -6,6 +6,7 @@ import { getHydraulicDef } from '../lib/components/hydraulic'
 import { getCustomDef } from '../lib/components/custom'
 import CustomSymbol from '../lib/symbols/CustomSymbol'
 import BoxSymbol from '../lib/symbols/BoxSymbol'
+import { componentSize } from '../lib/componentSize'
 import { INTERACTIVE_TYPES } from '../lib/simulation/electricalSim'
 import { MANUAL_DCV_TYPES } from '../lib/simulation/hydraulicSim'
 import { formatSI } from '../lib/simulation/parseValue'
@@ -165,9 +166,10 @@ const PlacedComponent = memo(function PlacedComponent({
   if (!isBox && !isCustom && !SymbolComponent) return null
   if (isCustom && !def) return null
 
-  // A box carries its own size in component.box; everything else uses the def.
-  const w = isBox ? (component.box?.width || 80) : (def?.width || 40)
-  const h = isBox ? (component.box?.height || 60) : (def?.height || 20)
+  // A box carries its own size in component.box; parametric defs derive theirs
+  // from the component's current simParams; everything else is the static def
+  // footprint.
+  const { width: w, height: h } = componentSize(component, def)
 
   // Rotate/flip apply only to the symbol body; the labels stay upright (see below).
   const bodyTransforms = []

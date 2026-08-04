@@ -18,6 +18,7 @@
 import { getElectricalDef } from './components/electrical'
 import { getHydraulicDef } from './components/hydraulic'
 import { getCustomDef } from './components/custom'
+import { componentSize } from './componentSize'
 
 function getAnyDef(type) {
   return getElectricalDef(type) || getHydraulicDef(type) || getCustomDef(type)
@@ -65,15 +66,16 @@ export function boundsFromDrawing(drawing, pad = 30) {
   const add = (x, y) => { xs.push(x); ys.push(y) }
 
   for (const c of (drawing.components || [])) {
-    // Use the component's real footprint where known; boxes carry their own size.
+    // Use the component's real footprint: boxes carry their own size, parametric
+    // parts derive theirs from their current simParams, everything else is the
+    // static def footprint. A type with no def at all keeps the old generous
+    // 40×40 guess so a stale custom symbol is never cropped.
+    const def = getAnyDef(c.type)
     let halfW = 40, halfH = 40
-    if (c.type === 'box' && c.box) {
-      halfW = (c.box.width || 80) / 2
-      halfH = (c.box.height || 60) / 2
-    } else {
-      const def = getAnyDef(c.type)
-      if (def?.width) halfW = def.width / 2
-      if (def?.height) halfH = def.height / 2
+    if (c.type === 'box' || def) {
+      const size = componentSize(c, def)
+      halfW = size.width / 2
+      halfH = size.height / 2
     }
     // Pad a little for labels/designators that overhang the symbol box.
     halfW += 10; halfH += 14

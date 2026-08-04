@@ -1,6 +1,6 @@
 // ISO 1219 hydraulic component definitions
-import { manifoldPins, manifoldGeom } from '../manifold'
-import { valvePins } from '../valveBuilder'
+import { manifoldPins, manifoldGeom, clampPorts as clampManifoldPorts } from '../manifold'
+import { valvePins, clampPositions } from '../valveBuilder'
 
 const MANIFOLD_DEFAULT_PORTS = 4
 const _mGeom = manifoldGeom(MANIFOLD_DEFAULT_PORTS)
@@ -20,8 +20,17 @@ export const HYDRAULIC_COMPONENTS = [
     height: _mGeom.height + 24,
     viewBox: `${-_mGeom.width / 2 - 14} ${-_mGeom.height / 2 - 12} ${_mGeom.width + 28} ${_mGeom.height + 24}`,
     pins: manifoldPins(MANIFOLD_DEFAULT_PORTS),
+    // Parametric contract: the footprint and the pin set both follow `ports`.
+    sizeFor: p => {
+      const g = manifoldGeom(p.ports ?? MANIFOLD_DEFAULT_PORTS)
+      return { width: g.width + 24, height: g.height + 24 }
+    },
+    derivePins: p => manifoldPins(p.ports ?? MANIFOLD_DEFAULT_PORTS),
     simParams: {
-      ports: { label: 'Ports', type: 'number', default: MANIFOLD_DEFAULT_PORTS, min: 2, max: 16 },
+      ports: {
+        label: 'Ports', type: 'number', default: MANIFOLD_DEFAULT_PORTS, min: 2, max: 16,
+        rebuildsPins: true, clamp: clampManifoldPorts,
+      },
     },
   },
   // ── Power & Sources ─────────────────────────────────────────────────────────
@@ -342,9 +351,13 @@ export const HYDRAULIC_COMPONENTS = [
     height: 40,
     viewBox: '-80 -24 160 48',
     pins: valvePins(4),
+    // The envelope row is one 30-wide cell per switching position plus the
+    // actuator/spring stacks on each end; the pin set follows the port count.
+    sizeFor: p => ({ width: clampPositions(p.positions ?? 3) === 3 ? 160 : 130, height: 40 }),
+    derivePins: p => valvePins(p.ports ?? 4),
     simParams: {
       positions: { label: 'Positions', type: 'select', options: ['2', '3'], default: '3' },
-      ports: { label: 'Ports', type: 'select', options: ['2', '3', '4'], default: '4' },
+      ports: { label: 'Ports', type: 'select', options: ['2', '3', '4'], default: '4', rebuildsPins: true },
       centerPosition: { label: 'Centre (3-pos)', type: 'select', options: ['closed', 'open', 'tandem', 'float'], default: 'closed' },
       actuation: { label: 'Actuation', type: 'select', options: ['solenoid', 'manual', 'pilot'], default: 'solenoid' },
       springReturn: { label: 'Spring return', type: 'boolean', default: true },
@@ -671,5 +684,8 @@ export const HYDRAULIC_CATEGORIES = [
 export const ALL_HYDRAULIC_TYPES = new Set(HYDRAULIC_COMPONENTS.map(c => c.type))
 
 export function getHydraulicDef(type) {
-  return HYDRAULIC_COMPONENTS.find(c => c.type === type)
+  // `|| null` to match getElectricalDef/getCustomDef — callers that pass a
+  // lookup result straight into componentSize() need "no def" to be null, since
+  // undefined there means "look it up for me".
+  return HYDRAULIC_COMPONENTS.find(c => c.type === type) || null
 }

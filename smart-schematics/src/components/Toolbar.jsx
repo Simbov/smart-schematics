@@ -48,6 +48,7 @@ export default function Toolbar() {
   const activeDrawingId = useSchematicStore(s => s.activeDrawingId)
   const drawings = useSchematicStore(s => s.drawings)
   const setViewState = useSchematicStore(s => s.setViewState)
+  const requestFitToScreen = useSchematicStore(s => s.requestFitToScreen)
   const undoStack = useSchematicStore(s => s.undoStack)
   const redoStack = useSchematicStore(s => s.redoStack)
   const undo = useSchematicStore(s => s.undo)
@@ -166,7 +167,9 @@ export default function Toolbar() {
     zoomIn: { onClick: () => zoomBy(1.2) },
     zoomOut: { onClick: () => zoomBy(1 / 1.2) },
     zoomFit: {
-      onClick: () => { if (activeDrawingId) setViewState(activeDrawingId, { panX: 0, panY: 0, zoom: 1 }) },
+      // Actually fits the drawing to the viewport (Canvas does the arithmetic —
+      // it is the only thing that knows how big the viewport is).
+      onClick: () => requestFitToScreen(),
     },
     toggleGrid: {
       active: settings.showGrid,

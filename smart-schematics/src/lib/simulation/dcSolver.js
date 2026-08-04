@@ -91,6 +91,37 @@ function gaussSolve(A, b) {
   return x
 }
 
+// A terminal strip is a pass-through: way n links its internal terminal (Tn) to
+// its field terminal (Bn) and nothing else. The pin set is parametric, so the
+// pairs are read off the component's own pins rather than hard-coded. 1 mΩ per
+// way matches the other "ideal conductor" stamps (fuse, closed switch).
+const TERMINAL_WAY_R = 0.001
+
+export function terminalStripPairs(comp) {
+  return (comp.pins || [])
+    .filter(p => /^T\d+$/.test(p.id))
+    .map(p => [p.id, `B${p.id.slice(1)}`])
+}
+
+function stampTerminalStrip(comp, stampResistor, id) {
+  for (const [a, b] of terminalStripPairs(comp)) stampResistor(id, a, b, TERMINAL_WAY_R)
+}
+
+// Current through one way, from the drop across its own two terminals. A strip
+// carries a different current per way, so — unlike every other component — its
+// pins cannot share one `componentStates[].I`; without this, wires landing on a
+// terminal strip would read zero and never animate.
+export function terminalStripWayCurrents(comp, pinNet, nodeVoltages) {
+  const out = []
+  for (const [a, b] of terminalStripPairs(comp)) {
+    const nA = pinNet[`${comp.id}.${a}`], nB = pinNet[`${comp.id}.${b}`]
+    if (!nA || !nB) { out.push({ a, b, magnitude: 0, exitsAtA: false }); continue }
+    const vA = nodeVoltages[nA] ?? 0, vB = nodeVoltages[nB] ?? 0
+    out.push({ a, b, magnitude: Math.abs(vA - vB) / TERMINAL_WAY_R, exitsAtA: vA < vB })
+  }
+  return out
+}
+
 export function runDCSimulation(components, wires, interactiveStates = {}) {
   try {
     return _runDCSimulation(components, wires, interactiveStates)
@@ -280,7 +311,10 @@ function _runDCSimulation(components, wires, interactiveStates) {
         }
         case 'fuse': stampResistor(id, 'A', 'B', 0.01); break
         case 'inductor': stampResistor(id, 'A', 'B', 0.001); break
-        case 'lamp': stampResistor(id, 'A', 'B', 10); break
+        case 'lamp': case 'panel_indicator': stampResistor(id, 'A', 'B', 10); break
+        // A terminal strip links each field terminal to its internal one; a
+        // near-zero resistance per way keeps the two sides on one net.
+        case 'terminal_strip': stampTerminalStrip(comp, stampResistor, id); break
         case 'buzzer': case 'speaker': stampResistor(id, 'A', 'B', 8); break
         case 'horn': stampResistor(id, 'PWR', 'GND', 8); break
         case 'motor': case 'generator': stampResistor(id, 'A', 'B', 5); break
@@ -430,7 +464,8 @@ function _runDCSimulation(components, wires, interactiveStates) {
           }
           case 'fuse': stampResistor(cid, 'A', 'B', 0.01); break
           case 'inductor': stampResistor(cid, 'A', 'B', 0.001); break
-          case 'lamp': stampResistor(cid, 'A', 'B', 10); break
+          case 'lamp': case 'panel_indicator': stampResistor(cid, 'A', 'B', 10); break
+          case 'terminal_strip': stampTerminalStrip(comp, stampResistor, cid); break
           case 'buzzer': case 'speaker': stampResistor(cid, 'A', 'B', 8); break
           case 'horn': stampResistor(cid, 'PWR', 'GND', 8); break
           case 'motor': case 'generator': stampResistor(cid, 'A', 'B', 5); break
@@ -600,7 +635,7 @@ function _runDCSimulation(components, wires, interactiveStates) {
       }
       case 'fuse': compV = V('A') - V('B'); compI = Math.abs(compV) / 0.01; compP = compI * compI * 0.01; break
       case 'inductor': compV = V('A') - V('B'); compI = Math.abs(compV) / 0.001; compP = compI * compI * 0.001; break
-      case 'lamp': compV = V('A') - V('B'); compI = Math.abs(compV) / 10; compP = compI * compI * 10; on = compI > 1e-3; break
+      case 'lamp': case 'panel_indicator': compV = V('A') - V('B'); compI = Math.abs(compV) / 10; compP = compI * compI * 10; on = compI > 1e-3; break
       case 'buzzer': case 'speaker': compV = V('A') - V('B'); compI = Math.abs(compV) / 8; compP = compI * compI * 8; on = compI > 1e-3; break
       case 'horn': compV = V('PWR') - V('GND'); compI = Math.abs(compV) / 8; compP = compI * compI * 8; on = compI > 1e-3; break
       case 'valve_electronics': compV = V('Us') - V('GND'); compI = Math.abs(compV) / 100; compP = compI * compI * 100; on = compI > 1e-3; break
@@ -698,6 +733,13 @@ function _runDCSimulation(components, wires, interactiveStates) {
       const energized = relayEnergized[comp.designator] ?? false
       const openThrow = energized ? 'NC' : 'NO'
       pinCurrent[`${comp.id}.${openThrow}`] = 0
+    } else if (comp.type === 'terminal_strip') {
+      // Per-way, not per-component: an unused way must read zero while a loaded
+      // one carries its own current.
+      for (const w of terminalStripWayCurrents(comp, pinNet, nodeVoltages)) {
+        pinCurrent[`${comp.id}.${w.a}`] = w.magnitude
+        pinCurrent[`${comp.id}.${w.b}`] = w.magnitude
+      }
     }
   }
   const pinCur = ref =>
@@ -732,8 +774,15 @@ function _runDCSimulation(components, wires, interactiveStates) {
   }
   for (const comp of components) {
     switch (comp.type) {
+      // Per-way, so it cannot use loadPair (which reads one current for the
+      // whole component).
+      case 'terminal_strip':
+        for (const w of terminalStripWayCurrents(comp, pinNet, nodeVoltages)) {
+          setPair(comp.id, w.a, w.b, w.magnitude, w.exitsAtA)
+        }
+        break
       case 'resistor': case 'variable_resistor': case 'potentiometer':
-      case 'fuse': case 'inductor': case 'lamp': case 'buzzer': case 'speaker':
+      case 'fuse': case 'inductor': case 'lamp': case 'panel_indicator': case 'buzzer': case 'speaker':
       case 'motor': case 'generator': case 'solenoid': case 'ammeter':
       case 'voltmeter': case 'wattmeter': case 'capacitor':
       case 'switch_no': case 'switch_nc': case 'limit_switch': case 'proximity_switch':

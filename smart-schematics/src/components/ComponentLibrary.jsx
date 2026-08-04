@@ -15,7 +15,7 @@ const SYMBOL_MAP_COMBINED = { ...ELECTRICAL_SYMBOL_MAP, ...HYDRAULIC_SYMBOL_MAP 
 // above Logic (issue #31); any category not listed keeps its natural order after.
 const ELECTRICAL_CATEGORY_ORDER = [
   'Power & Sources', 'Passive', 'Switches', 'Semiconductors', 'Electromechanical',
-  'Outputs', 'PLC I/O', 'Logic', 'Connectors',
+  'Outputs', 'PLC I/O', 'Industrial Control', 'Logic', 'Connectors',
 ]
 
 function ComponentCard({ def, onPlace }) {

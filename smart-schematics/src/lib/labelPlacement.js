@@ -3,7 +3,9 @@
 // component's on-screen bounding box and pick the first whose label box no wire
 // segment crosses.
 
-const GAP = 6          // clearance between the symbol edge and the label box
+import { componentSize } from './componentSize'
+
+const GAP = 6         // clearance between the symbol edge and the label box
 const LABEL_H = 11     // approx label box height (font ~8px + padding)
 const CHAR_W = 5       // approx glyph advance at fontSize 8
 
@@ -47,10 +49,11 @@ function labelBox(side, ox, oy, hw, hh, lw, lh) {
 const SIDES = ['top', 'bottom', 'right', 'left']
 const OPPOSITE = { top: 'bottom', bottom: 'top', left: 'right', right: 'left' }
 
-// Component half-extents accounting for rotation.
+// Component half-extents accounting for rotation. The footprint comes from
+// componentSize so parametric parts (whose size tracks a port/way count) push
+// their labels clear of the *current* body, not the default-parameter one.
 function halfExtents(component, def) {
-  const w = def?.width || 40
-  const h = def?.height || 20
+  const { width: w, height: h } = componentSize(component, def)
   const rot = (((component.rotation || 0) % 360) + 360) % 360
   const sideways = rot === 90 || rot === 270
   return { hw: (sideways ? h : w) / 2, hh: (sideways ? w : h) / 2 }

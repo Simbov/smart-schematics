@@ -2,6 +2,7 @@ import React from 'react'
 import { getElectricalDef } from '../lib/components/electrical'
 import { getHydraulicDef } from '../lib/components/hydraulic'
 import { getCustomDef } from '../lib/components/custom'
+import { componentSize } from '../lib/componentSize'
 import { MOMENTARY_TYPES, TOGGLE_TYPES, PLC_INPUT_TYPES } from '../lib/simulation/electricalSim'
 import { MANUAL_DCV_TYPES } from '../lib/simulation/hydraulicSim'
 
@@ -65,8 +66,7 @@ export default function InteractiveControl({
   const info = describe(component.type, interactiveState, dcvPosition, component.simParams?.position)
   if (!def || !info) return null
 
-  const w = def.width || 40
-  const h = def.height || 20
+  const { width: w, height: h } = componentSize(component, def)
   const rot = (((component.rotation || 0) % 360) + 360) % 360
   const sideways = rot === 90 || rot === 270
   const hh = (sideways ? w : h) / 2

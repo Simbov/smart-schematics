@@ -6,6 +6,7 @@ import { createBox } from '../lib/boxComponent'
 import { normalizeBoxImages } from '../lib/boxImages'
 import { migrateBlocks } from '../lib/boxBlocks'
 import { createJunction } from '../lib/junctions'
+import { allocateDesignator, renumberForPaste } from '../lib/designators'
 import { migratePlcComponent } from '../lib/plcMigration'
 import { migratePlcDevice, resyncPlcComponents } from '../lib/plcDevices'
 import {
@@ -551,9 +552,9 @@ const useSchematicStore = create((set, get) => ({
   addComponent(drawingId, type, x, y, def) {
     const drawing = get().drawings.find(d => d.id === drawingId)
     if (!drawing) return null
-    const prefix = def.defaultDesignatorPrefix
-    const count = drawing.components.filter(c => c.type === type).length
-    const designator = `${prefix}${count + 1}`
+    // Allocate the first free number for this prefix rather than counting the
+    // components of this type — a delete would otherwise hand out a duplicate.
+    const designator = allocateDesignator(def.defaultDesignatorPrefix, drawing.components)
     const component = {
       id: genId(),
       type,
@@ -589,8 +590,11 @@ const useSchematicStore = create((set, get) => ({
     const drawing = get().drawings.find(d => d.id === drawingId)
     if (!drawing) return null
     const grid = get().settings.snapToGrid ? get().settings.gridSize : 0
-    const count = drawing.components.filter(c => c.type === 'box').length
-    const box = createBox({ x, y, grid, designator: `BX${count + 1}`, id: genId(), ...opts })
+    const box = createBox({
+      x, y, grid, id: genId(),
+      designator: allocateDesignator('BX', drawing.components),
+      ...opts,
+    })
     set(state => ({
       drawings: state.drawings.map(d =>
         d.id === drawingId
@@ -710,6 +714,13 @@ const useSchematicStore = create((set, get) => ({
 
   updateSettings(patch) {
     set(state => ({ settings: { ...state.settings, ...patch } }))
+  },
+
+  // Fit to Screen. Only Canvas knows the viewport size, so the toolbar bumps
+  // this nonce and Canvas performs the fit. Runtime-only — never serialized.
+  fitRequest: 0,
+  requestFitToScreen() {
+    set(state => ({ fitRequest: state.fitRequest + 1 }))
   },
 
   // ─── Undo / Redo ──────────────────────────────────────────────────────────
@@ -915,14 +926,21 @@ const useSchematicStore = create((set, get) => ({
     const annotations = (drawing.annotations || []).filter(a => ids.includes(a.id))
     const images = (drawing.images || []).filter(img => ids.includes(img.id))
     const tables = (drawing.tables || []).filter(t => ids.includes(t.id))
-    set({ clipboard: JSON.parse(JSON.stringify({ components, wires, annotations, images, tables })) })
+    // Junctions are selectable and deletable like everything else, so they have
+    // to travel with a copied region too — otherwise copying a documented
+    // junction node silently drops its documentation.
+    const junctions = (drawing.junctions || []).filter(j => ids.includes(j.id))
+    set({ clipboard: JSON.parse(JSON.stringify({ components, wires, annotations, images, tables, junctions })) })
   },
 
   pasteFromClipboard(drawingId) {
     const { clipboard } = get()
     if (!clipboard) return
-    const { components = [], wires = [], annotations = [], images = [], tables = [] } = clipboard
-    if (!components.length && !wires.length && !annotations.length && !images.length && !tables.length) return
+    const { components = [], wires = [], annotations = [], images = [], tables = [], junctions = [] } = clipboard
+    if (!components.length && !wires.length && !annotations.length &&
+        !images.length && !tables.length && !junctions.length) return
+    const target = get().drawings.find(d => d.id === drawingId)
+    if (!target) return
     get().pushUndo()
     const OFFSET = 20
     const idMap = {}
@@ -932,7 +950,10 @@ const useSchematicStore = create((set, get) => ({
     // references, so a later edit to one leaks into the other (the "image applied
     // to both devices" bug).
     const clone = (o) => JSON.parse(JSON.stringify(o))
-    const newComps = components.map(orig => {
+    // Renumber against the DESTINATION drawing so a paste never lands a second
+    // R1/K1 on the sheet (a duplicate coil designator would also mis-drive every
+    // contact bound to it in the simulator).
+    const newComps = renumberForPaste(components.map(orig => {
       const c = clone(orig)
       const newId = genId()
       idMap[c.id] = newId
@@ -943,7 +964,7 @@ const useSchematicStore = create((set, get) => ({
         y: c.y + OFFSET,
         pins: (c.pins || []).map(p => ({ ...p, absX: p.absX + OFFSET, absY: p.absY + OFFSET })),
       }
-    })
+    }), target.components)
     const newWires = wires.map(orig => {
       const w = clone(orig)
       return {
@@ -957,12 +978,14 @@ const useSchematicStore = create((set, get) => ({
     const newAnnotations = annotations.map(orig => ({ ...clone(orig), id: genId(), x: orig.x + OFFSET, y: orig.y + OFFSET }))
     const newImages = images.map(orig => ({ ...clone(orig), id: genId(), x: orig.x + OFFSET, y: orig.y + OFFSET }))
     const newTables = tables.map(orig => ({ ...clone(orig), id: genId(), x: orig.x + OFFSET, y: orig.y + OFFSET }))
+    const newJunctions = junctions.map(orig => ({ ...clone(orig), id: genId(), x: orig.x + OFFSET, y: orig.y + OFFSET }))
     const newIds = [
       ...newComps.map(c => c.id),
       ...newWires.map(w => w.id),
       ...newAnnotations.map(a => a.id),
       ...newImages.map(img => img.id),
       ...newTables.map(t => t.id),
+      ...newJunctions.map(j => j.id),
     ]
     set(state => ({
       drawings: state.drawings.map(d =>
@@ -976,6 +999,7 @@ const useSchematicStore = create((set, get) => ({
               annotations: [...(d.annotations || []), ...newAnnotations],
               images: [...(d.images || []), ...newImages],
               tables: [...(d.tables || []), ...newTables],
+              junctions: [...(d.junctions || []), ...newJunctions],
             }
       ),
       selectedIds: newIds,

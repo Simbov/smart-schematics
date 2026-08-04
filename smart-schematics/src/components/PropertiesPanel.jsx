@@ -12,8 +12,6 @@ import { addRow, addCol, removeRow, removeCol, insertRow, insertCol, moveRow, mo
 import { copyTableToClipboard } from '../lib/tableClipboard'
 import { RESISTOR_STYLES } from '../lib/resistorStyle'
 import { findDevice, findDeviceByName, pinsForIoType, bindingParams, resolveBinding, pinPickerLabel, writeSignalToRegistry, deviceConfigOnSchematic } from '../lib/plcDevices'
-import { manifoldPins, clampPorts } from '../lib/manifold'
-import { valvePins as valveBuilderPins } from '../lib/valveBuilder'
 import Lightbox from './Lightbox'
 import ImageCropper from './ImageCropper'
 import ColorField from './ColorField'
@@ -1783,9 +1781,33 @@ export default function PropertiesPanel() {
                 }}
               >
                 {Object.entries(simParamDefs).map(([key, paramDef]) => {
-                  // Manifold port count drives the pin set: rebuild pins (and keep
-                  // bound wires attached) whenever it changes (issue #22).
-                  if (selected.type === 'hyd_manifold' && key === 'ports') {
+                  // Parametric components (manifold, valve builder, the
+                  // industrial terminal blocks) declare `rebuildsPins` on the
+                  // param that drives their pin set. Changing it rebuilds pins
+                  // from the def's derivePins() and re-attaches bound wires, so
+                  // no component needs its own branch here.
+                  if (paramDef.rebuildsPins && def?.derivePins) {
+                    const commitParametric = raw => {
+                      const v = paramDef.clamp ? paramDef.clamp(raw) : raw
+                      setLocalSim(s => ({ ...s, [key]: v }))
+                      pushUndo(activeDrawingId)
+                      const nextParams = { ...localSim, [key]: v }
+                      setComponentPins(
+                        activeDrawingId, localOwnerId,
+                        def.derivePins(nextParams), { [key]: v }
+                      )
+                    }
+                    if (paramDef.type === 'select') {
+                      return (
+                        <SelectField
+                          key={key}
+                          label={paramDef.label}
+                          value={localSim[key] ?? paramDef.default}
+                          options={paramDef.options}
+                          onChange={commitParametric}
+                        />
+                      )
+                    }
                     return (
                       <Field
                         key={key}
@@ -1793,28 +1815,7 @@ export default function PropertiesPanel() {
                         type="number"
                         value={localSim[key] ?? paramDef.default}
                         onChange={v => setLocalSim(s => ({ ...s, [key]: v }))}
-                        onBlur={() => {
-                          const n = clampPorts(localSim[key] ?? paramDef.default)
-                          setLocalSim(s => ({ ...s, [key]: n }))
-                          pushUndo(activeDrawingId)
-                          setComponentPins(activeDrawingId, localOwnerId, manifoldPins(n), { ports: n })
-                        }}
-                      />
-                    )
-                  }
-                  // Valve-builder port count drives the pin set (issue #20).
-                  if (selected.type === 'hyd_dcv_custom' && key === 'ports') {
-                    return (
-                      <SelectField
-                        key={key}
-                        label={paramDef.label}
-                        value={localSim[key] ?? paramDef.default}
-                        options={paramDef.options}
-                        onChange={v => {
-                          setLocalSim(s => ({ ...s, [key]: v }))
-                          pushUndo(activeDrawingId)
-                          setComponentPins(activeDrawingId, localOwnerId, valveBuilderPins(Number(v)), { ports: v })
-                        }}
+                        onBlur={() => commitParametric(localSim[key] ?? paramDef.default)}
                       />
                     )
                   }

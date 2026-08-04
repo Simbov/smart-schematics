@@ -104,6 +104,15 @@ export {
   ConnHeader4Symbol,
 } from './ConnectorSymbols'
 
+export {
+  TerminalStripSymbol,
+  HarnessConnectorSymbol,
+  SafetyRelaySymbol,
+  SafetyIoModuleSymbol,
+  SelectorSwitchSymbol,
+  PanelIndicatorSymbol,
+} from './IndustrialSymbols'
+
 import {
   ResistorSymbol,
   CapacitorSymbol,
@@ -210,6 +219,15 @@ import {
   ConnHeader4Symbol,
 } from './ConnectorSymbols'
 
+import {
+  TerminalStripSymbol,
+  HarnessConnectorSymbol,
+  SafetyRelaySymbol,
+  SafetyIoModuleSymbol,
+  SelectorSwitchSymbol,
+  PanelIndicatorSymbol,
+} from './IndustrialSymbols'
+
 export const ELECTRICAL_SYMBOL_MAP = {
   resistor: ResistorSymbol,
   capacitor: CapacitorSymbol,
@@ -291,4 +309,10 @@ export const ELECTRICAL_SYMBOL_MAP = {
   conn_acode_4: ConnACode4Symbol,
   conn_header_2: ConnHeader2Symbol,
   conn_header_4: ConnHeader4Symbol,
+  terminal_strip: TerminalStripSymbol,
+  harness_connector: HarnessConnectorSymbol,
+  safety_relay: SafetyRelaySymbol,
+  safety_io_module: SafetyIoModuleSymbol,
+  selector_switch: SelectorSwitchSymbol,
+  panel_indicator: PanelIndicatorSymbol,
 }

@@ -12,6 +12,54 @@ section with the version and date and starts a fresh Unreleased block.
 
 ## [Unreleased]
 
+### Added
+- **Industrial Control section in the component library** — six new panel and
+  machine-wiring symbols, each one configurable rather than fixed:
+  - **Terminal Strip** — 1–40 ways, as either a DIN-rail block or a panel plug
+    rail with round screw terminals. Set the first terminal number to match the
+    panel (19, 20, 21 …), and optionally draw knife disconnects. Every way links
+    its field terminal to its internal one, so a circuit routed through the strip
+    actually runs in the simulator.
+  - **Harness Connector** — a multi-way plug or receptacle with 1–40 numbered
+    contacts. Plain by default (a ruled column of numbered ways, as a loom
+    drawing shows it), or switch it to a keyed housing with pin/socket contacts
+    for a connector detail view.
+  - **Safety Relay** — a dual-channel, force-guided safety relay drawn the way the
+    device's own diagram shows it: A1/A2 supply, T/R channel inputs, X1/X4 reset
+    loop, status lamps, a Manual/Auto legend, and every output carrying two
+    redundant contacts in series off a pair of armature bars. 1–4 NO safety
+    contacts plus up to two NC auxiliaries, numbered to IEC (13/14, 23/24, 33/34,
+    then 41/42) and renumbering themselves as you add or remove them. The
+    manufacturer, model and device tag are all editable.
+  - **Safety I/O Group** — one terminal group of a safety controller (DI, DO, TO,
+    AI, AO or PWR) with 1–16 channels, a first-terminal number, and your own
+    signal designations in their own ruled strip. Choose whether the conductors
+    leave upward or downward, so output groups along the top of a module and
+    input banks along the bottom both read correctly.
+  - **Selector Switch** — a mode or cam switch with 2–8 positions and 1–4 ganged
+    decks, drawn in whichever position you want it shown in.
+  - **Panel Indicator** — a pilot light as a round IEC signal lamp, a square
+    panel-legend plate, or an LED, in five lens colours. It lights in simulation
+    like a lamp.
+
+### Fixed
+- **A reference designator is never handed out twice.** Placing a part after
+  deleting one no longer reuses a number that is still on the sheet, and
+  copy/paste and Ctrl+D now renumber what they paste. Duplicated coil references
+  had also been driving the wrong contacts in simulation.
+- **Copying a region keeps its junctions.** Documented junction nodes now travel
+  with a copy/paste instead of being silently dropped.
+- **Select All and box-select no longer skip things.** Ctrl+A now includes tables
+  and junctions, and dragging a selection box picks up tables.
+- **Configurable parts no longer keep the wrong outline.** A manifold, valve
+  builder or terminal block that grew or shrank kept its original selection box,
+  click area and label spacing — and exported cropped. All of them now follow the
+  part's actual size.
+- **Fit to Screen actually fits.** The toolbar button and `0` used to just reset
+  to 100% at the sheet origin, which on a big drawing left the whole thing
+  off-screen. Both now zoom and centre so the entire drawing is in view. Zoom to
+  selection (`Z`) also takes tables and junctions into account.
+
 ## [0.11.0] - 2026-06-23
 
 ### Added

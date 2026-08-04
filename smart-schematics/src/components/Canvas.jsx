@@ -29,6 +29,9 @@ import { getElectricalDef } from '../lib/components/electrical'
 import { getHydraulicDef } from '../lib/components/hydraulic'
 import { getCustomDef } from '../lib/components/custom'
 import { chooseLabelSides } from '../lib/labelPlacement'
+import { selectableIds, idsInBand } from '../lib/selection'
+import { fitViewState, boundsFromSelection } from '../lib/viewFit'
+import { boundsFromDrawing } from '../lib/svgExport'
 import CustomSymbol from '../lib/symbols/CustomSymbol'
 
 const SYMBOL_MAP_ALL = { ...ELECTRICAL_SYMBOL_MAP, ...HYDRAULIC_SYMBOL_MAP }
@@ -199,35 +202,35 @@ export default function Canvas({ onCursorMove }) {
 
   const wrapperRef = useRef(null)
 
+  // Bring `bounds` into view, centred. Shared by fit-to-drawing and
+  // fit-to-selection so the two never drift apart.
+  const fitTo = useCallback((bounds) => {
+    const did = useSchematicStore.getState().activeDrawingId
+    const next = fitViewState(
+      bounds,
+      wrapperRef.current?.clientWidth || 800,
+      wrapperRef.current?.clientHeight || 600,
+    )
+    if (did && next) setViewState(did, next)
+  }, [setViewState])
+
   const zoomToSelection = useCallback(() => {
     const { drawings, activeDrawingId: did, selectedIds: ids } = useSchematicStore.getState()
     const dr = drawings.find(d => d.id === did)
-    if (!dr || ids.length === 0) return
-    const xs = [], ys = []
-    for (const c of dr.components.filter(c => ids.includes(c.id))) {
-      xs.push(c.x - 40, c.x + 40); ys.push(c.y - 40, c.y + 40)
-    }
-    for (const w of dr.wires.filter(w => ids.includes(w.id))) {
-      for (const p of w.points) { xs.push(p.x); ys.push(p.y) }
-    }
-    for (const a of (dr.annotations || []).filter(a => ids.includes(a.id))) {
-      xs.push(a.x); ys.push(a.y)
-      if (a.type === 'callout') { xs.push(a.x + (a.width || 120)); ys.push(a.y + (a.height || 60)) }
-    }
-    if (!xs.length) return
-    const PAD = 40
-    const minX = Math.min(...xs) - PAD, maxX = Math.max(...xs) + PAD
-    const minY = Math.min(...ys) - PAD, maxY = Math.max(...ys) + PAD
-    const contentW = maxX - minX, contentH = maxY - minY
-    const vw = wrapperRef.current?.clientWidth || 800
-    const vh = wrapperRef.current?.clientHeight || 600
-    const newZoom = Math.min(8, Math.max(0.1, Math.min(vw / contentW, vh / contentH)))
-    setViewState(did, {
-      zoom: newZoom,
-      panX: (vw - contentW * newZoom) / 2 - minX * newZoom,
-      panY: (vh - contentH * newZoom) / 2 - minY * newZoom,
-    })
-  }, [setViewState])
+    fitTo(boundsFromSelection(dr, ids))
+  }, [fitTo])
+
+  // Fit the WHOLE drawing — every layer, using each component's real footprint
+  // (boundsFromDrawing is the same extent the SVG/PDF export trims to, so what
+  // you see fitted is what you get exported).
+  const zoomToFit = useCallback(() => {
+    const { drawings, activeDrawingId: did } = useSchematicStore.getState()
+    const dr = drawings.find(d => d.id === did)
+    const bounds = boundsFromDrawing(dr, 40)
+    // An empty sheet has nothing to fit — fall back to a clean 1:1 at the origin.
+    if (!bounds) { if (did) setViewState(did, { panX: 0, panY: 0, zoom: 1 }) ; return }
+    fitTo(bounds)
+  }, [fitTo, setViewState])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -319,7 +322,9 @@ export default function Canvas({ onCursorMove }) {
         const h = wrapperRef.current?.clientHeight || window.innerHeight
         zoomAt(1 / 1.15, w / 2, h / 2); return
       }
-      if (e.key === '0') { resetView(); return }
+      // '0' is advertised as Fit to Screen — so it fits, rather than dropping
+      // you at 1:1 on the sheet origin with the drawing off-screen.
+      if (e.key === '0') { zoomToFit(); return }
 
       // Toggle grid snap
       if (e.key === 'g' || e.key === 'G') {
@@ -332,14 +337,7 @@ export default function Canvas({ onCursorMove }) {
         e.preventDefault()
         const { drawings, activeDrawingId: did } = useSchematicStore.getState()
         const dr = drawings.find(d => d.id === did)
-        if (dr) {
-          useSchematicStore.getState().setSelectedIds([
-            ...(dr.components || []).map(c => c.id),
-            ...(dr.wires || []).map(w => w.id),
-            ...(dr.annotations || []).map(a => a.id),
-            ...(dr.images || []).filter(im => !im.locked).map(im => im.id),
-          ])
-        }
+        if (dr) useSchematicStore.getState().setSelectedIds(selectableIds(dr))
         return
       }
       // Duplicate selection in-place
@@ -359,7 +357,12 @@ export default function Canvas({ onCursorMove }) {
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
     }
-  }, [activeTool, wirePoints, undo, redo, deleteIds, copyToClipboard, pasteFromClipboard, rotateComponent, flipComponent, zoomToSelection, pushUndo, updateImage])
+  }, [activeTool, wirePoints, undo, redo, deleteIds, copyToClipboard, pasteFromClipboard, rotateComponent, flipComponent, zoomToSelection, zoomToFit, pushUndo, updateImage])
+
+  // The toolbar's Fit to Screen button bumps a nonce in the store; only Canvas
+  // knows the viewport size, so the actual fit happens here.
+  const fitRequest = useSchematicStore(s => s.fitRequest)
+  useEffect(() => { if (fitRequest) zoomToFit() }, [fitRequest, zoomToFit])
 
   // Paste an image from the clipboard onto the drawing (v0.2.0). Anchored at the
   // last cursor world point, else the viewport center; sized via aspectFitSize.
@@ -446,10 +449,6 @@ export default function Canvas({ onCursorMove }) {
       panX: cx - (cx - vs.panX) * (newZoom / vs.zoom),
       panY: cy - (cy - vs.panY) * (newZoom / vs.zoom),
     })
-  }, [activeDrawingId, setViewState])
-
-  const resetView = useCallback(() => {
-    if (activeDrawingId) setViewState(activeDrawingId, { panX: 0, panY: 0, zoom: 1 })
   }, [activeDrawingId, setViewState])
 
   const getSVGPos = useCallback(e => {
@@ -680,37 +679,13 @@ export default function Canvas({ onCursorMove }) {
       // jitter during a click (common on trackpads) is treated as a plain click
       // that clears the selection — not an accidental multi-select.
       if (rb && movedPx > RUBBER_BAND_MIN_PX) {
-        const minX = Math.min(rb.startWorld.x, rb.endWorld.x)
-        const maxX = Math.max(rb.startWorld.x, rb.endWorld.x)
-        const minY = Math.min(rb.startWorld.y, rb.endWorld.y)
-        const maxY = Math.max(rb.startWorld.y, rb.endWorld.y)
         const dr = useSchematicStore.getState().drawings.find(d => d.id === activeDrawingId)
-        const inside = []
-        for (const c of (dr?.components || [])) {
-          if (c.x >= minX && c.x <= maxX && c.y >= minY && c.y <= maxY) inside.push(c.id)
-        }
-        for (const w of (dr?.wires || [])) {
-          if (w.points.every(p => p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY))
-            inside.push(w.id)
-        }
-        for (const a of (dr?.annotations || [])) {
-          if (a.type === 'text') {
-            if (a.x >= minX && a.x <= maxX && a.y >= minY && a.y <= maxY) inside.push(a.id)
-          } else if (a.type === 'callout') {
-            const aw = a.width || 120, ah = a.height || 60
-            if (a.x >= minX && a.x + aw <= maxX && a.y >= minY && a.y + ah <= maxY) inside.push(a.id)
-          }
-        }
-        // Images: fully-enclosed (and not locked) by the band.
-        for (const im of (dr?.images || [])) {
-          if (im.locked) continue
-          if (im.x >= minX && im.x + im.width <= maxX && im.y >= minY && im.y + im.height <= maxY)
-            inside.push(im.id)
-        }
-        // Junctions: point inside the band.
-        for (const j of (dr?.junctions || [])) {
-          if (j.x >= minX && j.x <= maxX && j.y >= minY && j.y <= maxY) inside.push(j.id)
-        }
+        const inside = idsInBand(dr, {
+          minX: Math.min(rb.startWorld.x, rb.endWorld.x),
+          maxX: Math.max(rb.startWorld.x, rb.endWorld.x),
+          minY: Math.min(rb.startWorld.y, rb.endWorld.y),
+          maxY: Math.max(rb.startWorld.y, rb.endWorld.y),
+        })
         if (inside.length > 0) setSelectedIds(inside)
         else clearSelection()
         // Real drag occurred: keep didDrag true so onClick bails and doesn't
