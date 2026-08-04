@@ -36,8 +36,11 @@ section with the version and date and starts a fresh Unreleased block.
     signal designations in their own ruled strip. Choose whether the conductors
     leave upward or downward, so output groups along the top of a module and
     input banks along the bottom both read correctly.
-  - **Selector Switch** — a mode or cam switch with 2–8 positions and 1–4 ganged
-    decks, drawn in whichever position you want it shown in.
+  - **Selector Switch** — a mode or cam switch drawn as its contact development:
+    a bank of up to 12 contact pairs bridging a plug's terminals, all thrown by
+    one shaft. Paste in a row of your truth table ("1,2,5") and exactly those
+    contacts close, so you can draw the switch in whichever state the sheet is
+    meant to show.
   - **Panel Indicator** — a pilot light as a round IEC signal lamp, a square
     panel-legend plate, or an LED, in five lens colours. It lights in simulation
     like a lamp.
